@@ -172,35 +172,34 @@ export function PipelineView() {
     : data.summary.totalPipelineValue
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Pipeline de Ventas</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {visibleTotal} oportunidades · {formatCurrency(visibleValue)} en pipeline
-          </p>
-        </div>
+    <div className="space-y-4">
+      {/* BARRA ÚNICA: título + métricas + vistas/filtros + acción (sin filas duplicadas) */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h1 className="text-2xl font-bold text-slate-900">Pipeline de Ventas</h1>
+        <span
+          className="text-sm text-slate-500"
+          title="Arrastra las oportunidades entre columnas para cambiar su etapa"
+        >
+          {visibleTotal} opps · {formatCurrency(visibleValue)}
+        </span>
+
+        <div className="flex-1 min-w-[8rem]" aria-hidden="true" />
+
+        <SavedViewsBar
+          entity="opportunities"
+          activeViewId={activeViewId}
+          activeFilters={viewFilters}
+          onApply={handleApplyView}
+          onFiltersChange={handleViewFiltersChange}
+          compact
+        />
+
         <Button
           onClick={() => setShowForm(true)}
           className="bg-emerald-600 hover:bg-emerald-700 text-white"
         >
           <TrendingUp className="w-4 h-4 mr-2" /> Nueva Oportunidad
         </Button>
-      </div>
-
-      {/* Vistas guardadas para oportunidades (monto / cliente / probabilidad) */}
-      <SavedViewsBar
-        entity="opportunities"
-        activeViewId={activeViewId}
-        activeFilters={viewFilters}
-        onApply={handleApplyView}
-        onFiltersChange={handleViewFiltersChange}
-      />
-
-      {/* Drag & Drop Hint */}
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        <GripVertical className="w-3.5 h-3.5" />
-        <span>Arrastra las oportunidades entre columnas para cambiar su etapa</span>
       </div>
 
       {/* Kanban Board */}

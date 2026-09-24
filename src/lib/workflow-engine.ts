@@ -18,6 +18,8 @@ import { recordTimelineEvent } from './timeline'
  *  - move_opportunity_stage: cambio de etapa de oportunidad
  *  - ai_followup: el agente IA redacta y ejecuta el seguimiento
  *  - notify_admin: notificación a admins
+ *  - wait: pausa durable el run N días/horas/minutos y lo reanuda después
+ *    (patrón DELAY de Twenty: status='waiting' + resumeAt + barrido del scheduler)
  */
 
 export interface WorkflowTriggerEvent {
@@ -41,6 +43,36 @@ export interface Condition {
 export interface WorkflowAction {
   type: string
   config?: Record<string, unknown>
+}
+
+/** Estado de ejecución por acción (estilo Twenty: stepInfos/stepLogs). */
+export interface StepState {
+  type: string
+  status: 'success' | 'failed' | 'skipped' | 'waiting'
+  error?: string
+  ms?: number
+}
+
+/** Milisegundos de una acción wait (config: days | hours | minutes). */
+export function waitDurationMs(config: Record<string, unknown> | undefined): number {
+  const c = config || {}
+  const days = Number(c.days) || 0
+  const hours = Number(c.hours) || 0
+  const minutes = Number(c.minutes) || 0
+  const total = days * 86_400_000 + hours * 3_600_000 + minutes * 60_000
+  return total > 0 ? total : 86_400_000 // default: 1 día
+}
+
+export function describeWait(config: Record<string, unknown> | undefined): string {
+  const c = config || {}
+  const parts: string[] = []
+  const days = Number(c.days) || 0
+  const hours = Number(c.hours) || 0
+  const minutes = Number(c.minutes) || 0
+  if (days) parts.push(`${days} ${days === 1 ? 'día' : 'días'}`)
+  if (hours) parts.push(`${hours} h`)
+  if (minutes) parts.push(`${minutes} min`)
+  return parts.length > 0 ? parts.join(' ') : '1 día'
 }
 
 // ---------- Evaluación de condiciones (estilo Twenty: composables) ----------
@@ -100,7 +132,7 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
     case 'send_email': {
       const channel = action.type === 'send_whatsapp' ? 'whatsapp' : action.type === 'send_telegram' ? 'telegram' : 'email'
       const templateId = config.templateId as string | undefined
-      let body = String(config.body || '')
+      let body = String(config.body || config.text || '')
       if (templateId) {
         const tpl = await db.template.findFirst({ where: { id: templateId, organizationId: orgId } })
         if (tpl) body = tpl.body
@@ -203,6 +235,53 @@ function renderTemplate(body: string, ctx: Record<string, unknown>): string {
 
 // ---------- Orquestador principal ----------
 
+/**
+ * Ejecuta las acciones desde startIndex, acumulando stepStates y outputs.
+ * Si encuentra una acción 'wait', PAUSA: devuelve done=false con el tiempo de
+ * espera y el índice de la siguiente acción (el run queda 'waiting' en BD,
+ * igual que el step DELAY de Twenty termina el batch y lo reanuda un job).
+ */
+async function runActionSteps(
+  orgId: string,
+  userId: string | null,
+  actions: WorkflowAction[],
+  ctx: Record<string, unknown>,
+  startIndex: number,
+  prevStates: StepState[],
+  prevOutputs: Record<string, unknown>[]
+): Promise<
+  | { done: true; stepStates: StepState[]; outputs: Record<string, unknown>[] }
+  | { done: false; stepStates: StepState[]; outputs: Record<string, unknown>[]; waitMs: number; nextStep: number }
+> {
+  const stepStates: StepState[] = [...prevStates]
+  const outputs: Record<string, unknown>[] = [...prevOutputs]
+
+  for (let i = startIndex; i < actions.length; i++) {
+    const action = actions[i]
+    const t0 = Date.now()
+
+    if (action.type === 'wait') {
+      stepStates[i] = { type: action.type, status: 'waiting' }
+      return { done: false, stepStates, outputs, waitMs: waitDurationMs(action.config), nextStep: i + 1 }
+    }
+
+    try {
+      const out = await executeAction(orgId, userId, action, ctx)
+      outputs.push(out)
+      stepStates[i] = { type: action.type, status: 'success', ms: Date.now() - t0 }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300), ms: Date.now() - t0 }
+      // Propaga el error llevando los stepStates parciales para persistirlos
+      const wrapped = err instanceof Error ? err : new Error(message)
+      ;(wrapped as Error & { stepStates?: StepState[] }).stepStates = stepStates
+      throw wrapped
+    }
+  }
+
+  return { done: true, stepStates, outputs }
+}
+
 export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
   const automations = await db.automation.findMany({
     where: { organizationId: event.orgId, isActive: true, triggerType: event.type },
@@ -221,20 +300,127 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
         continue
       }
       const actions = safeParse<WorkflowAction[]>(automation.actions) || []
-      const outputs: Record<string, unknown>[] = []
-      for (const action of actions) {
-        outputs.push(await executeAction(event.orgId, automation.createdById, action, event.payload))
+      const res = await runActionSteps(event.orgId, automation.createdById, actions, event.payload, 0, [], [])
+
+      if (!res.done) {
+        // PAUSA durable (patrón DELAY de Twenty): el run queda 'waiting' y el
+        // scheduler lo reanuda cuando venza resumeAt.
+        await db.automationRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'waiting',
+            stepStates: JSON.stringify(res.stepStates),
+            currentStep: res.nextStep,
+            output: JSON.stringify(res.outputs).slice(0, 5000),
+            resumeAt: new Date(Date.now() + res.waitMs),
+          },
+        })
+        results.push({ automationId: automation.id, status: 'waiting' })
+        continue
       }
-      await db.automationRun.update({ where: { id: run.id }, data: { status: 'success', output: JSON.stringify(outputs).slice(0, 5000), finishedAt: new Date() } })
+
+      await db.automationRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'success',
+          output: JSON.stringify(res.outputs).slice(0, 5000),
+          stepStates: JSON.stringify(res.stepStates),
+          finishedAt: new Date(),
+        },
+      })
       await db.automation.update({ where: { id: automation.id }, data: { runCount: { increment: 1 }, lastRunAt: new Date() } })
       results.push({ automationId: automation.id, status: 'success' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      await db.automationRun.update({ where: { id: run.id }, data: { status: 'failed', error: message.slice(0, 1000), finishedAt: new Date() } })
+      const partialStates = (err as Error & { stepStates?: StepState[] }).stepStates
+      await db.automationRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          error: message.slice(0, 1000),
+          stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
+          finishedAt: new Date(),
+        },
+      })
       results.push({ automationId: automation.id, status: 'failed', error: message })
     }
   }
   return results
+}
+
+/**
+ * Reanuda los runs en espera cuyo resumeAt venció (invocado por el scheduler).
+ * Continúa desde currentStep con el payload original guardado en run.input.
+ * Devuelve cuántos runs se completaron o re-pausaron.
+ */
+export async function resumeWaitingRuns(): Promise<number> {
+  const now = new Date()
+  const waiting = await db.automationRun.findMany({
+    where: { status: 'waiting', resumeAt: { lte: now } },
+    orderBy: { resumeAt: 'asc' },
+    take: 25,
+  })
+
+  let processed = 0
+  for (const run of waiting) {
+    const automation = await db.automation.findUnique({ where: { id: run.automationId } })
+    if (!automation || !automation.isActive) {
+      await db.automationRun.update({
+        where: { id: run.id },
+        data: { status: 'success', output: JSON.stringify({ skipped: 'automación inactiva al reanudar' }), finishedAt: new Date() },
+      })
+      processed++
+      continue
+    }
+
+    const actions = safeParse<WorkflowAction[]>(automation.actions) || []
+    const payload = safeParse<Record<string, unknown>>(run.input) || {}
+    const prevStates = safeParse<StepState[]>(run.stepStates) || []
+    const prevOutputs = safeParse<Record<string, unknown>[]>(run.output) || []
+
+    try {
+      const res = await runActionSteps(automation.organizationId, automation.createdById, actions, payload, run.currentStep, prevStates, prevOutputs)
+      if (!res.done) {
+        // Otra espera encadenada: vuelve a pausar (secuencias multi-touch)
+        await db.automationRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'waiting',
+            stepStates: JSON.stringify(res.stepStates),
+            currentStep: res.nextStep,
+            output: JSON.stringify(res.outputs).slice(0, 5000),
+            resumeAt: new Date(Date.now() + res.waitMs),
+          },
+        })
+      } else {
+        await db.automationRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'success',
+            output: JSON.stringify(res.outputs).slice(0, 5000),
+            stepStates: JSON.stringify(res.stepStates),
+            finishedAt: new Date(),
+          },
+        })
+        await db.automation.update({ where: { id: automation.id }, data: { runCount: { increment: 1 }, lastRunAt: new Date() } })
+      }
+      processed++
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const partialStates = (err as Error & { stepStates?: StepState[] }).stepStates
+      await db.automationRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          error: message.slice(0, 1000),
+          stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
+          finishedAt: new Date(),
+        },
+      })
+      processed++
+    }
+  }
+  return processed
 }
 
 function safeParse<T>(raw: string | null | undefined): T | null {

@@ -162,3 +162,23 @@ Work Log:
 
 Stage Summary:
 - Pipeline: Prospección → Calificación → Oferta → Seguimiento → Cierre Ganado (+ Cierre Perdido) aplicado en seed para orgs nuevas y en datos existentes. El análisis de Twenty ya estaba documentado en docs/twenty-insights.md (Task 1-b).
+
+---
+Task ID: 6 (post-entrega)
+Agent: main (Super Z)
+Task: Triage funcional de mejoras Twenty + implementación (DELAY durable, stepStates, filtros relativos) + fix barra duplicada del pipeline.
+
+Work Log:
+- Triage honesto del backlog de twenty-insights.md: FUNCIONALES implementados = wait/delay durable, stepStates por acción, fechas relativas en vistas, fix overflow main. ADORNO/ya cubiertos descartados = columnas en vistas, draft/publicar, watched fields (el trigger ya solo dispara si la etapa cambió), diff visual timeline.
+- Pipeline UI: barra única (título + métricas + vistas/filtros + botón Nueva Oportunidad); eliminada fila de hint y fila separada de vistas. saved-views-bar.tsx reconstruida: una sola fila con badges integrados, modo compact, constructor de filtros popover (campo→operador→valor con presets relativos).
+- FIX de raíz preexistente: main (flex item) sin min-w-0 se expandía al min-content del kanban (1808px) → overflow horizontal invisible que dejaba la barra derecha fuera del viewport. app-layout.tsx: min-w-0 en main (también corrige overflow del dashboard).
+- Schema AutomationRun: +resumeAt, +currentStep, +stepStates, +índice (status,resumeAt); db push + generate + restart.
+- workflow-engine.ts: acción 'wait' (días/horas/min) pausa el run (status=waiting, resumeAt futuro, currentStep=índice siguiente, stepStates persistidos); runActionSteps() registra estado por acción (success/failed/waiting + ms + error) y propaga parciales al fallar; resumeWaitingRuns() reanuda runs vencidos desde currentStep con payload original, soporta esperas encadenadas; scheduler.runDueJobs() barrerá waiting vencidos (processed incluye reanudados). Fix bug: send_* ahora lee config.body || config.text (el builder guardaba text).
+- API GET /api/automations: incluye lastRun {status,error,startedAt,finishedAt,resumeAt,currentStep,steps[]} por automatización (serializeAutomation extendido).
+- UI automations: badge de última ejecución (Exitosa/Falló/En espera con fecha de reanudación), detalle expandible paso a paso con ms y errores, "Última: hace X" relativo. Builder: acción "Esperar (pausa)" con inputs días/horas/minutos y serialización numérica.
+- filters.ts: operador is_relative con 6 presets (hoy, vencidas, últimos/próximos 7/30 días); fix: presets "últimos" acotados a now (no incluyen futuro). dateFieldsByEntity + campo status en labels de clientes.
+- E2E verificado: automatización client_created→notify_admin→wait 1min→ai_followup: run waiting (steps notify ok, wait waiting, currentStep=2) → backdate resumeAt → scheduler reanuda → success con 3 pasos (ai_followup 478ms), runCount=1. UI: constructor de filtros aplica "Monto igual a 500" y kanban filtra a 1 opp/$500; badges lastRun y detalle de pasos renderizan.
+- Lint 0 errores, tsc 0 errores de proyecto, app 200.
+
+Stage Summary:
+- Entregado: pipeline con UNA sola barra, workflows con pausa durable multi-día (patrón DELAY Twenty), observabilidad de ejecuciones (stepStates + UI), vistas con fechas relativas siempre frescas + constructor de filtros. Descartadas honestamente las mejoras tipo adorno.

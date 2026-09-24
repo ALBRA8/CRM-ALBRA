@@ -9,10 +9,27 @@ import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AutomationFormDialog, triggerTypeLabels } from './automation-form-dialog'
 import { SuggestionsPanel } from './suggestions-panel'
-import { Plus, Play, Zap, Clock, RefreshCw } from 'lucide-react'
-import { format } from 'date-fns'
+import { Plus, Play, Zap, Clock, RefreshCw, CheckCircle2, XCircle, Hourglass, ChevronDown, ChevronRight, Bot } from 'lucide-react'
+import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { toast } from 'sonner'
+
+interface LastRunStep {
+  type: string
+  status: string
+  error?: string
+  ms?: number
+}
+
+interface LastRun {
+  status: string
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+  resumeAt: string | null
+  currentStep: number
+  steps: LastRunStep[]
+}
 
 interface Automation {
   id: string
@@ -28,6 +45,21 @@ interface Automation {
   lastRunAt?: string | null
   runCount: number
   createdAt: string
+  lastRun?: LastRun | null
+}
+
+const stepTypeLabels: Record<string, string> = {
+  notify_admin: 'Notificar admin',
+  send_whatsapp: 'Enviar WhatsApp',
+  send_telegram: 'Enviar Telegram',
+  send_email: 'Enviar email',
+  create_opportunity: 'Crear oportunidad',
+  update_client_status: 'Actualizar cliente',
+  move_opportunity_stage: 'Mover etapa',
+  create_task_like_notification: 'Crear tarea',
+  ai_followup: 'Seguimiento IA',
+  wait: 'Esperar',
+  send_message: 'Enviar mensaje',
 }
 
 const typeColors: Record<string, string> = {
@@ -64,6 +96,86 @@ function countJsonArray(json: string | null | undefined): number {
   } catch {
     return 0
   }
+}
+
+/** Badge de la última ejecución (estado del run más reciente). */
+function LastRunBadge({ lastRun }: { lastRun?: LastRun | null }) {
+  if (!lastRun) return null
+  if (lastRun.status === 'waiting') {
+    const resume = lastRun.resumeAt
+      ? `reanuda ${format(new Date(lastRun.resumeAt), "d MMM HH:mm", { locale: es })}`
+      : 'en espera'
+    return (
+      <Badge variant="outline" className="text-[10px] bg-amber-50/60 text-amber-700 border-amber-200 gap-1">
+        <Hourglass className="w-2.5 h-2.5" /> En espera ({resume})
+      </Badge>
+    )
+  }
+  if (lastRun.status === 'failed') {
+    return (
+      <Badge variant="outline" className="text-[10px] bg-red-50/60 text-red-700 border-red-200 gap-1">
+        <XCircle className="w-2.5 h-2.5" /> Falló
+      </Badge>
+    )
+  }
+  if (lastRun.status === 'success') {
+    return (
+      <Badge variant="outline" className="text-[10px] bg-emerald-50/60 text-emerald-700 border-emerald-200 gap-1">
+        <CheckCircle2 className="w-2.5 h-2.5" /> Exitosa
+      </Badge>
+    )
+  }
+  return null
+}
+
+/** Detalle expandible de pasos de la última ejecución. */
+function LastRunSteps({ lastRun }: { lastRun: LastRun }) {
+  const [open, setOpen] = useState(false)
+  if (lastRun.steps.length === 0 && lastRun.status !== 'failed') return null
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="text-[11px] text-slate-400 hover:text-emerald-700 flex items-center gap-1 transition-colors"
+      >
+        {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        Detalle de la última ejecución
+      </button>
+      {open && (
+        <div className="mt-1.5 bg-slate-50 border border-slate-100 rounded-lg p-2.5 space-y-1.5">
+          {lastRun.steps.map((s, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[11px]">
+              {s.status === 'success' ? (
+                <CheckCircle2 className="w-3 h-3 text-emerald-500 mt-0.5 flex-shrink-0" />
+              ) : s.status === 'waiting' ? (
+                <Hourglass className="w-3 h-3 text-amber-500 mt-0.5 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
+              )}
+              <span className="text-slate-600 font-medium">{i + 1}. {stepTypeLabels[s.type] ?? s.type}</span>
+              {typeof s.ms === 'number' && s.status === 'success' && (
+                <span className="text-slate-400">({s.ms} ms)</span>
+              )}
+              {s.error && <span className="text-red-500 truncate" title={s.error}>— {s.error}</span>}
+            </div>
+          ))}
+          {lastRun.steps.length === 0 && (
+            <p className="text-[11px] text-slate-400">Sin detalle de pasos (ejecución antigua)</p>
+          )}
+          {lastRun.error && (
+            <p className="text-[11px] text-red-600 border-t border-slate-200 pt-1.5">Error: {lastRun.error}</p>
+          )}
+          {lastRun.status === 'success' && lastRun.steps.some((s) => s.type === 'ai_followup') && (
+            <p className="text-[10px] text-violet-500 flex items-center gap-1 border-t border-slate-200 pt-1.5">
+              <Bot className="w-3 h-3" /> El seguimiento redactado por IA quedó en tus notificaciones
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function AutomationsPage() {
@@ -202,6 +314,7 @@ export function AutomationsPage() {
                         <Badge variant="outline" className="text-[10px] bg-emerald-50/60 text-emerald-700 border-emerald-200">
                           Ejecutada {auto.runCount} {auto.runCount === 1 ? 'vez' : 'veces'}
                         </Badge>
+                        <LastRunBadge lastRun={auto.lastRun} />
                         {countJsonArray(auto.conditions) > 0 && (
                           <Badge variant="outline" className="text-[10px] bg-amber-50/60 text-amber-700 border-amber-200">
                             {countJsonArray(auto.conditions)} condición(es)
@@ -215,10 +328,11 @@ export function AutomationsPage() {
                         <span className="text-xs text-slate-400 flex items-center gap-1 ml-1">
                           <Clock className="w-3 h-3" aria-hidden="true" />
                           {auto.lastRunAt
-                            ? `Última: ${format(new Date(auto.lastRunAt), "d MMM, HH:mm", { locale: es })}`
+                            ? `Última: ${formatDistanceToNow(new Date(auto.lastRunAt), { addSuffix: true, locale: es })}`
                             : 'Sin ejecutar'}
                         </span>
                       </div>
+                      {auto.lastRun && <LastRunSteps lastRun={auto.lastRun} />}
                       {auto.message && (
                         <p className="text-xs text-slate-400 mt-2 bg-slate-50 p-2 rounded line-clamp-2">
                           &quot;{auto.message}&quot;

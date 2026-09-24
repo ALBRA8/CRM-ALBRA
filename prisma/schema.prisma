@@ -295,14 +295,18 @@ model AutomationRun {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   automationId   String
   automation     Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
-  status         String   @default("running") // running | success | failed
-  input          String?  // JSON
-  output         String?  // JSON
+  status         String   @default("running") // running | success | failed | waiting
+  input          String?  // JSON: payload del trigger (contexto para reanudar)
+  output         String?  // JSON: outputs acumulados de las acciones ejecutadas
   error          String?
+  stepStates     String?  // JSON: [{ type, status, error?, ms? }] estado por acción (estilo Twenty stepInfos)
+  currentStep    Int      @default(0) // índice de la siguiente acción al reanudar (DELAY estilo Twenty)
+  resumeAt       DateTime? // cuándo reanudar un run en espera (acción "Esperar")
   startedAt      DateTime @default(now())
   finishedAt     DateTime?
 
   @@index([automationId, startedAt])
+  @@index([status, resumeAt])
 }
 
 // ---------- IA ----------

@@ -52,6 +52,7 @@ export type ActionType =
   | 'create_opportunity'
   | 'update_client_status'
   | 'ai_followup'
+  | 'wait'
 
 export interface ConditionRow {
   field: string
@@ -122,6 +123,7 @@ const actionTypeLabels: Record<ActionType, string> = {
   create_opportunity: 'Crear oportunidad',
   update_client_status: 'Actualizar estado del cliente',
   ai_followup: 'Seguimiento con IA',
+  wait: 'Esperar (pausa)…',
 }
 
 const actionTypeDescriptions: Record<ActionType, string> = {
@@ -132,6 +134,7 @@ const actionTypeDescriptions: Record<ActionType, string> = {
   create_opportunity: 'Registra una oportunidad de venta',
   update_client_status: 'Cambia el estado del cliente',
   ai_followup: 'El agente IA redacta el seguimiento y lo envía',
+  wait: 'Pausa el flujo y continúa después (secuencias multi-día)',
 }
 
 const operatorOptions: Array<{ value: ConditionRow['operator']; label: string }> = [
@@ -307,7 +310,13 @@ export function AutomationFormDialog({ open, onClose, editAutomation }: Automati
             type: a.type,
             config: a.type === 'create_opportunity'
               ? { title: a.config.title ?? '', amount: a.config.amount ? parseFloat(a.config.amount) : null }
-              : a.config,
+              : a.type === 'wait'
+                ? {
+                    days: Math.max(0, parseInt(String(a.config.days ?? '0'), 10) || 0),
+                    hours: Math.max(0, parseInt(String(a.config.hours ?? '0'), 10) || 0),
+                    minutes: Math.max(0, parseInt(String(a.config.minutes ?? '0'), 10) || 0),
+                  }
+                : a.config,
           }))
         ),
       }
@@ -338,6 +347,7 @@ export function AutomationFormDialog({ open, onClose, editAutomation }: Automati
       create_opportunity: <TrendingUp className="w-3.5 h-3.5" />,
       update_client_status: <UserCog className="w-3.5 h-3.5" />,
       ai_followup: <Bot className="w-3.5 h-3.5" />,
+      wait: <CalendarClock className="w-3.5 h-3.5" />,
     }
     return map[t] ?? <Sparkles className="w-3.5 h-3.5" />
   }
@@ -684,6 +694,58 @@ export function AutomationFormDialog({ open, onClose, editAutomation }: Automati
                         />
                         <p className="text-[10px] text-violet-500 flex items-center gap-1">
                           <Bot className="w-3 h-3" /> El agente IA redacta el seguimiento con el contexto del cliente
+                        </p>
+                      </div>
+                    )}
+
+                    {action.type === 'wait' && (
+                      <div className="space-y-1.5">
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <Label className="text-[10px] text-slate-400">Días</Label>
+                            <Input
+                              aria-label={`Días de espera de la acción ${index + 1}`}
+                              type="number"
+                              min={0}
+                              max={60}
+                              placeholder="0"
+                              value={String(action.config.days ?? '')}
+                              onChange={(e) => updateActionConfig(index, { days: e.target.value })}
+                              className="h-8 text-xs"
+                              disabled={loading}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-[10px] text-slate-400">Horas</Label>
+                            <Input
+                              aria-label={`Horas de espera de la acción ${index + 1}`}
+                              type="number"
+                              min={0}
+                              max={72}
+                              placeholder="0"
+                              value={String(action.config.hours ?? '')}
+                              onChange={(e) => updateActionConfig(index, { hours: e.target.value })}
+                              className="h-8 text-xs"
+                              disabled={loading}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-[10px] text-slate-400">Minutos</Label>
+                            <Input
+                              aria-label={`Minutos de espera de la acción ${index + 1}`}
+                              type="number"
+                              min={0}
+                              max={720}
+                              placeholder="0"
+                              value={String(action.config.minutes ?? '')}
+                              onChange={(e) => updateActionConfig(index, { minutes: e.target.value })}
+                              className="h-8 text-xs"
+                              disabled={loading}
+                            />
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-amber-600 flex items-center gap-1">
+                          <CalendarClock className="w-3 h-3" /> El flujo queda en espera y continúa solo (ideal: mensaje → esperar 3 días → seguimiento IA)
                         </p>
                       </div>
                     )}

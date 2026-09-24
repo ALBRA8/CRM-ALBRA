@@ -20,7 +20,23 @@ export async function GET(req: NextRequest) {
       where: { organizationId: auth.orgId },
       orderBy: { createdAt: 'desc' },
     })
-    return json({ automations: automations.map(serializeAutomation) })
+
+    // Última ejecución por automatización (estado por paso para debugging)
+    const lastRuns = await db.automationRun.findMany({
+      where: { automationId: { in: automations.map((a) => a.id) } },
+      orderBy: { startedAt: 'desc' },
+      take: automations.length * 3,
+    })
+    const lastRunByAutomation = new Map<string, (typeof lastRuns)[number]>()
+    for (const r of lastRuns) {
+      if (!lastRunByAutomation.has(r.automationId)) lastRunByAutomation.set(r.automationId, r)
+    }
+
+    return json({
+      automations: automations.map((a) =>
+        serializeAutomation(a, lastRunByAutomation.get(a.id) ?? null)
+      ),
+    })
   })
 }
 

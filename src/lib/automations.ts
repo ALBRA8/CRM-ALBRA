@@ -92,7 +92,18 @@ export function intervalMinutesFrom(triggerConfig: unknown): number {
 }
 
 /** Shape combinado: campos del frontend (type/trigger/message) + campos del schema */
-export function serializeAutomation(a: {
+export interface SerializedAutomationRun {
+  status: string
+  error: string | null
+  startedAt: Date
+  finishedAt: Date | null
+  resumeAt: Date | null
+  currentStep: number
+  stepStates: string | null
+}
+
+export function serializeAutomation(
+  a: {
   id: string
   name: string
   description: string | null
@@ -106,7 +117,9 @@ export function serializeAutomation(a: {
   lastRunAt: Date | null
   nextRunAt: Date | null
   createdAt: Date
-}) {
+  },
+  lastRun?: SerializedAutomationRun | null
+) {
   let message: string | null = null
   try {
     const cfg = a.triggerConfig ? (JSON.parse(a.triggerConfig) as Record<string, unknown>) : null
@@ -133,5 +146,27 @@ export function serializeAutomation(a: {
     triggerConfig: a.triggerConfig,
     nextRunAt: a.nextRunAt,
     createdAt: a.createdAt,
+    // Última ejecución con estado por paso (debugging estilo Twenty stepLogs)
+    lastRun: lastRun
+      ? {
+          status: lastRun.status,
+          error: lastRun.error,
+          startedAt: lastRun.startedAt,
+          finishedAt: lastRun.finishedAt,
+          resumeAt: lastRun.resumeAt,
+          currentStep: lastRun.currentStep,
+          steps: safeParseSteps(lastRun.stepStates),
+        }
+      : null,
+  }
+}
+
+function safeParseSteps(raw: string | null): Array<{ type: string; status: string; error?: string; ms?: number }> {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
   }
 }

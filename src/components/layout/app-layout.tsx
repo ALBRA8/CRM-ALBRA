@@ -68,7 +68,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Main Content */}
       <main
-        className="flex-1 min-h-screen transition-all duration-200 ease-in-out"
+        className="flex-1 min-w-0 min-h-screen transition-all duration-200 ease-in-out"
         style={{ marginLeft: isDesktop ? (sidebarCollapsed ? 60 : 220) : 0 }}
       >
         {/* Mobile Top Bar */}

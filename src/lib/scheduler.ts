@@ -19,6 +19,18 @@ export async function runDueJobs(): Promise<{ processed: number; results: unknow
   const results: unknown[] = []
   try {
     const now = new Date()
+
+    // 1) Reanudar runs en espera cuyo "Esperar" venció (patrón DELAY de Twenty)
+    let resumed = 0
+    try {
+      const { resumeWaitingRuns } = await import('./workflow-engine')
+      resumed = await resumeWaitingRuns()
+      if (resumed > 0) console.log(`[scheduler] runs reanudados: ${resumed}`)
+    } catch (err) {
+      console.error('[scheduler] fallo reanudando runs en espera', err)
+    }
+
+    // 2) Automatizaciones programadas vencidas
     const due = await db.automation.findMany({
       where: { isActive: true, triggerType: 'schedule', nextRunAt: { lte: now } },
       take: 25,
@@ -42,7 +54,7 @@ export async function runDueJobs(): Promise<{ processed: number; results: unknow
         console.error('[scheduler] fallo ejecutando', automation.id, err)
       }
     }
-    return { processed: due.length, results }
+    return { processed: due.length + resumed, results }
   } finally {
     running = false
   }

@@ -9,7 +9,54 @@
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
-export type FilterOperator = 'equals' | 'contains' | 'gt' | 'lt' | 'in' | 'not_empty'
+export type FilterOperator = 'equals' | 'contains' | 'gt' | 'lt' | 'in' | 'not_empty' | 'is_relative'
+
+/**
+ * Presets de fecha relativa (estilo Twenty CRM `IS_RELATIVE`): se evalúan al
+ * renderizar, no al guardar — la vista "Quotes por vencer" siempre está fresca.
+ */
+export type RelativeDatePreset = 'today' | 'overdue' | 'last_7_days' | 'last_30_days' | 'next_7_days' | 'next_30_days'
+
+export const relativePresetLabels: Record<RelativeDatePreset, string> = {
+  today: 'hoy',
+  overdue: 'vencidas (antes de hoy)',
+  last_7_days: 'en los últimos 7 días',
+  last_30_days: 'en los últimos 30 días',
+  next_7_days: 'en los próximos 7 días',
+  next_30_days: 'en los próximos 30 días',
+}
+
+const daysShift = (n: number): Date => new Date(Date.now() + n * 86_400_000)
+
+/** Rango [from, to] (inclusive, con extremos null = abierto) del preset actual. */
+export function relativePresetRange(preset: string): { from: Date | null; to: Date | null } {
+  switch (preset as RelativeDatePreset) {
+    case 'today': {
+      const from = new Date(); from.setHours(0, 0, 0, 0)
+      const to = new Date(); to.setHours(23, 59, 59, 999)
+      return { from, to }
+    }
+    case 'overdue':
+      return { from: null, to: new Date() }
+    case 'last_7_days':
+      return { from: daysShift(-7), to: new Date() }
+    case 'last_30_days':
+      return { from: daysShift(-30), to: new Date() }
+    case 'next_7_days':
+      return { from: new Date(), to: daysShift(7) }
+    case 'next_30_days':
+      return { from: new Date(), to: daysShift(30) }
+    default:
+      return { from: null, to: null }
+  }
+}
+
+/** Campos de tipo fecha por entidad (para el constructor de filtros). */
+export const dateFieldsByEntity: Record<string, string[]> = {
+  clients: ['lastContactAt'],
+  opportunities: ['nextActionDate'],
+  quotes: ['validUntil'],
+}
 
 export interface SavedViewFilter {
   field: string
@@ -36,6 +83,7 @@ export const operatorLabels: Record<FilterOperator, string> = {
   lt: 'menor que',
   in: 'está en',
   not_empty: 'no está vacío',
+  is_relative: 'con fecha',
 }
 
 export const clientFieldLabels: Record<string, string> = {
@@ -48,6 +96,7 @@ export const clientFieldLabels: Record<string, string> = {
   temperature: 'Temperatura',
   score: 'Score',
   lastContactAt: 'Último contacto',
+  status: 'Estado',
 }
 
 export const opportunityFieldLabels: Record<string, string> = {
@@ -64,6 +113,10 @@ export function describeFilter(f: SavedViewFilter, entity: 'clients' | 'opportun
   const labels = entity === 'clients' ? clientFieldLabels : opportunityFieldLabels
   const field = labels[f.field] ?? f.field
   if (f.operator === 'not_empty') return `${field} ${operatorLabels.not_empty}`
+  if (f.operator === 'is_relative') {
+    const preset = relativePresetLabels[f.value as RelativeDatePreset] ?? f.value
+    return `${field} ${preset ?? ''}`.trim()
+  }
   return `${field} ${operatorLabels[f.operator] ?? f.operator} ${f.value ?? ''}`.trim()
 }
 
@@ -83,10 +136,25 @@ function toNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+function toDate(v: unknown): Date | null {
+  if (v instanceof Date) return v
+  if (typeof v !== 'string' || !v) return null
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
 function matchesFilter(item: unknown, f: SavedViewFilter): boolean {
   const raw = getPath(item, f.field)
 
   switch (f.operator) {
+    case 'is_relative': {
+      const d = toDate(raw)
+      if (!d) return false
+      const { from, to } = relativePresetRange(String(f.value ?? ''))
+      if (from && d < from) return false
+      if (to && d > to) return false
+      return from !== null || to !== null
+    }
     case 'equals':
       return String(raw ?? '').toLowerCase() === String(f.value ?? '').toLowerCase()
     case 'contains':
@@ -130,7 +198,7 @@ export function parseViewFilters(json: string | null | undefined): SavedViewFilt
   try {
     const parsed = JSON.parse(json)
     if (!Array.isArray(parsed)) return []
-    const validOps: FilterOperator[] = ['equals', 'contains', 'gt', 'lt', 'in', 'not_empty']
+    const validOps: FilterOperator[] = ['equals', 'contains', 'gt', 'lt', 'in', 'not_empty', 'is_relative']
     return parsed
       .filter((f: unknown): f is Record<string, unknown> => !!f && typeof f === 'object')
       .map((f) => ({
