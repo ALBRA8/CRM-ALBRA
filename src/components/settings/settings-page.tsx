@@ -67,6 +67,7 @@ import { CustomFieldsTab } from './custom-fields-tab'
 import { CurrencySelector } from './currency-selector'
 import { InstagramTab } from './instagram-tab'
 import { PushNotificationsCard } from './push-notifications-card'
+import { KnowledgeCard } from './knowledge-card'
 // Force recompile trigger
 
 // Use the Next.js API proxy to reach WhatsApp daemon (works from any hostname)
@@ -938,6 +939,9 @@ export function SettingsPage() {
               </CardContent>
             </Card>
           </motion.div>
+
+          {/* Base de Conocimiento del Agente */}
+          <KnowledgeCard />
         </TabsContent>
 
         {/* ============ TAB: WhatsApp ============ */}

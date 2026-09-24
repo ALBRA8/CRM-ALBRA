@@ -1,0 +1,20 @@
+[
+  {
+    "id": "cmufey8im002bmz1y3258j3pa",
+    "number": "COT-0001",
+    "items": [
+      {
+        "sku": "WEB-CORP",
+        "description": "Diseño y desarrollo de sitio web corporativo",
+        "quantity": 1,
+        "unitPrice": 2500
+      },
+      {
+        "sku": "HOST-AN",
+        "description": "Hosting y mantenimiento anual",
+        "quantity": 1,
+        "unitPrice": 300
+      }
+    ]
+  }
+]

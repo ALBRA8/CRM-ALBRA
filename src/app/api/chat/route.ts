@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { llmChat, extractJson } from '@/lib/ai'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { buildNichoContext } from '@/lib/integrations'
+import { buildKnowledgeContext } from '@/lib/knowledge'
 
 /**
  * POST /api/chat — AGENTE COMERCIAL con herramientas (tool-calling por JSON).
@@ -227,7 +228,7 @@ async function executeAgentAction(
 // ---------- Contexto de la organización ----------
 
 async function buildOrgContext(orgId: string, selectedClientId?: string): Promise<string> {
-  const [nichoCtx, recentClients, openOpps, memories, stages] = await Promise.all([
+  const [nichoCtx, recentClients, openOpps, memories, stages, knowledgeCtx] = await Promise.all([
     buildNichoContext(orgId),
     db.client.findMany({
       where: { organizationId: orgId },
@@ -252,6 +253,7 @@ async function buildOrgContext(orgId: string, selectedClientId?: string): Promis
       orderBy: { order: 'asc' },
       select: { id: true, name: true, order: true },
     }),
+    buildKnowledgeContext(orgId),
   ])
 
   let selected = ''
@@ -276,7 +278,7 @@ ${nichoCtx}
 ETAPAS DEL PIPELINE: ${JSON.stringify(stages)}
 CLIENTES RECIENTES: ${JSON.stringify(recentClients)}
 OPORTUNIDADES ABIERTAS: ${JSON.stringify(openOpps)}
-MEMORIAS DEL AGENTE: ${JSON.stringify(memories.map((m) => m.content))}${selected}`
+MEMORIAS DEL AGENTE: ${JSON.stringify(memories.map((m) => m.content))}${selected}${knowledgeCtx}`
 }
 
 const SYSTEM_PROMPT = `Eres el AGENTE COMERCIAL de CRM ALBRA: "Inteligencia Comercial que Trabaja por Ti".

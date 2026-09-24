@@ -168,6 +168,23 @@ class ApiClient {
     return this.request('/automations/run', { method: 'POST' })
   }
 
+  // Knowledge (base de conocimiento del Agente IA)
+  async getKnowledge() {
+    return this.request('/knowledge')
+  }
+
+  async createKnowledge(data: Record<string, unknown>) {
+    return this.request('/knowledge', { method: 'POST', body: JSON.stringify(data) })
+  }
+
+  async updateKnowledge(id: string, data: Record<string, unknown>) {
+    return this.request(`/knowledge/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+  }
+
+  async deleteKnowledge(id: string) {
+    return this.request(`/knowledge/${id}`, { method: 'DELETE' })
+  }
+
   // Dashboard
   async getDashboard() {
     return this.request('/dashboard')

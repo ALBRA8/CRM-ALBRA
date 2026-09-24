@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useState, useEffect } from 'react'
 import { NotificationBell } from '@/components/notifications/notification-bell'
+import { ThemeToggle } from './theme-toggle'
 import { GlobalSearch } from './global-search'
 
 const viewTitles: Record<string, { title: string; subtitle: string }> = {
@@ -93,6 +94,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                   {initials}
                 </AvatarFallback>
               </Avatar>
+              <ThemeToggle />
               <NotificationBell />
             </div>
           </div>
@@ -114,6 +116,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <div className="hidden xl:block text-xs text-slate-400">
                   {currentView.subtitle}
                 </div>
+                <ThemeToggle />
                 <NotificationBell />
               </div>
             </div>

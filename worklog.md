@@ -265,3 +265,21 @@ Stage Summary:
 - GitHub ALBRA8/CRM-ALBRA: main = CRM ALBRA SaaS v2 limpia (1 commit, sin secretos); rama backup-version-anterior = versión anterior preservada.
 - Indicador dev "N" desactivado permanentemente.
 - PENDIENTE AVISO AL USUARIO: revocar/regenerar el token compartido en el chat (quedó expuesto).
+
+---
+Task ID: 10
+Agent: main (Super Z)
+Task: (a) Portar QuoteItem a tabla relacional, (b) base de conocimiento para el Agente IA, (c) tema oscuro funcional con toggle minimalista junto a la campana.
+
+Work Log:
+- (c) TEMA: ThemeProvider de next-themes existía pero NUNCA se montó; el toggle estaba escondido en el menú del sidebar. Montado ThemeProvider (attribute=class, system) en layout.tsx; creado theme-toggle.tsx minimalista (Sun/Moon, h-8 w-8) colocado junto a NotificationBell en header desktop y móvil; eliminado item "Modo Claro/Oscuro" del sidebar (+imports Sun/Moon). globals.css: bloque completo de overrides .dark para utilidades crudas (bg-white/slate-50..200, text-slate-400..900, bordes/divides, estados semánticos con color-mix y text-*-400) — text-white sobre acentos se conserva. Verificado en browser: dark ok, light ok, persiste tras reload (localStorage).
+- (a) QUOTEITEM: schema: model QuoteItem (sku, description, quantity, unitPrice, subtotal, position, cascade) + relación Quote.items; columna items JSON renombrada a legacyItems y LUEGO eliminada. Migración segura: extract-quote-items.js (1 cotización COT-0001, 2 items extraídos) → db push → restore-quote-items.js (rows recreadas). _lib/quotes.ts: quoteItemRows() para nested create, serializeQuote lee relación ordenada por position; rutas quotes y quotes/[id]: include items, create anidado, PUT transaccional (deleteMany+createMany) con recálculo de totales. demo-seed actualizado. tsconfig: excluido repo-compare. UI sin cambios (contrato serializeQuote intacto). Verificado: COT-0001 con items migrados en UI, POST/PUT/DELETE de prueba ok (limpieza hecha).
+- (b) KNOWLEDGE: model Knowledge (title, content, category general|catalogo|terminos|faq|politicas, isActive) + relación Organization. API: /api/knowledge (GET/POST) y /api/knowledge/[id] (GET/PUT/DELETE) con audit. lib/knowledge.ts buildKnowledgeContext() inyectado en channel-agent.ts (canales) y en buildOrgContext del Chat AI. UI: knowledge-card.tsx en pestaña Agente IA (listar/crear/editar/toggle activo/eliminar con dialog y categorías). Seed: 2 entradas demo en demo-seed.ts + seed-knowledge-demo.js para la org demo existente (Catálogo, Términos). Verificado en UI: tarjeta visible en dark, entrada "Preguntas frecuentes" creada desde el diálogo.
+- BUG resuelto en el camino: /api/knowledge 404 → el Write del route.ts principal falló al no existir el directorio y solo quedó [id]/route.ts; re-creado route.ts.
+- Server reiniciado para recargar cliente Prisma tras db push+generate (error findMany inválido por cliente stale).
+
+Stage Summary:
+- Tema oscuro 100% funcional con toggle minimalista junto a la campana y persistencia.
+- QuoteItem relacional en producción con datos migrados sin pérdida.
+- Base de conocimiento operativa e inyectada en el agente (canales + chat).
+- Pendiente: commit + push a GitHub (reconstruir github-main).

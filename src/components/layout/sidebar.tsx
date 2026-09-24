@@ -2,7 +2,6 @@
 
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
-import { useTheme } from 'next-themes'
 import {
   LayoutDashboard,
   Users,
@@ -22,8 +21,6 @@ import {
   MessageCircle,
   Shield,
   Clock,
-  Moon,
-  Sun,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -60,7 +57,6 @@ const navItems = [
 
 export function Sidebar() {
   const { view, setView, user, sidebarCollapsed, toggleSidebar, logout } = useAppStore()
-  const { theme, setTheme } = useTheme()
 
   const initials = user?.name
     ?.split(' ')
@@ -203,11 +199,6 @@ export function Sidebar() {
           <DropdownMenuContent side="top" align="start" className="w-56">
             <DropdownMenuItem className="text-sm text-slate-500" disabled>
               {user?.email ?? ''}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="cursor-pointer">
-              {theme === 'dark' ? <Sun className="w-4 h-4 mr-2" /> : <Moon className="w-4 h-4 mr-2" />}
-              {theme === 'dark' ? 'Modo Claro' : 'Modo Oscuro'}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="text-red-600 cursor-pointer">

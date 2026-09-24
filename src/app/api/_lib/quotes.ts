@@ -1,11 +1,12 @@
-import type { Opportunity, Quote } from '@prisma/client'
-import { isObjArray, num, parseJson, str } from './shared'
+import type { Opportunity, Quote, QuoteItem } from '@prisma/client'
+import { isObjArray, num, str } from './shared'
 import { serializeClientRef } from './clients'
 
 /**
  * Cotizaciones: `number` se expone también como `quoteNumber` (el frontend lo
- * consume así). El descuento se envía como porcentaje y se recalcula como
- * monto absoluto al leer: discount = subtotal - (total - tax).
+ * consume así). Los items viven en la tabla relacional QuoteItem (con sku y
+ * posición). El descuento se envía como porcentaje y se recalcula como monto
+ * absoluto al leer: discount = subtotal - (total - tax).
  */
 
 export interface QuoteItemParsed {
@@ -13,19 +14,6 @@ export interface QuoteItemParsed {
   description: string
   quantity: number
   unitPrice: number
-}
-
-export function parseQuoteItems(raw: string | null): QuoteItemParsed[] {
-  const arr = parseJson<unknown>(raw, [])
-  if (!Array.isArray(arr)) return []
-  return arr
-    .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
-    .map((it) => ({
-      sku: str(it.sku),
-      description: str(it.description) ?? '',
-      quantity: num(it.quantity, 1) || 1,
-      unitPrice: num(it.unitPrice, 0),
-    }))
 }
 
 export function itemsFromBody(body: Record<string, unknown>): QuoteItemParsed[] | null {
@@ -45,6 +33,18 @@ export function computeQuoteTotals(items: QuoteItemParsed[], discountPct: number
   const tax = base * 0.16
   const total = base + tax
   return { subtotal, discount, tax, total }
+}
+
+/** Items listos para `create`/`update` anidado (Prisma resuelve el quoteId). */
+export function quoteItemRows(items: QuoteItemParsed[]) {
+  return items.map((it, idx) => ({
+    sku: it.sku,
+    description: it.description,
+    quantity: it.quantity,
+    unitPrice: it.unitPrice,
+    subtotal: it.quantity * it.unitPrice,
+    position: idx,
+  }))
 }
 
 /** Número secuencial COT-0001 por organización (a prueba de colisiones simples). */
@@ -69,7 +69,7 @@ export function quoteDiscountAmount(q: Pick<Quote, 'subtotal' | 'tax' | 'total'>
 interface QuoteRecordLike {
   id: string
   number: string
-  items: string
+  items: QuoteItem[]
   subtotal: number
   tax: number
   total: number
@@ -88,7 +88,7 @@ export function serializeQuote(
   q: QuoteRecordLike,
   opts?: { includeItems?: boolean; clientAttrs?: Parameters<typeof serializeClientRef>[1] }
 ): Record<string, unknown> {
-  const items = parseQuoteItems(q.items)
+  const items = [...(q.items ?? [])].sort((a, b) => a.position - b.position)
   return {
     id: q.id,
     quoteNumber: q.number,
@@ -106,13 +106,13 @@ export function serializeQuote(
     opportunityId: q.opportunityId,
     items: opts?.includeItems === false
       ? undefined
-      : items.map((it, idx) => ({
-          id: `${q.id}-item-${idx + 1}`,
+      : items.map((it) => ({
+          id: it.id,
           sku: it.sku,
           description: it.description,
           quantity: it.quantity,
           unitPrice: it.unitPrice,
-          subtotal: it.quantity * it.unitPrice,
+          subtotal: it.subtotal ?? it.quantity * it.unitPrice,
         })),
     _count: { items: items.length },
     createdAt: q.createdAt,

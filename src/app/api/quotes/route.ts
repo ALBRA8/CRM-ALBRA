@@ -5,7 +5,7 @@ import { auditAndTimeline, parseIntParam } from '@/lib/api-helpers'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { handle, json, readBody, requireFields, str, dateOrNull, numOrNull, clamp, qparam } from '../_lib/shared'
 import { loadClientAttrs } from '../_lib/clients'
-import { computeQuoteTotals, itemsFromBody, nextQuoteNumber, serializeQuote } from '../_lib/quotes'
+import { computeQuoteTotals, itemsFromBody, nextQuoteNumber, quoteItemRows, serializeQuote } from '../_lib/quotes'
 
 /** GET /api/quotes — filtros: status, clientId. */
 export async function GET(req: NextRequest) {
@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
       include: {
         client: { select: { id: true, name: true, email: true, phone: true, address: true } },
         opportunity: { select: { id: true, title: true } },
+        items: true,
       },
     })
 
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest) {
         number,
         clientId,
         opportunityId: opportunityId || null,
-        items: JSON.stringify(items),
+        items: { create: quoteItemRows(items) },
         subtotal: totals.subtotal,
         tax: totals.tax,
         total: totals.total,
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
       include: {
         client: { select: { id: true, name: true, email: true, phone: true, address: true } },
         opportunity: { select: { id: true, title: true } },
+        items: true,
       },
     })
 

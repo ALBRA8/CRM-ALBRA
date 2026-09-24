@@ -185,7 +185,16 @@ async function seedDemoData(orgId: string): Promise<void> {
       number: 'COT-0001',
       clientId: maria.id,
       opportunityId: opp1.id,
-      items: JSON.stringify(items),
+      items: {
+        create: items.map((it, idx) => ({
+          sku: it.sku,
+          description: it.description,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          subtotal: it.quantity * it.unitPrice,
+          position: idx,
+        })),
+      },
       subtotal,
       tax,
       total: base + tax,
@@ -316,6 +325,28 @@ async function seedDemoData(orgId: string): Promise<void> {
           { type: 'wait', config: { days: 4 } },
           { type: 'ai_followup', config: { instruction: 'Redacta un mensaje corto y cordial que agradezca la confianza y pida una reseña o recomendación tras cerrar el servicio. Si percibes insatisfacción en el historial, ofrece en su lugar una llamada de seguimiento.' } },
         ]),
+        isActive: true,
+      },
+    ],
+  })
+
+  // Base de conocimiento del Agente IA
+  await db.knowledge.createMany({
+    data: [
+      {
+        organizationId: orgId,
+        title: 'Catálogo de servicios y precios',
+        category: 'catalogo',
+        content:
+          'Nuestro producto estrella es la Consultoría CRM ALBRA (precio: $2,500). También ofrecemos auditorías de datos por $1,200 y desarrollo de sitios web corporativos desde $2,000. El hosting y mantenimiento anual cuesta $300.',
+        isActive: true,
+      },
+      {
+        organizationId: orgId,
+        title: 'Términos y condiciones',
+        category: 'terminos',
+        content:
+          'Los pagos se realizan vía transferencia o link de pago. Tenemos garantía de 12 meses en todos nuestros productos tecnológicos. Las revisiones están incluidas según el alcance acordado en cada cotización.',
         isActive: true,
       },
     ],

@@ -1,5 +1,6 @@
 import { db } from './db'
 import { llmChat } from './ai'
+import { buildKnowledgeContext } from './knowledge'
 
 /**
  * Auto-respuesta del agente IA para canales entrantes (Telegram / Instagram).
@@ -33,12 +34,13 @@ export async function llmReplyOrNotification(opts: {
   }
 
   try {
+    const knowledgeContext = await buildKnowledgeContext(orgId)
     const reply = await llmChat(
       orgId,
       [
         {
           role: 'system',
-          content: `Eres el agente comercial por ${channelLabel} de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\n\nCONTEXTO DEL NEGOCIO:\n${nichoContext}\n\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
+          content: `Eres el agente comercial por ${channelLabel} de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\n\nCONTEXTO DEL NEGOCIO:\n${nichoContext}${knowledgeContext}\n\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
         },
         { role: 'user', content: incomingText },
       ],

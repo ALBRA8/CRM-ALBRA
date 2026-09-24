@@ -6,7 +6,7 @@ import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { handle, json, readBody, str, dateOrNull, numOrNull, clamp } from '../../_lib/shared'
 import { loadClientAttrs } from '../../_lib/clients'
-import { computeQuoteTotals, itemsFromBody, parseQuoteItems, quoteDiscountAmount, serializeQuote } from '../../_lib/quotes'
+import { computeQuoteTotals, itemsFromBody, quoteItemRows, quoteDiscountAmount, serializeQuote } from '../../_lib/quotes'
 
 const QUOTE_STATUS_LABELS: Record<string, string> = {
   draft: 'Borrador',
@@ -26,6 +26,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: {
         client: { select: { id: true, name: true, email: true, phone: true, address: true } },
         opportunity: { select: { id: true, title: true } },
+        items: { orderBy: { position: 'asc' } },
       },
     })
     if (!quote) throw new HttpError(404, 'Cotización no encontrada')
@@ -43,7 +44,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   return handle(async () => {
     const auth = requireAuth(req)
     const { id } = await params
-    const existing = await db.quote.findFirst({ where: { id, organizationId: auth.orgId } })
+    const existing = await db.quote.findFirst({
+      where: { id, organizationId: auth.orgId },
+      include: { items: { orderBy: { position: 'asc' } } },
+    })
     if (!existing) throw new HttpError(404, 'Cotización no encontrada')
     const body = await readBody(req)
 
@@ -53,13 +57,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const newItems = itemsFromBody(body)
     const hasDiscount = 'discount' in body
     if (newItems || hasDiscount) {
-      const items = newItems ?? parseQuoteItems(existing.items)
+      const items = newItems ?? existing.items.sort((a, b) => a.position - b.position).map((it) => ({ sku: it.sku, description: it.description, quantity: it.quantity, unitPrice: it.unitPrice }))
       // % de descuento: si el body lo trae se usa; si no, se deriva del monto guardado
       const prevDiscountAmount = quoteDiscountAmount(existing)
       const derivedPct = existing.subtotal > 0 ? (prevDiscountAmount / existing.subtotal) * 100 : 0
       const pct = clamp(hasDiscount ? numOrNull(body.discount) ?? 0 : derivedPct, 0, 100)
       const totals = computeQuoteTotals(items, pct)
-      if (newItems) data.items = JSON.stringify(newItems)
       data.subtotal = totals.subtotal
       data.tax = totals.tax
       data.total = totals.total
@@ -82,17 +85,25 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const statusChanged = Boolean(newStatus && newStatus !== existing.status)
     if (newStatus) data.status = newStatus
 
-    if (Object.keys(data).length === 0) {
+    if (Object.keys(data).length === 0 && !newItems) {
       return json({ quote: serializeQuote(existing) })
     }
 
-    const updated = await db.quote.update({
-      where: { id },
-      data,
-      include: {
-        client: { select: { id: true, name: true, email: true, phone: true, address: true } },
-        opportunity: { select: { id: true, title: true } },
-      },
+    // Actualiza campos + reemplaza items en una transacción
+    const updated = await db.$transaction(async (tx) => {
+      if (newItems) {
+        await tx.quoteItem.deleteMany({ where: { quoteId: id } })
+        await tx.quoteItem.createMany({ data: quoteItemRows(newItems).map((r) => ({ ...r, quoteId: id })) })
+      }
+      return tx.quote.update({
+        where: { id },
+        data,
+        include: {
+          client: { select: { id: true, name: true, email: true, phone: true, address: true } },
+          opportunity: { select: { id: true, title: true } },
+          items: { orderBy: { position: 'asc' } },
+        },
+      })
     })
 
     if (statusChanged && newStatus) {
