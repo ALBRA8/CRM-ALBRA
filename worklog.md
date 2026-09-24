@@ -182,3 +182,23 @@ Work Log:
 
 Stage Summary:
 - Entregado: pipeline con UNA sola barra, workflows con pausa durable multi-día (patrón DELAY Twenty), observabilidad de ejecuciones (stepStates + UI), vistas con fechas relativas siempre frescas + constructor de filtros. Descartadas honestamente las mejoras tipo adorno.
+
+---
+Task ID: 7 (post-entrega)
+Agent: main (Super Z)
+Task: Reordenar pestañas de Configuración por importancia + comparar con repo ALBRA8/CRM-ALBRA (blindaje .gitignore, .env.example) y replicar lo que faltara.
+
+Work Log:
+- Intento de clon de github.com/ALBRA8/CRM-ALBRA: git clone falla (sin credenciales) y API de GitHub devuelve 404 → repo privado/no público. Se usó como checklist de comparación el detalle dado por el usuario (.env bloqueado, custom.db excluido, .wa-auth excluida, .env.example creado).
+- Comparación: aquí ya había `.env*` en .gitignore (✓), pero faltaban: exclusión de db/ (*.db), de .wa-auth/, y la plantilla .env.example (✗ x3).
+- Reordenado TabsList de settings-page.tsx según criterio del usuario (izq→der por importancia): Negocio → Agente IA (ex Chat AI) → Google → WhatsApp → Instagram → Telegram → Email SMTP → Inventario → Plantillas → Campos Custom → Equipo → Respaldo. defaultValue="negocio". Comentario en código explica el orden. Los TabsContent no se movieron (Radix Tabs renderiza por value; el orden visual lo dan los triggers).
+- Blindaje .gitignore: sección "BLINDAJE DE DATOS PRIVADOS" con db/, *.db (+journal/shm/wal), .wa-auth/, wa-auth/, /upload/, /tool-results/, /repo-compare/ y `!.env.example`.
+- Creado .env.example documentado (DATABASE_URL, APP_SECRET, APP_ENCRYPTION_KEY, SMTP_*, WHATSAPP_DAEMON_URL, WHATSAPP_VERIFY_TOKEN) — inventario real de process.env usado en src/ (sin valores reales).
+- Descubrimiento clave: `.env` y `db/custom.db` estaban TRACKED en el índice git (las reglas de ignore no aplican a archivos rastreados; check-ignore los reportaba como no ignorados). Aplicado `git rm --cached` a .env, db/custom.db, .zscripts/dev.pid y download/crm_albra_frontend_recuperado.zip (runtime/binary junk). Post-untrack: check-ignore ahora matchea .env por .env* (línea 34) y db/custom.db por db/ (línea 60).
+- Incidente corregido: un `git rm -r --cached .` accidental durante la sesión vació el índice; restaurado con `git reset` (sin pérdida de datos).
+- Commit 51f7c78 "chore: blindaje datos privados (.env, db/, .wa-auth) + plantilla .env.example + config ordenada por importancia". Historial previo aún contiene .env/db antiguos: si algún día se publica este repo, hacer scrub (git filter-repo) o partir del repo GitHub del usuario.
+- Verificación en vivo (agent-browser, sesión demo): tablist en el orden nuevo exacto, tab "Negocio" seleccionada por defecto, tabpanel Negocio renderiza (Moneda, Identidad del Negocio, personalidad del agente). Screenshot: tool-results/settings-orden.png. Landing 200, eslint 0 errores en settings-page, tsc sin errores del proyecto (solo examples/ y skills/ preexistentes).
+
+Stage Summary:
+- Configuración ordenada por importancia (Negocio primero, Agente IA 2º, Google 3º, canales de comunicación después, operativas al final) y verificada en navegador.
+- Blindaje del repo local replicado al del usuario: .env y db des-rastreados e ignorados, .wa-auth excluida, .env.example profesional commiteable. Repo ALBRA8/CRM-ALBRA inaccesible (404 privado) — pendiente que el usuario lo haga público o comparta detalle adicional si quiere comparación más profunda.
