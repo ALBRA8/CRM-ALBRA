@@ -74,6 +74,7 @@ import { es } from 'date-fns/locale'
 import { toast } from 'sonner'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ClientFormDialog } from './client-form-dialog'
+import { ClientTimeline } from './client-timeline'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -468,7 +469,7 @@ export function ClientDetail() {
       return
     }
     try {
-      await api.updateClientPreferences(client.id, [{ category: prefCategory, key: prefKey, value: prefValue }])
+      await api.updateClientPreferences(client.id, [{ category: prefCategory, key: prefKey, value: prefValue }] as unknown as Record<string, unknown>)
       setPrefCategory('')
       setPrefKey('')
       setPrefValue('')
@@ -664,6 +665,7 @@ export function ClientDetail() {
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
         <TabsList className="bg-slate-100 h-auto flex-wrap gap-1 p-1">
           <TabsTrigger value="general" className="text-xs sm:text-sm">General</TabsTrigger>
+          <TabsTrigger value="timeline" className="text-xs sm:text-sm">Timeline</TabsTrigger>
           <TabsTrigger value="opportunities" className="text-xs sm:text-sm">Oportunidades</TabsTrigger>
           <TabsTrigger value="history" className="text-xs sm:text-sm">Historial</TabsTrigger>
           <TabsTrigger value="preferences" className="text-xs sm:text-sm">Preferencias</TabsTrigger>
@@ -929,6 +931,11 @@ export function ClientDetail() {
           </Card>
         </TabsContent>
 
+        {/* ─── Timeline Tab (Historial unificado) ─────────────────────────── */}
+        <TabsContent value="timeline">
+          <ClientTimeline clientId={client.id} />
+        </TabsContent>
+
         {/* ─── Oportunidades Tab ──────────────────────────────────────────── */}
         <TabsContent value="opportunities">
           <Card className="border-0 shadow-sm">
@@ -954,7 +961,7 @@ export function ClientDetail() {
                       >
                         <div
                           className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-offset-2"
-                          style={{ backgroundColor: opp.stage.color, ringColor: opp.stage.color }}
+                          style={{ backgroundColor: opp.stage.color }}
                         />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-slate-900 truncate">{opp.title}</p>

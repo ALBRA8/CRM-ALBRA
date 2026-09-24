@@ -1,0 +1,1446 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useState, useCallback } from 'react'
+     4→import { api } from '@/lib/api'
+     5→import { useAppStore } from '@/lib/store'
+     6→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+     7→import { Badge } from '@/components/ui/badge'
+     8→import { Button } from '@/components/ui/button'
+     9→import { Input } from '@/components/ui/input'
+    10→import { Label } from '@/components/ui/label'
+    11→import { Textarea } from '@/components/ui/textarea'
+    12→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    13→import { Skeleton } from '@/components/ui/skeleton'
+    14→import { Separator } from '@/components/ui/separator'
+    15→import { Progress } from '@/components/ui/progress'
+    16→import {
+    17→  Select,
+    18→  SelectContent,
+    19→  SelectItem,
+    20→  SelectTrigger,
+    21→  SelectValue,
+    22→} from '@/components/ui/select'
+    23→import {
+    24→  AlertDialog,
+    25→  AlertDialogAction,
+    26→  AlertDialogCancel,
+    27→  AlertDialogContent,
+    28→  AlertDialogDescription,
+    29→  AlertDialogFooter,
+    30→  AlertDialogHeader,
+    31→  AlertDialogTitle,
+    32→} from '@/components/ui/alert-dialog'
+    33→import {
+    34→  Tooltip,
+    35→  TooltipContent,
+    36→  TooltipProvider,
+    37→  TooltipTrigger,
+    38→} from '@/components/ui/tooltip'
+    39→import {
+    40→  ArrowLeft,
+    41→  Mail,
+    42→  Phone,
+    43→  Building2,
+    44→  MapPin,
+    45→  Calendar,
+    46→  Clock,
+    47→  Save,
+    48→  Plus,
+    49→  Trash2,
+    50→  MessageSquare,
+    51→  FileText,
+    52→  CalendarPlus,
+    53→  Edit3,
+    54→  Eye,
+    55→  TrendingUp,
+    56→  Tag,
+    57→  StickyNote,
+    58→  Hash,
+    59→  MapPinned,
+    60→  UserCheck,
+    61→  Sparkles,
+    62→  ChevronRight,
+    63→  AlertCircle,
+    64→  Activity,
+    65→  Database,
+    66→  CheckCircle,
+    67→  XCircle,
+    68→  ArrowRightLeft,
+    69→  FilePlus,
+    70→  MessageCircle,
+    71→} from 'lucide-react'
+    72→import { format, formatDistanceToNow } from 'date-fns'
+    73→import { es } from 'date-fns/locale'
+    74→import { toast } from 'sonner'
+    75→import { motion, AnimatePresence } from 'framer-motion'
+    76→import { ClientFormDialog } from './client-form-dialog'
+    77→
+    78→// ─── Types ───────────────────────────────────────────────────────────────────
+    79→
+    80→interface ClientDetail {
+    81→  id: string
+    82→  name: string
+    83→  email?: string | null
+    84→  phone: string
+    85→  identifier?: string | null
+    86→  company?: string | null
+    87→  address?: string | null
+    88→  city?: string | null
+    89→  notes?: string | null
+    90→  source: string
+    91→  tags?: string | null
+    92→  score: number
+    93→  temperature: string
+    94→  lastContactAt?: string | null
+    95→  createdAt: string
+    96→}
+    97→
+    98→interface Preference {
+    99→  id: string
+   100→  category: string
+   101→  key: string
+   102→  value: string
+   103→}
+   104→
+   105→interface HistoryEntry {
+   106→  id: string
+   107→  serviceType: string
+   108→  description: string
+   109→  amount?: number | null
+   110→  date: string
+   111→  notes?: string | null
+   112→}
+   113→
+   114→interface Opportunity {
+   115→  id: string
+   116→  title: string
+   117→  interest: string
+   118→  estimatedValue: number
+   119→  probability: number
+   120→  stage: { id: string; name: string; color: string }
+   121→  nextAction?: string | null
+   122→  createdAt: string
+   123→}
+   124→
+   125→interface Reservation {
+   126→  id: string
+   127→  title: string
+   128→  date: string
+   129→  duration: number
+   130→  status: string
+   131→  serviceType?: string | null
+   132→}
+   133→
+   134→interface Quote {
+   135→  id: string
+   136→  quoteNumber: string
+   137→  status: string
+   138→  total: number
+   139→  createdAt: string
+   140→}
+   141→
+   142→interface CustomFieldDef {
+   143→  id: string
+   144→  name: string
+   145→  fieldType: string
+   146→  entity: string
+   147→  options?: string | null
+   148→  isRequired: boolean
+   149→  order: number
+   150→  isActive: boolean
+   151→}
+   152→
+   153→interface CustomFieldValueWithField {
+   154→  id: string
+   155→  fieldId: string
+   156→  entityId: string
+   157→  value?: string | null
+   158→  field: CustomFieldDef
+   159→}
+   160→
+   161→interface ActivityLogEntry {
+   162→  id: string
+   163→  action: string
+   164→  entity: string
+   165→  entityId?: string | null
+   166→  description: string
+   167→  metadata?: string | null
+   168→  createdAt: string
+   169→}
+   170→
+   171→// ─── Constants ───────────────────────────────────────────────────────────────
+   172→
+   173→const tempConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+   174→  Frio: { label: 'Frío', color: 'bg-slate-100 text-slate-700 border-slate-200', icon: <span className="text-xs">❄️</span> },
+   175→  Tibio: { label: 'Tibio', color: 'bg-amber-50 text-amber-700 border-amber-200', icon: <span className="text-xs">🌤️</span> },
+   176→  Caliente: { label: 'Caliente', color: 'bg-orange-50 text-orange-700 border-orange-200', icon: <span className="text-xs">🔥</span> },
+   177→  Fuego: { label: 'Fuego', color: 'bg-red-50 text-red-700 border-red-200', icon: <span className="text-xs">🔥</span> },
+   178→}
+   179→
+   180→const sourceLabels: Record<string, string> = {
+   181→  manual: 'Manual',
+   182→  whatsapp: 'WhatsApp',
+   183→  telegram: 'Telegram',
+   184→  web: 'Web',
+   185→  referral: 'Referido',
+   186→}
+   187→
+   188→const stageColors: Record<string, string> = {
+   189→  prospeccion: 'bg-sky-100 text-sky-700',
+   190→  calificacion: 'bg-indigo-100 text-indigo-700',
+   191→  propuesta: 'bg-amber-100 text-amber-700',
+   192→  negociacion: 'bg-orange-100 text-orange-700',
+   193→  cierre: 'bg-emerald-100 text-emerald-700',
+   194→}
+   195→
+   196→const statusColors: Record<string, string> = {
+   197→  confirmed: 'bg-emerald-100 text-emerald-700',
+   198→  cancelled: 'bg-red-100 text-red-700',
+   199→  completed: 'bg-slate-100 text-slate-600',
+   200→  no_show: 'bg-amber-100 text-amber-700',
+   201→  pending: 'bg-sky-100 text-sky-700',
+   202→}
+   203→
+   204→const statusLabels: Record<string, string> = {
+   205→  confirmed: 'Confirmada',
+   206→  cancelled: 'Cancelada',
+   207→  completed: 'Completada',
+   208→  no_show: 'No asistió',
+   209→  pending: 'Pendiente',
+   210→}
+   211→
+   212→const quoteStatusColors: Record<string, string> = {
+   213→  draft: 'bg-slate-100 text-slate-600',
+   214→  sent: 'bg-sky-100 text-sky-700',
+   215→  accepted: 'bg-emerald-100 text-emerald-700',
+   216→  rejected: 'bg-red-100 text-red-700',
+   217→  expired: 'bg-amber-100 text-amber-700',
+   218→}
+   219→
+   220→const quoteStatusLabels: Record<string, string> = {
+   221→  draft: 'Borrador',
+   222→  sent: 'Enviada',
+   223→  accepted: 'Aceptada',
+   224→  rejected: 'Rechazada',
+   225→  expired: 'Expirada',
+   226→}
+   227→
+   228→const formatCurrency = (v: number) =>
+   229→  new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(v)
+   230→
+   231→// ─── Score Ring Component ────────────────────────────────────────────────────
+   232→
+   233→function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
+   234→  const strokeWidth = 4
+   235→  const radius = (size - strokeWidth) / 2
+   236→  const circumference = 2 * Math.PI * radius
+   237→  const offset = circumference - (score / 100) * circumference
+   238→
+   239→  const color = score >= 80 ? '#10b981' : score >= 60 ? '#14b8a6' : score >= 40 ? '#f59e0b' : score >= 20 ? '#f97316' : '#ef4444'
+   240→
+   241→  return (
+   242→    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+   243→      <svg width={size} height={size} className="-rotate-90">
+   244→        <circle
+   245→          cx={size / 2}
+   246→          cy={size / 2}
+   247→          r={radius}
+   248→          fill="none"
+   249→          stroke="#f1f5f9"
+   250→          strokeWidth={strokeWidth}
+   251→        />
+   252→        <circle
+   253→          cx={size / 2}
+   254→          cy={size / 2}
+   255→          r={radius}
+   256→          fill="none"
+   257→          stroke={color}
+   258→          strokeWidth={strokeWidth}
+   259→          strokeDasharray={circumference}
+   260→          strokeDashoffset={offset}
+   261→          strokeLinecap="round"
+   262→          className="transition-all duration-700 ease-out"
+   263→        />
+   264→      </svg>
+   265→      <span className="absolute text-xs font-bold text-slate-700">{score}</span>
+   266→    </div>
+   267→  )
+   268→}
+   269→
+   270→// ─── Main Component ──────────────────────────────────────────────────────────
+   271→
+   272→export function ClientDetail() {
+   273→  const { selectedClientId, setView } = useAppStore()
+   274→  const [client, setClient] = useState<ClientDetail | null>(null)
+   275→  const [loading, setLoading] = useState(true)
+   276→
+   277→  // Tab data
+   278→  const [preferences, setPreferences] = useState<Preference[]>([])
+   279→  const [history, setHistory] = useState<HistoryEntry[]>([])
+   280→  const [opportunities, setOpportunities] = useState<Opportunity[]>([])
+   281→  const [reservations, setReservations] = useState<Reservation[]>([])
+   282→  const [quotes, setQuotes] = useState<Quote[]>([])
+   283→
+   284→  // Tab loading states
+   285→  const [prefLoading, setPrefLoading] = useState(false)
+   286→  const [histLoading, setHistLoading] = useState(false)
+   287→  const [oppLoading, setOppLoading] = useState(false)
+   288→  const [resLoading, setResLoading] = useState(false)
+   289→  const [quotesLoading, setQuotesLoading] = useState(false)
+   290→
+   291→  // Custom fields state
+   292→  const [customFieldValues, setCustomFieldValues] = useState<CustomFieldValueWithField[]>([])
+   293→  const [cfLoading, setCfLoading] = useState(false)
+   294→
+   295→  // Activity log state
+   296→  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([])
+   297→  const [activityLoading, setActivityLoading] = useState(false)
+   298→
+   299→  // Dialog states
+   300→  const [showEditForm, setShowEditForm] = useState(false)
+   301→  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+   302→  const [activeTab, setActiveTab] = useState('general')
+   303→
+   304→  // Inline edit state for General tab
+   305→  const [editingField, setEditingField] = useState<string | null>(null)
+   306→  const [editValue, setEditValue] = useState('')
+   307→
+   308→  // Add preference form
+   309→  const [prefCategory, setPrefCategory] = useState('')
+   310→  const [prefKey, setPrefKey] = useState('')
+   311→  const [prefValue, setPrefValue] = useState('')
+   312→
+   313→  // Add history form
+   314→  const [histService, setHistService] = useState('')
+   315→  const [histDesc, setHistDesc] = useState('')
+   316→  const [histAmount, setHistAmount] = useState('')
+   317→
+   318→  // ─── Data Loading ────────────────────────────────────────────────────────
+   319→
+   320→  const loadClient = useCallback(async () => {
+   321→    if (!selectedClientId) return
+   322→    try {
+   323→      setLoading(true)
+   324→      const data = await api.getClient(selectedClientId)
+   325→      setClient(data.client as ClientDetail)
+   326→    } catch {
+   327→      toast.error('Error al cargar cliente')
+   328→    } finally {
+   329→      setLoading(false)
+   330→    }
+   331→  }, [selectedClientId])
+   332→
+   333→  const loadPreferences = useCallback(async () => {
+   334→    if (!selectedClientId) return
+   335→    try {
+   336→      setPrefLoading(true)
+   337→      const data = await api.getClientPreferences(selectedClientId)
+   338→      setPreferences(data.preferences as Preference[] ?? [])
+   339→    } catch {
+   340→      // Preferences may not exist yet
+   341→    } finally {
+   342→      setPrefLoading(false)
+   343→    }
+   344→  }, [selectedClientId])
+   345→
+   346→  const loadHistory = useCallback(async () => {
+   347→    if (!selectedClientId) return
+   348→    try {
+   349→      setHistLoading(true)
+   350→      const data = await api.getClientHistory(selectedClientId)
+   351→      setHistory(data.history as HistoryEntry[] ?? [])
+   352→    } catch {
+   353→      // History may not exist yet
+   354→    } finally {
+   355→      setHistLoading(false)
+   356→    }
+   357→  }, [selectedClientId])
+   358→
+   359→  const loadOpportunities = useCallback(async () => {
+   360→    if (!selectedClientId) return
+   361→    try {
+   362→      setOppLoading(true)
+   363→      const data = await api.getOpportunities({ clientId: selectedClientId })
+   364→      setOpportunities(data.opportunities as Opportunity[] ?? [])
+   365→    } catch {
+   366→      // May fail if no opportunities
+   367→    } finally {
+   368→      setOppLoading(false)
+   369→    }
+   370→  }, [selectedClientId])
+   371→
+   372→  const loadReservations = useCallback(async () => {
+   373→    if (!selectedClientId) return
+   374→    try {
+   375→      setResLoading(true)
+   376→      const data = await api.getReservations({ clientId: selectedClientId })
+   377→      setReservations(data.reservations as Reservation[] ?? [])
+   378→    } catch {
+   379→      // May fail
+   380→    } finally {
+   381→      setResLoading(false)
+   382→    }
+   383→  }, [selectedClientId])
+   384→
+   385→  const loadQuotes = useCallback(async () => {
+   386→    if (!selectedClientId) return
+   387→    try {
+   388→      setQuotesLoading(true)
+   389→      const data = await api.getQuotes({ clientId: selectedClientId })
+   390→      setQuotes(data.quotes as Quote[] ?? [])
+   391→    } catch {
+   392→      // May fail
+   393→    } finally {
+   394→      setQuotesLoading(false)
+   395→    }
+   396→  }, [selectedClientId])
+   397→
+   398→  const loadCustomFieldValues = useCallback(async () => {
+   399→    if (!selectedClientId) return
+   400→    try {
+   401→      setCfLoading(true)
+   402→      const data = await api.getCustomFieldValues(selectedClientId)
+   403→      setCustomFieldValues((data.values as CustomFieldValueWithField[]) ?? [])
+   404→    } catch {
+   405→      // May fail
+   406→    } finally {
+   407→      setCfLoading(false)
+   408→    }
+   409→  }, [selectedClientId])
+   410→
+   411→  const loadActivityLogs = useCallback(async () => {
+   412→    if (!selectedClientId) return
+   413→    try {
+   414→      setActivityLoading(true)
+   415→      const data = await api.getActivityLog({ entityId: selectedClientId, limit: '30' })
+   416→      setActivityLogs((data.logs as ActivityLogEntry[]) ?? [])
+   417→    } catch {
+   418→      // May fail
+   419→    } finally {
+   420→      setActivityLoading(false)
+   421→    }
+   422→  }, [selectedClientId])
+   423→
+   424→  useEffect(() => {
+   425→    loadClient()
+   426→  }, [loadClient])
+   427→
+   428→  // Lazy-load tab data when tab changes
+   429→  const handleTabChange = (tab: string) => {
+   430→    setActiveTab(tab)
+   431→    if (tab === 'preferences' && preferences.length === 0 && !prefLoading) loadPreferences()
+   432→    if (tab === 'history' && history.length === 0 && !histLoading) loadHistory()
+   433→    if (tab === 'opportunities' && opportunities.length === 0 && !oppLoading) loadOpportunities()
+   434→    if (tab === 'reservations' && reservations.length === 0 && !resLoading) loadReservations()
+   435→    if (tab === 'quotes' && quotes.length === 0 && !quotesLoading) loadQuotes()
+   436→    if (tab === 'custom' && customFieldValues.length === 0 && !cfLoading) loadCustomFieldValues()
+   437→    if (tab === 'activity' && activityLogs.length === 0 && !activityLoading) loadActivityLogs()
+   438→  }
+   439→
+   440→  // ─── Handlers ────────────────────────────────────────────────────────────
+   441→
+   442→  const handleInlineEdit = (field: string, currentValue: string) => {
+   443→    setEditingField(field)
+   444→    setEditValue(currentValue ?? '')
+   445→  }
+   446→
+   447→  const handleInlineSave = async () => {
+   448→    if (!client || !editingField) return
+   449→    try {
+   450→      await api.updateClient(client.id, { [editingField]: editValue || null })
+   451→      toast.success('Campo actualizado')
+   452→      setEditingField(null)
+   453→      setEditValue('')
+   454→      loadClient()
+   455→    } catch {
+   456→      toast.error('Error al actualizar')
+   457→    }
+   458→  }
+   459→
+   460→  const handleInlineCancel = () => {
+   461→    setEditingField(null)
+   462→    setEditValue('')
+   463→  }
+   464→
+   465→  const handleAddPreference = async () => {
+   466→    if (!client || !prefCategory || !prefKey || !prefValue) {
+   467→      toast.error('Completa todos los campos de preferencia')
+   468→      return
+   469→    }
+   470→    try {
+   471→      await api.updateClientPreferences(client.id, [{ category: prefCategory, key: prefKey, value: prefValue }])
+   472→      setPrefCategory('')
+   473→      setPrefKey('')
+   474→      setPrefValue('')
+   475→      toast.success('Preferencia agregada')
+   476→      loadPreferences()
+   477→    } catch {
+   478→      toast.error('Error al agregar preferencia')
+   479→    }
+   480→  }
+   481→
+   482→  const handleAddHistory = async () => {
+   483→    if (!client || !histService || !histDesc) {
+   484→      toast.error('Tipo de servicio y descripción son requeridos')
+   485→      return
+   486→    }
+   487→    try {
+   488→      await api.addClientHistory(client.id, {
+   489→        serviceType: histService,
+   490→        description: histDesc,
+   491→        amount: histAmount ? parseFloat(histAmount) : null,
+   492→      })
+   493→      setHistService('')
+   494→      setHistDesc('')
+   495→      setHistAmount('')
+   496→      toast.success('Historial agregado')
+   497→      loadHistory()
+   498→    } catch {
+   499→      toast.error('Error al agregar historial')
+   500→    }
+   501→  }
+   502→
+   503→  const handleDeleteClient = async () => {
+   504→    if (!client) return
+   505→    try {
+   506→      await api.deleteClient(client.id)
+   507→      toast.success('Cliente eliminado')
+   508→      setView('clients')
+   509→    } catch {
+   510→      toast.error('Error al eliminar cliente')
+   511→    }
+   512→  }
+   513→
+   514→  // ─── Loading State ──────────────────────────────────────────────────────
+   515→
+   516→  if (loading) {
+   517→    return (
+   518→      <div className="space-y-6">
+   519→        <div className="flex items-center gap-4">
+   520→          <Skeleton className="h-10 w-10 rounded-full" />
+   521→          <div className="flex-1 space-y-2">
+   522→            <Skeleton className="h-7 w-64" />
+   523→            <Skeleton className="h-4 w-96" />
+   524→          </div>
+   525→        </div>
+   526→        <Skeleton className="h-10 w-full max-w-xl rounded-lg" />
+   527→        <Skeleton className="h-80 w-full rounded-xl" />
+   528→      </div>
+   529→    )
+   530→  }
+   531→
+   532→  if (!client) {
+   533→    return (
+   534→      <div className="text-center py-20">
+   535→        <AlertCircle className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+   536→        <p className="text-slate-500 text-lg">Cliente no encontrado</p>
+   537→        <Button onClick={() => setView('clients')} variant="outline" className="mt-4">
+   538→          <ArrowLeft className="w-4 h-4 mr-2" /> Volver a Clientes
+   539→        </Button>
+   540→      </div>
+   541→    )
+   542→  }
+   543→
+   544→  const parsedTags = client.tags ? (() => {
+   545→    try {
+   546→      return JSON.parse(client.tags) as string[]
+   547→    } catch {
+   548→      return client.tags.split(',').map(t => t.trim()).filter(Boolean)
+   549→    }
+   550→  })() : []
+   551→
+   552→  const tempConf = tempConfig[client.temperature]
+   553→
+   554→  // Group preferences by category
+   555→  const prefCategories = preferences.reduce<Record<string, Preference[]>>((acc, p) => {
+   556→    if (!acc[p.category]) acc[p.category] = []
+   557→    acc[p.category].push(p)
+   558→    return acc
+   559→  }, {})
+   560→
+   561→  // Split reservations
+   562→  const now = new Date()
+   563→  const upcomingReservations = reservations.filter(r => new Date(r.date) >= now)
+   564→  const pastReservations = reservations.filter(r => new Date(r.date) < now)
+   565→
+   566→  return (
+   567→    <div className="space-y-6">
+   568→      {/* ─── Header ─────────────────────────────────────────────────────── */}
+   569→      <div className="flex flex-col lg:flex-row items-start gap-4">
+   570→        {/* Back + Client Info */}
+   571→        <div className="flex items-start gap-4 flex-1 min-w-0">
+   572→          <Button variant="ghost" size="icon" onClick={() => setView('clients')} className="mt-1 flex-shrink-0">
+   573→            <ArrowLeft className="w-5 h-5" />
+   574→          </Button>
+   575→
+   576→          <div className="flex items-start gap-4 flex-1 min-w-0">
+   577→            {/* Avatar */}
+   578→            <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-xl font-bold flex-shrink-0">
+   579→              {client.name.charAt(0).toUpperCase()}
+   580→            </div>
+   581→
+   582→            <div className="flex-1 min-w-0">
+   583→              <div className="flex items-center gap-3 flex-wrap">
+   584→                <h1 className="text-2xl font-bold text-slate-900 truncate">{client.name}</h1>
+   585→                {tempConf && (
+   586→                  <Badge variant="outline" className={`text-xs border gap-1 ${tempConf.color}`}>
+   587→                    {tempConf.icon} {tempConf.label}
+   588→                  </Badge>
+   589→                )}
+   590→                <ScoreRing score={client.score} />
+   591→              </div>
+   592→
+   593→              {client.company && (
+   594→                <p className="text-sm text-slate-500 mt-0.5 flex items-center gap-1">
+   595→                  <Building2 className="w-3.5 h-3.5" /> {client.company}
+   596→                </p>
+   597→              )}
+   598→
+   599→              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm text-slate-500">
+   600→                {client.email && (
+   601→                  <span className="flex items-center gap-1"><Mail className="w-3.5 h-3.5" />{client.email}</span>
+   602→                )}
+   603→                <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{client.phone}</span>
+   604→                {client.city && (
+   605→                  <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{client.city}</span>
+   606→                )}
+   607→              </div>
+   608→
+   609→              {parsedTags.length > 0 && (
+   610→                <div className="flex flex-wrap gap-1.5 mt-2">
+   611→                  {parsedTags.map((tag, i) => (
+   612→                    <Badge key={i} variant="outline" className="text-xs bg-emerald-50/50 text-emerald-700 border-emerald-100">
+   613→                      <Tag className="w-2.5 h-2.5 mr-1" />{tag}
+   614→                    </Badge>
+   615→                  ))}
+   616→                </div>
+   617→              )}
+   618→            </div>
+   619→          </div>
+   620→        </div>
+   621→
+   622→        {/* Action Buttons */}
+   623→        <div className="flex flex-wrap gap-2 lg:flex-shrink-0 lg:ml-auto">
+   624→          {/* Quick Actions */}
+   625→          <TooltipProvider delayDuration={200}>
+   626→            <Tooltip>
+   627→              <TooltipTrigger asChild>
+   628→                <Button variant="outline" size="sm" className="text-xs gap-1.5">
+   629→                  <MessageSquare className="w-3.5 h-3.5" /> Enviar Mensaje
+   630→                </Button>
+   631→              </TooltipTrigger>
+   632→              <TooltipContent>Enviar mensaje al cliente</TooltipContent>
+   633→            </Tooltip>
+   634→            <Tooltip>
+   635→              <TooltipTrigger asChild>
+   636→                <Button variant="outline" size="sm" className="text-xs gap-1.5">
+   637→                  <FileText className="w-3.5 h-3.5" /> Crear Cotización
+   638→                </Button>
+   639→              </TooltipTrigger>
+   640→              <TooltipContent>Crear una nueva cotización</TooltipContent>
+   641→            </Tooltip>
+   642→            <Tooltip>
+   643→              <TooltipTrigger asChild>
+   644→                <Button variant="outline" size="sm" className="text-xs gap-1.5">
+   645→                  <CalendarPlus className="w-3.5 h-3.5" /> Agendar Cita
+   646→                </Button>
+   647→              </TooltipTrigger>
+   648→              <TooltipContent>Agendar una nueva cita</TooltipContent>
+   649→            </Tooltip>
+   650→          </TooltipProvider>
+   651→
+   652→          <Separator orientation="vertical" className="h-8 mx-1 hidden sm:block" />
+   653→
+   654→          <Button variant="outline" size="sm" onClick={() => setShowEditForm(true)} className="text-xs gap-1.5">
+   655→            <Edit3 className="w-3.5 h-3.5" /> Editar
+   656→          </Button>
+   657→          <Button variant="outline" size="sm" onClick={() => setShowDeleteDialog(true)} className="text-xs gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
+   658→            <Trash2 className="w-3.5 h-3.5" /> Eliminar
+   659→          </Button>
+   660→        </div>
+   661→      </div>
+   662→
+   663→      {/* ─── Tabs ───────────────────────────────────────────────────────── */}
+   664→      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
+   665→        <TabsList className="bg-slate-100 h-auto flex-wrap gap-1 p-1">
+   666→          <TabsTrigger value="general" className="text-xs sm:text-sm">General</TabsTrigger>
+   667→          <TabsTrigger value="opportunities" className="text-xs sm:text-sm">Oportunidades</TabsTrigger>
+   668→          <TabsTrigger value="history" className="text-xs sm:text-sm">Historial</TabsTrigger>
+   669→          <TabsTrigger value="preferences" className="text-xs sm:text-sm">Preferencias</TabsTrigger>
+   670→          <TabsTrigger value="reservations" className="text-xs sm:text-sm">Reservas</TabsTrigger>
+   671→          <TabsTrigger value="quotes" className="text-xs sm:text-sm">Cotizaciones</TabsTrigger>
+   672→          <TabsTrigger value="custom" className="text-xs sm:text-sm">Campos Custom</TabsTrigger>
+   673→          <TabsTrigger value="activity" className="text-xs sm:text-sm">Actividad</TabsTrigger>
+   674→        </TabsList>
+   675→
+   676→        {/* ─── General Tab ───────────────────────────────────────────────── */}
+   677→        <TabsContent value="general">
+   678→          <Card className="border-0 shadow-sm">
+   679→            <CardHeader className="pb-3">
+   680→              <CardTitle className="text-lg flex items-center gap-2">
+   681→                <UserCheck className="w-5 h-5 text-emerald-600" /> Información General
+   682→              </CardTitle>
+   683→            </CardHeader>
+   684→            <CardContent>
+   685→              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-5">
+   686→                {/* Nombre */}
+   687→                <div className="space-y-1">
+   688→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   689→                    <Sparkles className="w-3 h-3" /> Nombre
+   690→                  </Label>
+   691→                  {editingField === 'name' ? (
+   692→                    <div className="flex gap-2">
+   693→                      <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} className="h-8 text-sm" autoFocus />
+   694→                      <Button size="sm" onClick={handleInlineSave} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white">✓</Button>
+   695→                      <Button size="sm" variant="ghost" onClick={handleInlineCancel} className="h-8">✗</Button>
+   696→                    </div>
+   697→                  ) : (
+   698→                    <p
+   699→                      className="text-sm text-slate-900 hover:bg-slate-50 px-2 py-1 rounded cursor-pointer -mx-2 transition-colors group"
+   700→                      onClick={() => handleInlineEdit('name', client.name)}
+   701→                    >
+   702→                      {client.name}
+   703→                      <Edit3 className="w-3 h-3 inline ml-2 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+   704→                    </p>
+   705→                  )}
+   706→                </div>
+   707→
+   708→                {/* Email */}
+   709→                <div className="space-y-1">
+   710→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   711→                    <Mail className="w-3 h-3" /> Email
+   712→                  </Label>
+   713→                  {editingField === 'email' ? (
+   714→                    <div className="flex gap-2">
+   715→                      <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} className="h-8 text-sm" autoFocus />
+   716→                      <Button size="sm" onClick={handleInlineSave} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white">✓</Button>
+   717→                      <Button size="sm" variant="ghost" onClick={handleInlineCancel} className="h-8">✗</Button>
+   718→                    </div>
+   719→                  ) : (
+   720→                    <p
+   721→                      className="text-sm text-slate-900 hover:bg-slate-50 px-2 py-1 rounded cursor-pointer -mx-2 transition-colors group"
+   722→                      onClick={() => handleInlineEdit('email', client.email ?? '')}
+   723→                    >
+   724→                      {client.email ?? <span className="text-slate-300">Sin email</span>}
+   725→                      <Edit3 className="w-3 h-3 inline ml-2 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+   726→                    </p>
+   727→                  )}
+   728→                </div>
+   729→
+   730→                {/* Teléfono */}
+   731→                <div className="space-y-1">
+   732→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   733→                    <Phone className="w-3 h-3" /> Teléfono
+   734→                  </Label>
+   735→                  {editingField === 'phone' ? (
+   736→                    <div className="flex gap-2">
+   737→                      <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} className="h-8 text-sm" autoFocus />
+   738→                      <Button size="sm" onClick={handleInlineSave} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white">✓</Button>
+   739→                      <Button size="sm" variant="ghost" onClick={handleInlineCancel} className="h-8">✗</Button>
+   740→                    </div>
+   741→                  ) : (
+   742→                    <p
+   743→                      className="text-sm text-slate-900 hover:bg-slate-50 px-2 py-1 rounded cursor-pointer -mx-2 transition-colors group"
+   744→                      onClick={() => handleInlineEdit('phone', client.phone)}
+   745→                    >
+   746→                      {client.phone}
+   747→                      <Edit3 className="w-3 h-3 inline ml-2 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+   748→                    </p>
+   749→                  )}
+   750→                </div>
+   751→
+   752→                {/* Cédula/ID */}
+   753→                <div className="space-y-1">
+   754→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   755→                    <Hash className="w-3 h-3" /> Cédula / ID
+   756→                  </Label>
+   757→                  {editingField === 'identifier' ? (
+   758→                    <div className="flex gap-2">
+   759→                      <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} className="h-8 text-sm" autoFocus />
+   760→                      <Button size="sm" onClick={handleInlineSave} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white">✓</Button>
+   761→                      <Button size="sm" variant="ghost" onClick={handleInlineCancel} className="h-8">✗</Button>
+   762→                    </div>
+   763→                  ) : (
+   764→                    <p
+   765→                      className="text-sm text-slate-900 hover:bg-slate-50 px-2 py-1 rounded cursor-pointer -mx-2 transition-colors group"
+   766→                      onClick={() => handleInlineEdit('identifier', client.identifier ?? '')}
+   767→                    >
+   768→                      {client.identifier ?? <span className="text-slate-300">Sin identificador</span>}
+   769→                      <Edit3 className="w-3 h-3 inline ml-2 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+   770→                    </p>
+   771→                  )}
+   772→                </div>
+   773→
+   774→                {/* Empresa */}
+   775→                <div className="space-y-1">
+   776→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   777→                    <Building2 className="w-3 h-3" /> Empresa
+   778→                  </Label>
+   779→                  {editingField === 'company' ? (
+   780→                    <div className="flex gap-2">
+   781→                      <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} className="h-8 text-sm" autoFocus />
+   782→                      <Button size="sm" onClick={handleInlineSave} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white">✓</Button>
+   783→                      <Button size="sm" variant="ghost" onClick={handleInlineCancel} className="h-8">✗</Button>
+   784→                    </div>
+   785→                  ) : (
+   786→                    <p
+   787→                      className="text-sm text-slate-900 hover:bg-slate-50 px-2 py-1 rounded cursor-pointer -mx-2 transition-colors group"
+   788→                      onClick={() => handleInlineEdit('company', client.company ?? '')}
+   789→                    >
+   790→                      {client.company ?? <span className="text-slate-300">Sin empresa</span>}
+   791→                      <Edit3 className="w-3 h-3 inline ml-2 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+   792→                    </p>
+   793→                  )}
+   794→                </div>
+   795→
+   796→                {/* Fuente */}
+   797→                <div className="space-y-1">
+   798→                  <Label className="text-xs text-slate-400">Fuente</Label>
+   799→                  <p className="text-sm text-slate-900">
+   800→                    <Badge variant="outline" className="text-xs font-normal">
+   801→                      {sourceLabels[client.source] ?? client.source}
+   802→                    </Badge>
+   803→                  </p>
+   804→                </div>
+   805→
+   806→                {/* Dirección */}
+   807→                <div className="space-y-1 sm:col-span-2">
+   808→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   809→                    <MapPinned className="w-3 h-3" /> Dirección
+   810→                  </Label>
+   811→                  {editingField === 'address' ? (
+   812→                    <div className="flex gap-2">
+   813→                      <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} className="h-8 text-sm" autoFocus />
+   814→                      <Button size="sm" onClick={handleInlineSave} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white">✓</Button>
+   815→                      <Button size="sm" variant="ghost" onClick={handleInlineCancel} className="h-8">✗</Button>
+   816→                    </div>
+   817→                  ) : (
+   818→                    <p
+   819→                      className="text-sm text-slate-900 hover:bg-slate-50 px-2 py-1 rounded cursor-pointer -mx-2 transition-colors group"
+   820→                      onClick={() => handleInlineEdit('address', client.address ?? '')}
+   821→                    >
+   822→                      {client.address ?? <span className="text-slate-300">Sin dirección</span>}
+   823→                      <Edit3 className="w-3 h-3 inline ml-2 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+   824→                    </p>
+   825→                  )}
+   826→                </div>
+   827→
+   828→                {/* Ciudad */}
+   829→                <div className="space-y-1">
+   830→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   831→                    <MapPin className="w-3 h-3" /> Ciudad
+   832→                  </Label>
+   833→                  {editingField === 'city' ? (
+   834→                    <div className="flex gap-2">
+   835→                      <Input value={editValue} onChange={(e) => setEditValue(e.target.value)} className="h-8 text-sm" autoFocus />
+   836→                      <Button size="sm" onClick={handleInlineSave} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white">✓</Button>
+   837→                      <Button size="sm" variant="ghost" onClick={handleInlineCancel} className="h-8">✗</Button>
+   838→                    </div>
+   839→                  ) : (
+   840→                    <p
+   841→                      className="text-sm text-slate-900 hover:bg-slate-50 px-2 py-1 rounded cursor-pointer -mx-2 transition-colors group"
+   842→                      onClick={() => handleInlineEdit('city', client.city ?? '')}
+   843→                    >
+   844→                      {client.city ?? <span className="text-slate-300">Sin ciudad</span>}
+   845→                      <Edit3 className="w-3 h-3 inline ml-2 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+   846→                    </p>
+   847→                  )}
+   848→                </div>
+   849→
+   850→                {/* Etiquetas */}
+   851→                <div className="space-y-1">
+   852→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   853→                    <Tag className="w-3 h-3" /> Etiquetas
+   854→                  </Label>
+   855→                  <div className="flex flex-wrap gap-1.5">
+   856→                    {parsedTags.length > 0 ? (
+   857→                      parsedTags.map((tag, i) => (
+   858→                        <Badge key={i} variant="outline" className="text-xs bg-emerald-50/50 text-emerald-700 border-emerald-100">
+   859→                          {tag}
+   860→                        </Badge>
+   861→                      ))
+   862→                    ) : (
+   863→                      <span className="text-sm text-slate-300">Sin etiquetas</span>
+   864→                    )}
+   865→                  </div>
+   866→                </div>
+   867→
+   868→                {/* Último Contacto */}
+   869→                <div className="space-y-1">
+   870→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   871→                    <Clock className="w-3 h-3" /> Último Contacto
+   872→                  </Label>
+   873→                  <p className="text-sm text-slate-900">
+   874→                    {client.lastContactAt
+   875→                      ? formatDistanceToNow(new Date(client.lastContactAt), { addSuffix: true, locale: es })
+   876→                      : <span className="text-slate-300">Sin registro</span>}
+   877→                  </p>
+   878→                </div>
+   879→
+   880→                {/* Fecha de Creación */}
+   881→                <div className="space-y-1">
+   882→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   883→                    <Calendar className="w-3 h-3" /> Registrado
+   884→                  </Label>
+   885→                  <p className="text-sm text-slate-900">
+   886→                    {format(new Date(client.createdAt), "d 'de' MMMM, yyyy", { locale: es })}
+   887→                  </p>
+   888→                </div>
+   889→              </div>
+   890→
+   891→              {/* Notas */}
+   892→              {editingField === 'notes' ? (
+   893→                <div className="mt-6 space-y-2">
+   894→                  <Label className="text-xs text-slate-400 flex items-center gap-1">
+   895→                    <StickyNote className="w-3 h-3" /> Notas
+   896→                  </Label>
+   897→                  <Textarea value={editValue} onChange={(e) => setEditValue(e.target.value)} rows={4} autoFocus />
+   898→                  <div className="flex gap-2">
+   899→                    <Button size="sm" onClick={handleInlineSave} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+   900→                      <Save className="w-3.5 h-3.5 mr-1" /> Guardar
+   901→                    </Button>
+   902→                    <Button size="sm" variant="ghost" onClick={handleInlineCancel}>Cancelar</Button>
+   903→                  </div>
+   904→                </div>
+   905→              ) : (
+   906→                <div className="mt-6">
+   907→                  <Label
+   908→                    className="text-xs text-slate-400 flex items-center gap-1 cursor-pointer hover:text-emerald-600 transition-colors"
+   909→                    onClick={() => handleInlineEdit('notes', client.notes ?? '')}
+   910→                  >
+   911→                    <StickyNote className="w-3 h-3" /> Notas
+   912→                    <Edit3 className="w-3 h-3 ml-1 text-slate-300" />
+   913→                  </Label>
+   914→                  {client.notes ? (
+   915→                    <p className="text-sm text-slate-700 mt-1 whitespace-pre-wrap bg-slate-50 p-3 rounded-lg border border-slate-100">
+   916→                      {client.notes}
+   917→                    </p>
+   918→                  ) : (
+   919→                    <p
+   920→                      className="text-sm text-slate-300 mt-1 cursor-pointer hover:text-slate-400 transition-colors"
+   921→                      onClick={() => handleInlineEdit('notes', '')}
+   922→                    >
+   923→                      Haz clic para agregar notas...
+   924→                    </p>
+   925→                  )}
+   926→                </div>
+   927→              )}
+   928→            </CardContent>
+   929→          </Card>
+   930→        </TabsContent>
+   931→
+   932→        {/* ─── Oportunidades Tab ──────────────────────────────────────────── */}
+   933→        <TabsContent value="opportunities">
+   934→          <Card className="border-0 shadow-sm">
+   935→            <CardHeader className="pb-3">
+   936→              <CardTitle className="text-lg flex items-center gap-2">
+   937→                <TrendingUp className="w-5 h-5 text-emerald-600" /> Oportunidades
+   938→              </CardTitle>
+   939→            </CardHeader>
+   940→            <CardContent>
+   941→              {oppLoading ? (
+   942→                <div className="space-y-3">
+   943→                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 rounded-lg" />)}
+   944→                </div>
+   945→              ) : opportunities.length > 0 ? (
+   946→                <div className="space-y-3">
+   947→                  <AnimatePresence>
+   948→                    {opportunities.map((opp) => (
+   949→                      <motion.div
+   950→                        key={opp.id}
+   951→                        initial={{ opacity: 0, x: -10 }}
+   952→                        animate={{ opacity: 1, x: 0 }}
+   953→                        className="flex items-center gap-4 p-4 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer group"
+   954→                      >
+   955→                        <div
+   956→                          className="w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-offset-2"
+   957→                          style={{ backgroundColor: opp.stage.color, ringColor: opp.stage.color }}
+   958→                        />
+   959→                        <div className="flex-1 min-w-0">
+   960→                          <p className="text-sm font-medium text-slate-900 truncate">{opp.title}</p>
+   961→                          <div className="flex items-center gap-2 mt-0.5">
+   962→                            <Badge
+   963→                              variant="outline"
+   964→                              className={`text-xs ${stageColors[opp.stage.name.toLowerCase()] ?? 'bg-slate-100 text-slate-600'}`}
+   965→                            >
+   966→                              {opp.stage.name}
+   967→                            </Badge>
+   968→                            <span className="text-xs text-slate-400">Prob: {opp.probability}%</span>
+   969→                            {opp.nextAction && (
+   970→                              <span className="text-xs text-slate-400 hidden sm:inline">
+   971→                                · Próx: {opp.nextAction}
+   972→                              </span>
+   973→                            )}
+   974→                          </div>
+   975→                        </div>
+   976→                        <div className="text-right flex-shrink-0">
+   977→                          <p className="text-sm font-semibold text-slate-900">{formatCurrency(opp.estimatedValue)}</p>
+   978→                          <p className="text-xs text-slate-400">
+   979→                            {format(new Date(opp.createdAt), "d MMM yyyy", { locale: es })}
+   980→                          </p>
+   981→                        </div>
+   982→                        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors flex-shrink-0" />
+   983→                      </motion.div>
+   984→                    ))}
+   985→                  </AnimatePresence>
+   986→                </div>
+   987→              ) : (
+   988→                <div className="text-center py-12">
+   989→                  <TrendingUp className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+   990→                  <p className="text-sm text-slate-400">No hay oportunidades para este cliente</p>
+   991→                  <p className="text-xs text-slate-300 mt-1">Las oportunidades aparecerán aquí cuando se creen</p>
+   992→                </div>
+   993→              )}
+   994→            </CardContent>
+   995→          </Card>
+   996→        </TabsContent>
+   997→
+   998→        {/* ─── Historial Tab ──────────────────────────────────────────────── */}
+   999→        <TabsContent value="history">
+  1000→          <Card className="border-0 shadow-sm">
+  1001→            <CardHeader className="pb-3">
+  1002→              <CardTitle className="text-lg flex items-center gap-2">
+  1003→                <Clock className="w-5 h-5 text-emerald-600" /> Historial de Servicios
+  1004→              </CardTitle>
+  1005→            </CardHeader>
+  1006→            <CardContent>
+  1007→              {/* Add History Form */}
+  1008→              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6 p-4 bg-emerald-50/50 rounded-lg border border-emerald-100">
+  1009→                <Input
+  1010→                  placeholder="Tipo de servicio"
+  1011→                  value={histService}
+  1012→                  onChange={(e) => setHistService(e.target.value)}
+  1013→                  className="h-9 text-sm"
+  1014→                />
+  1015→                <Input
+  1016→                  placeholder="Descripción"
+  1017→                  value={histDesc}
+  1018→                  onChange={(e) => setHistDesc(e.target.value)}
+  1019→                  className="h-9 text-sm"
+  1020→                />
+  1021→                <Input
+  1022→                  placeholder="Monto (COP)"
+  1023→                  type="number"
+  1024→                  value={histAmount}
+  1025→                  onChange={(e) => setHistAmount(e.target.value)}
+  1026→                  className="h-9 text-sm"
+  1027→                />
+  1028→                <Button onClick={handleAddHistory} className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white text-sm">
+  1029→                  <Plus className="w-4 h-4 mr-1" /> Agregar
+  1030→                </Button>
+  1031→              </div>
+  1032→
+  1033→              {histLoading ? (
+  1034→                <div className="space-y-3">
+  1035→                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 rounded-lg" />)}
+  1036→                </div>
+  1037→              ) : history.length > 0 ? (
+  1038→                <div className="relative">
+  1039→                  {/* Timeline line */}
+  1040→                  <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-emerald-200" />
+  1041→
+  1042→                  <div className="space-y-0">
+  1043→                    <AnimatePresence>
+  1044→                      {history.map((entry) => (
+  1045→                        <motion.div
+  1046→                          key={entry.id}
+  1047→                          initial={{ opacity: 0, x: -10 }}
+  1048→                          animate={{ opacity: 1, x: 0 }}
+  1049→                          className="flex gap-4 pb-4 relative"
+  1050→                        >
+  1051→                          {/* Timeline dot */}
+  1052→                          <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-white flex-shrink-0 mt-1.5 z-10" />
+  1053→
+  1054→                          <div className="flex-1 bg-white border border-slate-100 rounded-lg p-3 shadow-sm">
+  1055→                            <div className="flex items-center gap-2 flex-wrap">
+  1056→                              <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-100">
+  1057→                                {entry.serviceType}
+  1058→                              </Badge>
+  1059→                              <span className="text-xs text-slate-400">
+  1060→                                {format(new Date(entry.date), "d MMM yyyy, HH:mm", { locale: es })}
+  1061→                              </span>
+  1062→                            </div>
+  1063→                            <p className="text-sm text-slate-700 mt-1.5">{entry.description}</p>
+  1064→                            <div className="flex items-center justify-between mt-2">
+  1065→                              {entry.amount ? (
+  1066→                                <p className="text-sm font-medium text-emerald-600">{formatCurrency(entry.amount)}</p>
+  1067→                              ) : <span />}
+  1068→                              {entry.notes && (
+  1069→                                <p className="text-xs text-slate-400 truncate max-w-[200px]">{entry.notes}</p>
+  1070→                              )}
+  1071→                            </div>
+  1072→                          </div>
+  1073→                        </motion.div>
+  1074→                      ))}
+  1075→                    </AnimatePresence>
+  1076→                  </div>
+  1077→                </div>
+  1078→              ) : (
+  1079→                <div className="text-center py-12">
+  1080→                  <Clock className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+  1081→                  <p className="text-sm text-slate-400">No hay historial de servicios</p>
+  1082→                  <p className="text-xs text-slate-300 mt-1">Agrega la primera entrada con el formulario de arriba</p>
+  1083→                </div>
+  1084→              )}
+  1085→            </CardContent>
+  1086→          </Card>
+  1087→        </TabsContent>
+  1088→
+  1089→        {/* ─── Preferencias Tab ───────────────────────────────────────────── */}
+  1090→        <TabsContent value="preferences">
+  1091→          <Card className="border-0 shadow-sm">
+  1092→            <CardHeader className="pb-3">
+  1093→              <CardTitle className="text-lg flex items-center gap-2">
+  1094→                <Sparkles className="w-5 h-5 text-emerald-600" /> Preferencias del Cliente
+  1095→              </CardTitle>
+  1096→            </CardHeader>
+  1097→            <CardContent>
+  1098→              {/* Add Preference Form */}
+  1099→              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6 p-4 bg-emerald-50/50 rounded-lg border border-emerald-100">
+  1100→                <Input
+  1101→                  placeholder="Categoría (ej: comunicación)"
+  1102→                  value={prefCategory}
+  1103→                  onChange={(e) => setPrefCategory(e.target.value)}
+  1104→                  className="h-9 text-sm"
+  1105→                />
+  1106→                <Input
+  1107→                  placeholder="Clave (ej: canal_favorito)"
+  1108→                  value={prefKey}
+  1109→                  onChange={(e) => setPrefKey(e.target.value)}
+  1110→                  className="h-9 text-sm"
+  1111→                />
+  1112→                <Input
+  1113→                  placeholder="Valor (ej: WhatsApp)"
+  1114→                  value={prefValue}
+  1115→                  onChange={(e) => setPrefValue(e.target.value)}
+  1116→                  className="h-9 text-sm"
+  1117→                />
+  1118→                <Button onClick={handleAddPreference} className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white text-sm">
+  1119→                  <Plus className="w-4 h-4 mr-1" /> Agregar
+  1120→                </Button>
+  1121→              </div>
+  1122→
+  1123→              {prefLoading ? (
+  1124→                <div className="space-y-3">
+  1125→                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 rounded-lg" />)}
+  1126→                </div>
+  1127→              ) : Object.keys(prefCategories).length > 0 ? (
+  1128→                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  1129→                  {Object.entries(prefCategories).map(([category, prefs]) => (
+  1130→                    <div key={category} className="bg-white border border-slate-100 rounded-lg p-4 shadow-sm">
+  1131→                      <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+  1132→                        {category === 'comunicación' || category === 'comunicacion' ? (
+  1133→                          <MessageSquare className="w-4 h-4 text-emerald-500" />
+  1134→                        ) : category === 'servicio' ? (
+  1135→                          <Sparkles className="w-4 h-4 text-emerald-500" />
+  1136→                        ) : category === 'horario' || category === 'schedule' ? (
+  1137→                          <Clock className="w-4 h-4 text-emerald-500" />
+  1138→                        ) : (
+  1139→                          <Tag className="w-4 h-4 text-emerald-500" />
+  1140→                        )}
+  1141→                        {category.charAt(0).toUpperCase() + category.slice(1)}
+  1142→                      </h4>
+  1143→                      <div className="space-y-2">
+  1144→                        {prefs.map((pref) => (
+  1145→                          <div key={pref.id} className="flex items-center justify-between text-sm">
+  1146→                            <span className="text-slate-500 text-xs">{pref.key}:</span>
+  1147→                            <span className="font-medium text-slate-900 text-xs">{pref.value}</span>
+  1148→                          </div>
+  1149→                        ))}
+  1150→                      </div>
+  1151→                    </div>
+  1152→                  ))}
+  1153→                </div>
+  1154→              ) : (
+  1155→                <div className="text-center py-12">
+  1156→                  <Sparkles className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+  1157→                  <p className="text-sm text-slate-400">No hay preferencias registradas</p>
+  1158→                  <p className="text-xs text-slate-300 mt-1">Agrega preferencias para personalizar la atención</p>
+  1159→                </div>
+  1160→              )}
+  1161→            </CardContent>
+  1162→          </Card>
+  1163→        </TabsContent>
+  1164→
+  1165→        {/* ─── Reservas Tab ───────────────────────────────────────────────── */}
+  1166→        <TabsContent value="reservations">
+  1167→          <Card className="border-0 shadow-sm">
+  1168→            <CardHeader className="pb-3">
+  1169→              <CardTitle className="text-lg flex items-center gap-2">
+  1170→                <Calendar className="w-5 h-5 text-emerald-600" /> Reservas
+  1171→              </CardTitle>
+  1172→            </CardHeader>
+  1173→            <CardContent>
+  1174→              {resLoading ? (
+  1175→                <div className="space-y-3">
+  1176→                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 rounded-lg" />)}
+  1177→                </div>
+  1178→              ) : reservations.length > 0 ? (
+  1179→                <div className="space-y-6">
+  1180→                  {/* Upcoming */}
+  1181→                  {upcomingReservations.length > 0 && (
+  1182→                    <div>
+  1183→                      <h4 className="text-sm font-semibold text-slate-600 mb-3 flex items-center gap-2">
+  1184→                        <CalendarPlus className="w-4 h-4 text-emerald-500" /> Próximas ({upcomingReservations.length})
+  1185→                      </h4>
+  1186→                      <div className="space-y-2">
+  1187→                        {upcomingReservations.map((res) => (
+  1188→                          <div key={res.id} className="flex items-center justify-between p-3 bg-emerald-50/50 border border-emerald-100 rounded-lg">
+  1189→                            <div>
+  1190→                              <p className="text-sm font-medium text-slate-900">{res.title}</p>
+  1191→                              <p className="text-xs text-slate-500">
+  1192→                                {format(new Date(res.date), "d MMM yyyy, HH:mm", { locale: es })} · {res.duration} min
+  1193→                                {res.serviceType && ` · ${res.serviceType}`}
+  1194→                              </p>
+  1195→                            </div>
+  1196→                            <Badge className={`text-xs ${statusColors[res.status] ?? 'bg-slate-100 text-slate-600'}`}>
+  1197→                              {statusLabels[res.status] ?? res.status}
+  1198→                            </Badge>
+  1199→                          </div>
+  1200→                        ))}
+  1201→                      </div>
+  1202→                    </div>
+  1203→                  )}
+  1204→
+  1205→                  {/* Past */}
+  1206→                  {pastReservations.length > 0 && (
+  1207→                    <div>
+  1208→                      <h4 className="text-sm font-semibold text-slate-600 mb-3 flex items-center gap-2">
+  1209→                        <Clock className="w-4 h-4 text-slate-400" /> Pasadas ({pastReservations.length})
+  1210→                      </h4>
+  1211→                      <div className="space-y-2">
+  1212→                        {pastReservations.map((res) => (
+  1213→                          <div key={res.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+  1214→                            <div>
+  1215→                              <p className="text-sm font-medium text-slate-700">{res.title}</p>
+  1216→                              <p className="text-xs text-slate-400">
+  1217→                                {format(new Date(res.date), "d MMM yyyy, HH:mm", { locale: es })} · {res.duration} min
+  1218→                              </p>
+  1219→                            </div>
+  1220→                            <Badge className={`text-xs ${statusColors[res.status] ?? 'bg-slate-100 text-slate-600'}`}>
+  1221→                              {statusLabels[res.status] ?? res.status}
+  1222→                            </Badge>
+  1223→                          </div>
+  1224→                        ))}
+  1225→                      </div>
+  1226→                    </div>
+  1227→                  )}
+  1228→                </div>
+  1229→              ) : (
+  1230→                <div className="text-center py-12">
+  1231→                  <Calendar className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+  1232→                  <p className="text-sm text-slate-400">No hay reservas para este cliente</p>
+  1233→                  <p className="text-xs text-slate-300 mt-1">Las reservas aparecerán aquí cuando se agenden</p>
+  1234→                </div>
+  1235→              )}
+  1236→            </CardContent>
+  1237→          </Card>
+  1238→        </TabsContent>
+  1239→
+  1240→        {/* ─── Cotizaciones Tab ───────────────────────────────────────────── */}
+  1241→        <TabsContent value="quotes">
+  1242→          <Card className="border-0 shadow-sm">
+  1243→            <CardHeader className="pb-3">
+  1244→              <CardTitle className="text-lg flex items-center gap-2">
+  1245→                <FileText className="w-5 h-5 text-emerald-600" /> Cotizaciones
+  1246→              </CardTitle>
+  1247→            </CardHeader>
+  1248→            <CardContent>
+  1249→              {quotesLoading ? (
+  1250→                <div className="space-y-3">
+  1251→                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 rounded-lg" />)}
+  1252→                </div>
+  1253→              ) : quotes.length > 0 ? (
+  1254→                <div className="space-y-2">
+  1255→                  <AnimatePresence>
+  1256→                    {quotes.map((q) => (
+  1257→                      <motion.div
+  1258→                        key={q.id}
+  1259→                        initial={{ opacity: 0, y: 5 }}
+  1260→                        animate={{ opacity: 1, y: 0 }}
+  1261→                        className="flex items-center justify-between p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer group"
+  1262→                      >
+  1263→                        <div className="flex items-center gap-3">
+  1264→                          <div className="w-9 h-9 bg-emerald-100 text-emerald-700 rounded-lg flex items-center justify-center flex-shrink-0">
+  1265→                            <FileText className="w-4 h-4" />
+  1266→                          </div>
+  1267→                          <div>
+  1268→                            <p className="text-sm font-medium text-slate-900">{q.quoteNumber}</p>
+  1269→                            <p className="text-xs text-slate-400">
+  1270→                              {format(new Date(q.createdAt), "d MMM yyyy", { locale: es })}
+  1271→                            </p>
+  1272→                          </div>
+  1273→                        </div>
+  1274→                        <div className="flex items-center gap-3">
+  1275→                          <p className="text-sm font-semibold text-slate-900">{formatCurrency(q.total)}</p>
+  1276→                          <Badge className={`text-xs ${quoteStatusColors[q.status] ?? 'bg-slate-100 text-slate-600'}`}>
+  1277→                            {quoteStatusLabels[q.status] ?? q.status}
+  1278→                          </Badge>
+  1279→                          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
+  1280→                        </div>
+  1281→                      </motion.div>
+  1282→                    ))}
+  1283→                  </AnimatePresence>
+  1284→                </div>
+  1285→              ) : (
+  1286→                <div className="text-center py-12">
+  1287→                  <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+  1288→                  <p className="text-sm text-slate-400">No hay cotizaciones para este cliente</p>
+  1289→                  <p className="text-xs text-slate-300 mt-1">Las cotizaciones aparecerán aquí cuando se creen</p>
+  1290→                </div>
+  1291→              )}
+  1292→            </CardContent>
+  1293→          </Card>
+  1294→        </TabsContent>
+  1295→        {/* ─── Custom Fields Tab ─────────────────────────────────────────── */}
+  1296→        <TabsContent value="custom">
+  1297→          <Card className="border-0 shadow-sm">
+  1298→            <CardHeader className="pb-3">
+  1299→              <CardTitle className="text-lg flex items-center gap-2">
+  1300→                <Database className="w-5 h-5 text-emerald-600" /> Campos Personalizados
+  1301→              </CardTitle>
+  1302→            </CardHeader>
+  1303→            <CardContent>
+  1304→              {cfLoading ? (
+  1305→                <div className="space-y-3">
+  1306→                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 rounded-lg" />)}
+  1307→                </div>
+  1308→              ) : customFieldValues.length > 0 ? (
+  1309→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1310→                  {customFieldValues.map((cfv) => (
+  1311→                    <div key={cfv.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100">
+  1312→                      <p className="text-xs text-slate-400 mb-1">{cfv.field.name}</p>
+  1313→                      {cfv.field.fieldType === 'boolean' ? (
+  1314→                        <div className="flex items-center gap-2">
+  1315→                          {cfv.value === 'true' ? (
+  1316→                            <CheckCircle className="w-4 h-4 text-emerald-600" />
+  1317→                          ) : (
+  1318→                            <XCircle className="w-4 h-4 text-slate-300" />
+  1319→                          )}
+  1320→                          <span className="text-sm text-slate-900">{cfv.value === 'true' ? 'Sí' : 'No'}</span>
+  1321→                        </div>
+  1322→                      ) : cfv.field.fieldType === 'date' && cfv.value ? (
+  1323→                        <p className="text-sm text-slate-900">
+  1324→                          {format(new Date(cfv.value), "d 'de' MMMM, yyyy", { locale: es })}
+  1325→                        </p>
+  1326→                      ) : (
+  1327→                        <p className="text-sm text-slate-900">{cfv.value || <span className="text-slate-300">Sin valor</span>}</p>
+  1328→                      )}
+  1329→                    </div>
+  1330→                  ))}
+  1331→                </div>
+  1332→              ) : (
+  1333→                <div className="text-center py-12">
+  1334→                  <Database className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+  1335→                  <p className="text-sm text-slate-400">No hay campos personalizados configurados</p>
+  1336→                  <p className="text-xs text-slate-300 mt-1">Configura campos en Configuración → Campos Custom</p>
+  1337→                </div>
+  1338→              )}
+  1339→            </CardContent>
+  1340→          </Card>
+  1341→        </TabsContent>
+  1342→
+  1343→        {/* ─── Activity Tab ────────────────────────────────────────────────── */}
+  1344→        <TabsContent value="activity">
+  1345→          <Card className="border-0 shadow-sm">
+  1346→            <CardHeader className="pb-3">
+  1347→              <CardTitle className="text-lg flex items-center gap-2">
+  1348→                <Activity className="w-5 h-5 text-emerald-600" /> Registro de Actividad
+  1349→              </CardTitle>
+  1350→            </CardHeader>
+  1351→            <CardContent>
+  1352→              {activityLoading ? (
+  1353→                <div className="space-y-3">
+  1354→                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 rounded-lg" />)}
+  1355→                </div>
+  1356→              ) : activityLogs.length > 0 ? (
+  1357→                <div className="relative">
+  1358→                  <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-emerald-200" />
+  1359→                  <div className="space-y-0">
+  1360→                    <AnimatePresence>
+  1361→                      {activityLogs.map((log) => {
+  1362→                        const actionIcon: Record<string, React.ReactNode> = {
+  1363→                          created: <FilePlus className="w-3 h-3" />,
+  1364→                          updated: <Edit3 className="w-3 h-3" />,
+  1365→                          deleted: <Trash2 className="w-3 h-3" />,
+  1366→                          stage_changed: <ArrowRightLeft className="w-3 h-3" />,
+  1367→                          note_added: <StickyNote className="w-3 h-3" />,
+  1368→                        }
+  1369→                        const actionColor: Record<string, string> = {
+  1370→                          created: 'bg-emerald-500',
+  1371→                          updated: 'bg-sky-500',
+  1372→                          deleted: 'bg-red-500',
+  1373→                          stage_changed: 'bg-amber-500',
+  1374→                          note_added: 'bg-purple-500',
+  1375→                        }
+  1376→                        return (
+  1377→                          <motion.div
+  1378→                            key={log.id}
+  1379→                            initial={{ opacity: 0, x: -10 }}
+  1380→                            animate={{ opacity: 1, x: 0 }}
+  1381→                            className="flex items-start gap-4 py-3 pl-6 relative"
+  1382→                          >
+  1383→                            <div className={`absolute left-0 top-4 w-4 h-4 rounded-full ${actionColor[log.action] || 'bg-slate-400'} text-white flex items-center justify-center ring-2 ring-white`}>
+  1384→                              {actionIcon[log.action] || <Activity className="w-3 h-3" />}
+  1385→                            </div>
+  1386→                            <div className="flex-1 min-w-0">
+  1387→                              <p className="text-sm text-slate-700">{log.description}</p>
+  1388→                              <div className="flex items-center gap-2 mt-1">
+  1389→                                <Badge variant="outline" className="text-[10px]">{log.action}</Badge>
+  1390→                                <Badge variant="outline" className="text-[10px]">{log.entity}</Badge>
+  1391→                                <span className="text-xs text-slate-400">
+  1392→                                  {formatDistanceToNow(new Date(log.createdAt), { addSuffix: true, locale: es })}
+  1393→                                </span>
+  1394→                              </div>
+  1395→                            </div>
+  1396→                          </motion.div>
+  1397→                        )
+  1398→                      })}
+  1399→                    </AnimatePresence>
+  1400→                  </div>
+  1401→                </div>
+  1402→              ) : (
+  1403→                <div className="text-center py-12">
+  1404→                  <Activity className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+  1405→                  <p className="text-sm text-slate-400">No hay actividad registrada</p>
+  1406→                  <p className="text-xs text-slate-300 mt-1">La actividad aparecerá aquí al interactuar con este cliente</p>
+  1407→                </div>
+  1408→              )}
+  1409→            </CardContent>
+  1410→          </Card>
+  1411→        </TabsContent>
+  1412→      </Tabs>
+  1413→
+  1414→      {/* ─── Edit Form Dialog ──────────────────────────────────────────────── */}
+  1415→      <ClientFormDialog
+  1416→        open={showEditForm}
+  1417→        onClose={() => { setShowEditForm(false); loadClient() }}
+  1418→        editClient={client}
+  1419→      />
+  1420→
+  1421→      {/* ─── Delete Confirmation ───────────────────────────────────────────── */}
+  1422→      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+  1423→        <AlertDialogContent>
+  1424→          <AlertDialogHeader>
+  1425→            <AlertDialogTitle>¿Eliminar este cliente?</AlertDialogTitle>
+  1426→            <AlertDialogDescription>
+  1427→              Esta acción no se puede deshacer. Se eliminará permanentemente el cliente{' '}
+  1428→              <span className="font-semibold text-slate-700">{client.name}</span> y todos sus datos asociados,
+  1429→              incluyendo oportunidades, historial, preferencias, reservas y cotizaciones.
+  1430→            </AlertDialogDescription>
+  1431→          </AlertDialogHeader>
+  1432→          <AlertDialogFooter>
+  1433→            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+  1434→            <AlertDialogAction
+  1435→              onClick={handleDeleteClient}
+  1436→              className="bg-red-600 hover:bg-red-700 text-white"
+  1437→            >
+  1438→              Eliminar Cliente
+  1439→            </AlertDialogAction>
+  1440→          </AlertDialogFooter>
+  1441→        </AlertDialogContent>
+  1442→      </AlertDialog>
+  1443→    </div>
+  1444→  )
+  1445→}
+  1446→

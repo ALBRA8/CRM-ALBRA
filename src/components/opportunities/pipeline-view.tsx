@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { OpportunityFormDialog } from './opportunity-form-dialog'
+import { SavedViewsBar } from '@/components/clients/saved-views-bar'
+import { applyFilters, parseViewFilters, type SavedView, type SavedViewFilter } from '@/lib/filters'
 import { TrendingUp, DollarSign, GripVertical } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -56,6 +58,20 @@ export function PipelineView() {
   const [showForm, setShowForm] = useState(false)
   const [draggedOppId, setDraggedOppId] = useState<string | null>(null)
   const [dragOverStageId, setDragOverStageId] = useState<string | null>(null)
+
+  // Vistas guardadas (filtrado en cliente sobre oportunidades)
+  const [viewFilters, setViewFilters] = useState<SavedViewFilter[]>([])
+  const [activeViewId, setActiveViewId] = useState<string | null>(null)
+
+  const handleApplyView = (view: SavedView | null) => {
+    setActiveViewId(view?.id ?? null)
+    setViewFilters(view ? parseViewFilters(view.filters) : [])
+  }
+
+  const handleViewFiltersChange = (filters: SavedViewFilter[]) => {
+    setViewFilters(filters)
+    if (filters.length === 0) setActiveViewId(null)
+  }
 
   const loadPipeline = useCallback(async () => {
     try {
@@ -144,13 +160,24 @@ export function PipelineView() {
 
   if (!data) return null
 
+  // Filtrado en cliente de las oportunidades de cada columna
+  const visibleStages = viewFilters.length > 0
+    ? data.stages.map((s) => ({ ...s, opportunities: applyFilters(s.opportunities, viewFilters) }))
+    : data.stages
+  const visibleTotal = viewFilters.length > 0
+    ? visibleStages.reduce((acc, s) => acc + s.opportunities.length, 0)
+    : data.summary.totalOpportunities
+  const visibleValue = viewFilters.length > 0
+    ? visibleStages.reduce((acc, s) => acc + s.opportunities.reduce((a, o) => a + o.estimatedValue, 0), 0)
+    : data.summary.totalPipelineValue
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Pipeline de Ventas</h1>
           <p className="text-sm text-slate-500 mt-1">
-            {data.summary.totalOpportunities} oportunidades · {formatCurrency(data.summary.totalPipelineValue)} en pipeline
+            {visibleTotal} oportunidades · {formatCurrency(visibleValue)} en pipeline
           </p>
         </div>
         <Button
@@ -161,6 +188,15 @@ export function PipelineView() {
         </Button>
       </div>
 
+      {/* Vistas guardadas para oportunidades (monto / cliente / probabilidad) */}
+      <SavedViewsBar
+        entity="opportunities"
+        activeViewId={activeViewId}
+        activeFilters={viewFilters}
+        onApply={handleApplyView}
+        onFiltersChange={handleViewFiltersChange}
+      />
+
       {/* Drag & Drop Hint */}
       <div className="flex items-center gap-2 text-xs text-slate-400">
         <GripVertical className="w-3.5 h-3.5" />
@@ -169,7 +205,7 @@ export function PipelineView() {
 
       {/* Kanban Board */}
       <div className="flex gap-4 overflow-x-auto pb-4">
-        {data.stages.map((stage) => {
+        {visibleStages.map((stage) => {
           const isDragOver = dragOverStageId === stage.id
           return (
             <div
@@ -191,11 +227,11 @@ export function PipelineView() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold text-slate-900">{stage.name}</h3>
-                    <Badge variant="secondary" className="text-xs">{stage.opportunityCount}</Badge>
+                    <Badge variant="secondary" className="text-xs">{stage.opportunities.length}</Badge>
                   </div>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {formatCurrency(stage.totalValue)} · {stage.avgProbability}% prob. prom.
+                  {formatCurrency(stage.opportunities.reduce((a, o) => a + o.estimatedValue, 0))} · {stage.avgProbability}% prob. prom.
                 </p>
               </div>
 

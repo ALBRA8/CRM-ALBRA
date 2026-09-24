@@ -1,0 +1,626 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useEffect, useState, useCallback, useRef } from 'react'
+     4→     4→import { api } from '@/lib/api'
+     5→     5→import { useAppStore } from '@/lib/store'
+     6→     6→import { Input } from '@/components/ui/input'
+     7→     7→import { Button } from '@/components/ui/button'
+     8→     8→import { Badge } from '@/components/ui/badge'
+     9→     9→import { Card } from '@/components/ui/card'
+    10→    10→import { Skeleton } from '@/components/ui/skeleton'
+    11→    11→import { Progress } from '@/components/ui/progress'
+    12→    12→import {
+    13→    13→  Table,
+    14→    14→  TableBody,
+    15→    15→  TableCell,
+    16→    16→  TableHead,
+    17→    17→  TableHeader,
+    18→    18→  TableRow,
+    19→    19→} from '@/components/ui/table'
+    20→    20→import {
+    21→    21→  AlertDialog,
+    22→    22→  AlertDialogAction,
+    23→    23→  AlertDialogCancel,
+    24→    24→  AlertDialogContent,
+    25→    25→  AlertDialogDescription,
+    26→    26→  AlertDialogFooter,
+    27→    27→  AlertDialogHeader,
+    28→    28→  AlertDialogTitle,
+    29→    29→} from '@/components/ui/alert-dialog'
+    30→    30→import {
+    31→    31→  Tooltip,
+    32→    32→  TooltipContent,
+    33→    33→  TooltipProvider,
+    34→    34→  TooltipTrigger,
+    35→    35→} from '@/components/ui/tooltip'
+    36→    36→import { ClientFormDialog } from './client-form-dialog'
+    37→    37→import {
+    38→    38→  Search,
+    39→    39→  Plus,
+    40→    40→  Users,
+    41→    41→  ChevronLeft,
+    42→    42→  ChevronRight,
+    43→    43→  Eye,
+    44→    44→  Pencil,
+    45→    45→  Trash2,
+    46→    46→  Globe,
+    47→    47→  MessageCircle,
+    48→    48→  UserPlus,
+    49→    49→  HandMetal,
+    50→    50→  RefreshCw,
+    51→    51→  Flame,
+    52→    52→  Sun,
+    53→    53→  Snowflake,
+    54→    54→  Thermometer,
+    55→    55→  UserRound,
+    56→    56→  Download,
+    57→    57→  Upload,
+    58→    58→} from 'lucide-react'
+    59→    59→import { formatDistanceToNow } from 'date-fns'
+    60→    60→import { es } from 'date-fns/locale'
+    61→    61→import { toast } from 'sonner'
+    62→    62→import { motion, AnimatePresence } from 'framer-motion'
+    63→    63→
+    64→    64→interface Client {
+    65→    65→  id: string
+    66→    66→  name: string
+    67→    67→  email?: string | null
+    68→    68→  phone: string
+    69→    69→  company?: string | null
+    70→    70→  source: string
+    71→    71→  temperature: string
+    72→    72→  score: number
+    73→    73→  lastContactAt?: string | null
+    74→    74→  createdAt: string
+    75→    75→  _count?: { opportunities: number; reservations: number }
+    76→    76→}
+    77→    77→
+    78→    78→interface PaginationData {
+    79→    79→  page: number
+    80→    80→  limit: number
+    81→    81→  total: number
+    82→    82→  totalPages: number
+    83→    83→}
+    84→    84→
+    85→    85→const temperatureConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+    86→    86→  Frio: { label: 'Frío', color: 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200', icon: <Snowflake className="w-3 h-3" /> },
+    87→    87→  Tibio: { label: 'Tibio', color: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100', icon: <Sun className="w-3 h-3" /> },
+    88→    88→  Caliente: { label: 'Caliente', color: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100', icon: <Thermometer className="w-3 h-3" /> },
+    89→    89→  Fuego: { label: 'Fuego', color: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100', icon: <Flame className="w-3 h-3" /> },
+    90→    90→}
+    91→    91→
+    92→    92→const sourceConfig: Record<string, { label: string; icon: React.ReactNode }> = {
+    93→    93→  manual: { label: 'Manual', icon: <HandMetal className="w-3 h-3" /> },
+    94→    94→  whatsapp: { label: 'WhatsApp', icon: <MessageCircle className="w-3 h-3" /> },
+    95→    95→  web: { label: 'Web', icon: <Globe className="w-3 h-3" /> },
+    96→    96→  referral: { label: 'Referido', icon: <UserPlus className="w-3 h-3" /> },
+    97→    97→  telegram: { label: 'Telegram', icon: <MessageCircle className="w-3 h-3" /> },
+    98→    98→}
+    99→    99→
+   100→   100→const sourceFilters = [
+   101→   101→  { value: 'all', label: 'Todos' },
+   102→   102→  { value: 'web', label: 'Web' },
+   103→   103→  { value: 'whatsapp', label: 'WhatsApp' },
+   104→   104→  { value: 'referral', label: 'Referido' },
+   105→   105→  { value: 'manual', label: 'Manual' },
+   106→   106→]
+   107→   107→
+   108→   108→const tempFilters = [
+   109→   109→  { value: 'all', label: 'Todos' },
+   110→   110→  { value: 'Frio', label: 'Frío' },
+   111→   111→  { value: 'Tibio', label: 'Tibio' },
+   112→   112→  { value: 'Caliente', label: 'Caliente' },
+   113→   113→  { value: 'Fuego', label: 'Fuego' },
+   114→   114→]
+   115→   115→
+   116→   116→export function ClientsList() {
+   117→   117→  const { setView, setSelectedClientId } = useAppStore()
+   118→   118→  const [clients, setClients] = useState<Client[]>([])
+   119→   119→  const [pagination, setPagination] = useState<PaginationData>({ page: 1, limit: 20, total: 0, totalPages: 1 })
+   120→   120→  const [loading, setLoading] = useState(true)
+   121→   121→  const [error, setError] = useState(false)
+   122→   122→
+   123→   123→  // Filters
+   124→   124→  const [search, setSearch] = useState('')
+   125→   125→  const [debouncedSearch, setDebouncedSearch] = useState('')
+   126→   126→  const [temperatureFilter, setTemperatureFilter] = useState('all')
+   127→   127→  const [sourceFilter, setSourceFilter] = useState('all')
+   128→   128→  const [page, setPage] = useState(1)
+   129→   129→
+   130→   130→  // Dialog states
+   131→   131→  const [showForm, setShowForm] = useState(false)
+   132→   132→  const [editClient, setEditClient] = useState<Client | null>(null)
+   133→   133→  const [deleteTarget, setDeleteTarget] = useState<Client | null>(null)
+   134→   134→  const [showImport, setShowImport] = useState(false)
+   135→   135→  const [importing, setImporting] = useState(false)
+   136→   136→
+   137→   137→  // Debounce search
+   138→   138→  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+   139→   139→  useEffect(() => {
+   140→   140→    if (searchTimer.current) clearTimeout(searchTimer.current)
+   141→   141→    searchTimer.current = setTimeout(() => {
+   142→   142→      setDebouncedSearch(search)
+   143→   143→      setPage(1)
+   144→   144→    }, 350)
+   145→   145→    return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
+   146→   146→  }, [search])
+   147→   147→
+   148→   148→  const loadClients = useCallback(async () => {
+   149→   149→    try {
+   150→   150→      setError(false)
+   151→   151→      setLoading(true)
+   152→   152→      const params: Record<string, string> = { page: page.toString(), limit: '20' }
+   153→   153→      if (debouncedSearch) params.search = debouncedSearch
+   154→   154→      if (temperatureFilter !== 'all') params.temperature = temperatureFilter
+   155→   155→      if (sourceFilter !== 'all') params.source = sourceFilter
+   156→   156→
+   157→   157→      const data = await api.getClients(params)
+   158→   158→      setClients(data.clients as Client[])
+   159→   159→      setPagination(data.pagination as PaginationData)
+   160→   160→    } catch {
+   161→   161→      setError(true)
+   162→   162→      toast.error('Error al cargar clientes')
+   163→   163→    } finally {
+   164→   164→      setLoading(false)
+   165→   165→    }
+   166→   166→  }, [page, debouncedSearch, temperatureFilter, sourceFilter])
+   167→   167→
+   168→   168→  useEffect(() => {
+   169→   169→    loadClients()
+   170→   170→  }, [loadClients])
+   171→   171→
+   172→   172→  const handleRowClick = (clientId: string) => {
+   173→   173→    setSelectedClientId(clientId)
+   174→   174→    setView('client-detail')
+   175→   175→  }
+   176→   176→
+   177→   177→  const handleView = (e: React.MouseEvent, clientId: string) => {
+   178→   178→    e.stopPropagation()
+   179→   179→    setSelectedClientId(clientId)
+   180→   180→    setView('client-detail')
+   181→   181→  }
+   182→   182→
+   183→   183→  const handleEdit = (e: React.MouseEvent, client: Client) => {
+   184→   184→    e.stopPropagation()
+   185→   185→    setEditClient(client)
+   186→   186→    setShowForm(true)
+   187→   187→  }
+   188→   188→
+   189→   189→  const handleDelete = async () => {
+   190→   190→    if (!deleteTarget) return
+   191→   191→    try {
+   192→   192→      await api.deleteClient(deleteTarget.id)
+   193→   193→      toast.success('Cliente eliminado exitosamente')
+   194→   194→      setDeleteTarget(null)
+   195→   195→      loadClients()
+   196→   196→    } catch {
+   197→   197→      toast.error('Error al eliminar cliente')
+   198→   198→    }
+   199→   199→  }
+   200→   200→
+   201→   201→  const handleFormClose = () => {
+   202→   202→    setShowForm(false)
+   203→   203→    setEditClient(null)
+   204→   204→    loadClients()
+   205→   205→  }
+   206→   206→
+   207→   207→  const scoreColor = (score: number) => {
+   208→   208→    if (score >= 80) return 'bg-emerald-500'
+   209→   209→    if (score >= 60) return 'bg-teal-500'
+   210→   210→    if (score >= 40) return 'bg-amber-500'
+   211→   211→    if (score >= 20) return 'bg-orange-500'
+   212→   212→    return 'bg-red-500'
+   213→   213→  }
+   214→   214→
+   215→   215→  return (
+   216→   216→    <div className="space-y-3">
+   217→   217→      {/* Header */}
+   218→   218→      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+   219→   219→        <div className="flex items-center gap-2">
+   220→   220→          <h1 className="text-xl font-bold text-slate-900">Clientes</h1>
+   221→   221→          {!loading && (
+   222→   222→            <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold px-2.5 py-0.5">
+   223→   223→              {pagination.total}
+   224→   224→            </Badge>
+   225→   225→          )}
+   226→   226→        </div>
+   227→   227→        <Button
+   228→   228→          onClick={() => { setEditClient(null); setShowForm(true) }}
+   229→   229→          className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm h-8 text-xs gap-1.5"
+   230→   230→        >
+   231→   231→          <Plus className="w-3.5 h-3.5" /> Nuevo Cliente
+   232→   232→        </Button>
+   233→   233→        <Button
+   234→   234→          variant="outline"
+   235→   235→          size="sm"
+   236→   236→          onClick={() => {
+   237→   237→            window.open(api.getExportCsvUrl('clients'), '_blank')
+   238→   238→          }}
+   239→   239→          className="h-8 text-xs gap-1.5"
+   240→   240→        >
+   241→   241→          <Download className="w-3.5 h-3.5" /> Exportar CSV
+   242→   242→        </Button>
+   243→   243→        <Button
+   244→   244→          variant="outline"
+   245→   245→          size="sm"
+   246→   246→          onClick={() => setShowImport(true)}
+   247→   247→          className="h-8 text-xs gap-1.5"
+   248→   248→        >
+   249→   249→          <Upload className="w-3.5 h-3.5" /> Importar CSV
+   250→   250→        </Button>
+   251→   251→      </div>
+   252→   252→
+   253→   253→      {/* Search & Filters */}
+   254→   254→      <Card className="border-0 shadow-sm p-3">
+   255→   255→        <div className="space-y-2">
+   256→   256→          {/* Search */}
+   257→   257→          <div className="relative">
+   258→   258→            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+   259→   259→            <Input
+   260→   260→              placeholder="Buscar por nombre, email o teléfono..."
+   261→   261→              value={search}
+   262→   262→              onChange={(e) => setSearch(e.target.value)}
+   263→   263→              className="pl-9 h-8 text-sm"
+   264→   264→            />
+   265→   265→          </div>
+   266→   266→
+   267→   267→          {/* Source Filter Buttons */}
+   268→   268→          <div className="flex flex-wrap items-center gap-1.5">
+   269→   269→            <span className="text-[11px] font-medium text-slate-500 self-center mr-0.5">Fuente:</span>
+   270→   270→            {sourceFilters.map((f) => (
+   271→   271→              <Button
+   272→   272→                key={f.value}
+   273→   273→                variant={sourceFilter === f.value ? 'default' : 'outline'}
+   274→   274→                size="sm"
+   275→   275→                onClick={() => { setSourceFilter(f.value); setPage(1) }}
+   276→   276→                className={
+   277→   277→                  sourceFilter === f.value
+   278→   278→                    ? 'h-6 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white'
+   279→   279→                    : 'h-6 text-[11px]'
+   280→   280→                }
+   281→   281→              >
+   282→   282→                {f.label}
+   283→   283→              </Button>
+   284→   284→            ))}
+   285→   285→          </div>
+   286→   286→
+   287→   287→          {/* Temperature Filter Buttons */}
+   288→   288→          <div className="flex flex-wrap items-center gap-1.5">
+   289→   289→            <span className="text-[11px] font-medium text-slate-500 self-center mr-0.5">Temp:</span>
+   290→   290→            {tempFilters.map((f) => (
+   291→   291→              <Button
+   292→   292→                key={f.value}
+   293→   293→                variant={temperatureFilter === f.value ? 'default' : 'outline'}
+   294→   294→                size="sm"
+   295→   295→                onClick={() => { setTemperatureFilter(f.value); setPage(1) }}
+   296→   296→                className={
+   297→   297→                  temperatureFilter === f.value
+   298→   298→                    ? 'h-6 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white'
+   299→   299→                    : 'h-6 text-[11px]'
+   300→   300→                }
+   301→   301→              >
+   302→   302→                {f.value !== 'all' && temperatureConfig[f.value]?.icon}
+   303→   303→                {f.label}
+   304→   304→              </Button>
+   305→   305→            ))}
+   306→   306→          </div>
+   307→   307→        </div>
+   308→   308→      </Card>
+   309→   309→
+   310→   310→      {/* Error State */}
+   311→   311→      {error && (
+   312→   312→        <Card className="border-0 shadow-sm p-6 text-center">
+   313→   313→          <p className="text-sm text-red-600 mb-3">No se pudieron cargar los clientes</p>
+   314→   314→          <Button variant="outline" size="sm" onClick={loadClients}>
+   315→   315→            <RefreshCw className="w-4 h-4 mr-2" /> Reintentar
+   316→   316→          </Button>
+   317→   317→        </Card>
+   318→   318→      )}
+   319→   319→
+   320→   320→      {/* Table */}
+   321→   321→      {!error && (
+   322→   322→        <Card className="border-0 shadow-sm overflow-hidden">
+   323→   323→          {loading ? (
+   324→   324→            <div className="p-6 space-y-4">
+   325→   325→              {[...Array(8)].map((_, i) => (
+   326→   326→                <div key={i} className="flex items-center gap-4">
+   327→   327→                  <Skeleton className="h-10 w-10 rounded-full flex-shrink-0" />
+   328→   328→                  <div className="flex-1 space-y-2">
+   329→   329→                    <Skeleton className="h-4 w-3/4" />
+   330→   330→                    <Skeleton className="h-3 w-1/2" />
+   331→   331→                  </div>
+   332→   332→                </div>
+   333→   333→              ))}
+   334→   334→            </div>
+   335→   335→          ) : clients.length === 0 ? (
+   336→   336→            <div className="p-16 text-center">
+   337→   337→              <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4">
+   338→   338→                <UserRound className="w-10 h-10 text-emerald-300" />
+   339→   339→              </div>
+   340→   340→              <h3 className="text-lg font-semibold text-slate-700">
+   341→   341→                {debouncedSearch || sourceFilter !== 'all' || temperatureFilter !== 'all'
+   342→   342→                  ? 'Sin resultados'
+   343→   343→                  : 'Agrega tu primer cliente'}
+   344→   344→              </h3>
+   345→   345→              <p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">
+   346→   346→                {debouncedSearch || sourceFilter !== 'all' || temperatureFilter !== 'all'
+   347→   347→                  ? 'Intenta ajustar los filtros de búsqueda para encontrar lo que buscas'
+   348→   348→                  : 'Comienza registrando tus contactos y prospectos para gestionarlos fácilmente'}
+   349→   349→              </p>
+   350→   350→              {!debouncedSearch && sourceFilter === 'all' && temperatureFilter === 'all' && (
+   351→   351→                <Button
+   352→   352→                  onClick={() => { setEditClient(null); setShowForm(true) }}
+   353→   353→                  className="mt-6 bg-emerald-600 hover:bg-emerald-700 text-white"
+   354→   354→                >
+   355→   355→                  <Plus className="w-4 h-4 mr-2" /> Agregar Cliente
+   356→   356→                </Button>
+   357→   357→              )}
+   358→   358→            </div>
+   359→   359→          ) : (
+   360→   360→            <div className="overflow-x-auto">
+   361→   361→              <Table>
+   362→   362→                <TableHeader>
+   363→   363→                  <TableRow className="hover:bg-transparent">
+   364→   364→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Nombre</TableHead>
+   365→   365→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">Email</TableHead>
+   366→   366→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider hidden sm:table-cell">Teléfono</TableHead>
+   367→   367→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Empresa</TableHead>
+   368→   368→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider hidden lg:table-cell">Fuente</TableHead>
+   369→   369→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Temp.</TableHead>
+   370→   370→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:table-cell">Score</TableHead>
+   371→   371→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider hidden xl:table-cell">Último Contacto</TableHead>
+   372→   372→                    <TableHead className="text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Acciones</TableHead>
+   373→   373→                  </TableRow>
+   374→   374→                </TableHeader>
+   375→   375→                <TableBody>
+   376→   376→                  <AnimatePresence mode="popLayout">
+   377→   377→                    {clients.map((client, index) => {
+   378→   378→                      const tempConf = temperatureConfig[client.temperature]
+   379→   379→                      const srcConf = sourceConfig[client.source]
+   380→   380→                      return (
+   381→   381→                        <motion.tr
+   382→   382→                          key={client.id}
+   383→   383→                          initial={{ opacity: 0, y: 8 }}
+   384→   384→                          animate={{ opacity: 1, y: 0 }}
+   385→   385→                          exit={{ opacity: 0, y: -8 }}
+   386→   386→                          transition={{ duration: 0.2, delay: index * 0.02 }}
+   387→   387→                          className="border-b border-slate-50 hover:bg-emerald-50/30 cursor-pointer transition-colors group"
+   388→   388→                          onClick={() => handleRowClick(client.id)}
+   389→   389→                        >
+   390→   390→                          <TableCell className="py-2">
+   391→   391→                            <div className="flex items-center gap-2">
+   392→   392→                              <div className="w-7 h-7 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 group-hover:bg-emerald-200 transition-colors">
+   393→   393→                                {client.name.charAt(0).toUpperCase()}
+   394→   394→                              </div>
+   395→   395→                              <div className="min-w-0">
+   396→   396→                                <p className="text-[13px] font-medium text-slate-900 truncate">{client.name}</p>
+   397→   397→                              </div>
+   398→   398→                            </div>
+   399→   399→                          </TableCell>
+   400→   400→                          <TableCell className="text-[13px] text-slate-600 hidden md:table-cell truncate max-w-[180px]">
+   401→   401→                            {client.email ?? <span className="text-slate-300">—</span>}
+   402→   402→                          </TableCell>
+   403→   403→                          <TableCell className="text-[13px] text-slate-600 hidden sm:table-cell">
+   404→   404→                            {client.phone}
+   405→   405→                          </TableCell>
+   406→   406→                          <TableCell className="text-[13px] text-slate-600 hidden lg:table-cell truncate max-w-[140px]">
+   407→   407→                            {client.company ?? <span className="text-slate-300">—</span>}
+   408→   408→                          </TableCell>
+   409→   409→                          <TableCell className="hidden lg:table-cell">
+   410→   410→                            {srcConf ? (
+   411→   411→                              <Badge variant="outline" className="text-[11px] font-normal gap-1">
+   412→   412→                                {srcConf.icon}
+   413→   413→                                {srcConf.label}
+   414→   414→                              </Badge>
+   415→   415→                            ) : (
+   416→   416→                              <Badge variant="outline" className="text-[11px] font-normal">{client.source}</Badge>
+   417→   417→                            )}
+   418→   418→                          </TableCell>
+   419→   419→                          <TableCell>
+   420→   420→                            {tempConf ? (
+   421→   421→                              <Badge variant="outline" className={`text-[11px] border gap-1 ${tempConf.color}`}>
+   422→   422→                                {tempConf.icon}
+   423→   423→                                {tempConf.label}
+   424→   424→                              </Badge>
+   425→   425→                            ) : (
+   426→   426→                              <Badge variant="outline" className="text-[11px]">{client.temperature}</Badge>
+   427→   427→                            )}
+   428→   428→                          </TableCell>
+   429→   429→                          <TableCell className="hidden md:table-cell">
+   430→   430→                            <div className="flex items-center gap-2">
+   431→   431→                              <div className="w-14">
+   432→   432→                                <Progress value={client.score} className={`h-1.5 ${scoreColor(client.score)}`} />
+   433→   433→                              </div>
+   434→   434→                              <span className="text-[11px] text-slate-500 w-6 text-right">{client.score}</span>
+   435→   435→                            </div>
+   436→   436→                          </TableCell>
+   437→   437→                          <TableCell className="text-[11px] text-slate-400 hidden xl:table-cell">
+   438→   438→                            {client.lastContactAt
+   439→   439→                              ? formatDistanceToNow(new Date(client.lastContactAt), { addSuffix: true, locale: es })
+   440→   440→                              : <span className="text-slate-300">—</span>}
+   441→   441→                          </TableCell>
+   442→   442→                          <TableCell className="text-right">
+   443→   443→                            <TooltipProvider delayDuration={200}>
+   444→   444→                              <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+   445→   445→                                <Tooltip>
+   446→   446→                                  <TooltipTrigger asChild>
+   447→   447→                                    <Button
+   448→   448→                                      variant="ghost"
+   449→   449→                                      size="icon"
+   450→   450→                                      className="h-7 w-7 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
+   451→   451→                                      onClick={(e) => handleView(e, client.id)}
+   452→   452→                                    >
+   453→   453→                                      <Eye className="w-3.5 h-3.5" />
+   454→   454→                                    </Button>
+   455→   455→                                  </TooltipTrigger>
+   456→   456→                                  <TooltipContent>Ver detalle</TooltipContent>
+   457→   457→                                </Tooltip>
+   458→   458→                                <Tooltip>
+   459→   459→                                  <TooltipTrigger asChild>
+   460→   460→                                    <Button
+   461→   461→                                      variant="ghost"
+   462→   462→                                      size="icon"
+   463→   463→                                      className="h-7 w-7 text-slate-400 hover:text-amber-600 hover:bg-amber-50"
+   464→   464→                                      onClick={(e) => handleEdit(e, client)}
+   465→   465→                                    >
+   466→   466→                                      <Pencil className="w-3.5 h-3.5" />
+   467→   467→                                    </Button>
+   468→   468→                                  </TooltipTrigger>
+   469→   469→                                  <TooltipContent>Editar</TooltipContent>
+   470→   470→                                </Tooltip>
+   471→   471→                                <Tooltip>
+   472→   472→                                  <TooltipTrigger asChild>
+   473→   473→                                    <Button
+   474→   474→                                      variant="ghost"
+   475→   475→                                      size="icon"
+   476→   476→                                      className="h-7 w-7 text-slate-400 hover:text-red-600 hover:bg-red-50"
+   477→   477→                                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(client) }}
+   478→   478→                                    >
+   479→   479→                                      <Trash2 className="w-3.5 h-3.5" />
+   480→   480→                                    </Button>
+   481→   481→                                  </TooltipTrigger>
+   482→   482→                                  <TooltipContent>Eliminar</TooltipContent>
+   483→   483→                                </Tooltip>
+   484→   484→                              </div>
+   485→   485→                            </TooltipProvider>
+   486→   486→                          </TableCell>
+   487→   487→                        </motion.tr>
+   488→   488→                      )
+   489→   489→                    })}
+   490→   490→                  </AnimatePresence>
+   491→   491→                </TableBody>
+   492→   492→              </Table>
+   493→   493→            </div>
+   494→   494→          )}
+   495→   495→
+   496→   496→          {/* Pagination */}
+   497→   497→          {!loading && clients.length > 0 && pagination.totalPages > 1 && (
+   498→   498→            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100">
+   499→   499→              <p className="text-sm text-slate-500">
+   500→   500→                Mostrando {(page - 1) * pagination.limit + 1}–{Math.min(page * pagination.limit, pagination.total)} de {pagination.total}
+   501→   501→              </p>
+   502→   502→              <div className="flex items-center gap-2">
+   503→   503→                <Button
+   504→   504→                  variant="outline"
+   505→   505→                  size="sm"
+   506→   506→                  onClick={() => setPage(Math.max(1, page - 1))}
+   507→   507→                  disabled={page === 1}
+   508→   508→                  className="h-8 gap-1"
+   509→   509→                >
+   510→   510→                  <ChevronLeft className="w-4 h-4" /> Anterior
+   511→   511→                </Button>
+   512→   512→                <div className="flex items-center gap-1">
+   513→   513→                  {Array.from({ length: Math.min(pagination.totalPages, 5) }, (_, i) => {
+   514→   514→                    let pageNum: number
+   515→   515→                    if (pagination.totalPages <= 5) {
+   516→   516→                      pageNum = i + 1
+   517→   517→                    } else if (page <= 3) {
+   518→   518→                      pageNum = i + 1
+   519→   519→                    } else if (page >= pagination.totalPages - 2) {
+   520→   520→                      pageNum = pagination.totalPages - 4 + i
+   521→   521→                    } else {
+   522→   522→                      pageNum = page - 2 + i
+   523→   523→                    }
+   524→   524→                    return (
+   525→   525→                      <Button
+   526→   526→                        key={pageNum}
+   527→   527→                        variant={page === pageNum ? 'default' : 'outline'}
+   528→   528→                        size="icon"
+   529→   529→                        className={`h-8 w-8 ${page === pageNum ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : ''}`}
+   530→   530→                        onClick={() => setPage(pageNum)}
+   531→   531→                      >
+   532→   532→                        {pageNum}
+   533→   533→                      </Button>
+   534→   534→                    )
+   535→   535→                  })}
+   536→   536→                </div>
+   537→   537→                <Button
+   538→   538→                  variant="outline"
+   539→   539→                  size="sm"
+   540→   540→                  onClick={() => setPage(Math.min(pagination.totalPages, page + 1))}
+   541→   541→                  disabled={page === pagination.totalPages}
+   542→   542→                  className="h-8 gap-1"
+   543→   543→                >
+   544→   544→                  Siguiente <ChevronRight className="w-4 h-4" />
+   545→   545→                </Button>
+   546→   546→              </div>
+   547→   547→            </div>
+   548→   548→          )}
+   549→   549→        </Card>
+   550→   550→      )}
+   551→   551→
+   552→   552→      {/* Client Form Dialog */}
+   553→   553→      <ClientFormDialog
+   554→   554→        open={showForm}
+   555→   555→        onClose={handleFormClose}
+   556→   556→        editClient={editClient}
+   557→   557→      />
+   558→   558→
+   559→   559→      {/* Delete Confirmation Dialog */}
+   560→   560→      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+   561→   561→        <AlertDialogContent>
+   562→   562→          <AlertDialogHeader>
+   563→   563→            <AlertDialogTitle>¿Eliminar cliente?</AlertDialogTitle>
+   564→   564→            <AlertDialogDescription>
+   565→   565→              Esta acción no se puede deshacer. Se eliminará permanentemente el cliente
+   566→   566→              <span className="font-semibold text-slate-700"> {deleteTarget?.name}</span> y
+   567→   567→              todos sus datos asociados.
+   568→   568→            </AlertDialogDescription>
+   569→   569→          </AlertDialogHeader>
+   570→   570→          <AlertDialogFooter>
+   571→   571→            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+   572→   572→            <AlertDialogAction
+   573→   573→              onClick={handleDelete}
+   574→   574→              className="bg-red-600 hover:bg-red-700 text-white"
+   575→   575→            >
+   576→   576→              Eliminar
+   577→   577→            </AlertDialogAction>
+   578→   578→          </AlertDialogFooter>
+   579→   579→        </AlertDialogContent>
+   580→   580→      </AlertDialog>
+   581→   581→
+   582→   582→      {/* Import CSV Dialog */}
+   583→   583→      <AlertDialog open={showImport} onOpenChange={setShowImport}>
+   584→   584→        <AlertDialogContent>
+   585→   585→          <AlertDialogHeader>
+   586→   586→            <AlertDialogTitle>Importar Clientes desde CSV</AlertDialogTitle>
+   587→   587→            <AlertDialogDescription>
+   588→   588→              Sube un archivo CSV con columnas: nombre, telefono, email, empresa, ciudad, fuente, notas.
+   589→   589→              La primera fila debe ser el encabezado.
+   590→   590→            </AlertDialogDescription>
+   591→   591→          </AlertDialogHeader>
+   592→   592→          <div className="py-4">
+   593→   593→            <input
+   594→   594→              type="file"
+   595→   595→              accept=".csv"
+   596→   596→              id="csv-import-input"
+   597→   597→              className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+   598→   598→              onChange={async (e) => {
+   599→   599→                const file = e.target.files?.[0]
+   600→   600→                if (!file) return
+   601→   601→                setImporting(true)
+   602→   602→                try {
+   603→   603→                  const result = await api.importCsv(file, 'clients') as { created: number; skipped: number; errors: number }
+   604→   604→                  toast.success(`Importación completada`, {
+   605→   605→                    description: `Creados: ${result.created}, Omitidos: ${result.skipped}, Errores: ${result.errors}`
+   606→   606→                  })
+   607→   607→                  setShowImport(false)
+   608→   608→                  loadClients()
+   609→   609→                } catch {
+   610→   610→                  toast.error('Error al importar CSV')
+   611→   611→                } finally {
+   612→   612→                  setImporting(false)
+   613→   613→                }
+   614→   614→              }}
+   615→   615→            />
+   616→   616→            {importing && <p className="text-sm text-slate-500 mt-2">Importando...</p>}
+   617→   617→          </div>
+   618→   618→          <AlertDialogFooter>
+   619→   619→            <AlertDialogCancel disabled={importing}>Cancelar</AlertDialogCancel>
+   620→   620→          </AlertDialogFooter>
+   621→   621→        </AlertDialogContent>
+   622→   622→      </AlertDialog>
+   623→   623→    </div>
+   624→   624→  )
+   625→   625→}
+   626→   626→

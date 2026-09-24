@@ -28,6 +28,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { LegalDialog, type LegalDoc } from './legal-dialog'
 
 /* ──────────────── Demo Start Button ──────────────── */
 function DemoStartButton() {
@@ -65,7 +66,7 @@ function DemoStartButton() {
       ) : (
         <Rocket className="w-6 h-6 group-hover:rotate-12 transition-transform duration-300" />
       )}
-      <span>{loading ? 'Preparando tu demo...' : 'INICIAR'}</span>
+      <span>{loading ? 'Preparando tu demo...' : 'INICIAR DEMO'}</span>
       {!loading && <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-300" />}
     </button>
   )
@@ -259,7 +260,7 @@ function HeroSection() {
             transition={{ duration: 0.6, delay: 0.3 }}
             className="mt-10 flex flex-col items-center gap-4"
           >
-            {/* INICIAR - Main CTA */}
+            {/* INICIAR DEMO - Main CTA (demo gratuita con datos de ejemplo) */}
             <DemoStartButton />
 
             <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
@@ -283,7 +284,8 @@ function HeroSection() {
             </div>
           </motion.div>
 
-          {/* Stats — métricas reales y verificables del producto */}
+          {/* Stats — solo datos verificables en el producto (14 módulos = nav del sidebar;
+              3 canales = integraciones WhatsApp/Telegram/Instagram) + estado honesto de la beta */}
           <motion.div
             initial={{ opacity: 1, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -295,21 +297,21 @@ function HeroSection() {
                 <Users className="w-5 h-5 text-emerald-200" />
               </div>
               <p className="text-2xl sm:text-3xl font-bold text-white">14</p>
-              <p className="text-xs sm:text-sm text-emerald-200/80 mt-0.5">módulos</p>
+              <p className="text-xs sm:text-sm text-emerald-200/80 mt-0.5">módulos completos</p>
             </div>
             <div className="text-center">
               <div className="flex items-center justify-center w-11 h-11 bg-white/10 rounded-xl mx-auto mb-3 backdrop-blur-sm border border-white/10">
                 <TrendingUp className="w-5 h-5 text-emerald-200" />
               </div>
-              <p className="text-2xl sm:text-3xl font-bold text-white">11</p>
-              <p className="text-xs sm:text-sm text-emerald-200/80 mt-0.5">herramientas IA</p>
+              <p className="text-2xl sm:text-3xl font-bold text-white">3</p>
+              <p className="text-xs sm:text-sm text-emerald-200/80 mt-0.5">WhatsApp · Telegram · Instagram</p>
             </div>
             <div className="text-center">
               <div className="flex items-center justify-center w-11 h-11 bg-white/10 rounded-xl mx-auto mb-3 backdrop-blur-sm border border-white/10">
                 <Heart className="w-5 h-5 text-emerald-200" />
               </div>
-              <p className="text-2xl sm:text-3xl font-bold text-white">3</p>
-              <p className="text-xs sm:text-sm text-emerald-200/80 mt-0.5">canales unificados</p>
+              <p className="text-2xl sm:text-3xl font-bold text-white">1</p>
+              <p className="text-xs sm:text-sm text-emerald-200/80 mt-0.5">empresa por vez — beta privada</p>
             </div>
           </motion.div>
         </div>
@@ -354,7 +356,7 @@ const features = [
     icon: CalendarClock,
     title: 'Calendario Inteligente',
     description:
-      'Sistema de reservas con recordatorios automáticos. Nunca más pierdas una cita o un cliente.',
+      'Sistema de reservas con recordatorios automáticos para ti y para tus clientes.',
     color: 'bg-amber-50',
     iconColor: 'text-amber-600',
     borderColor: 'border-amber-100',
@@ -384,7 +386,7 @@ const features = [
     icon: Lightbulb,
     title: 'Sugerencias Inteligentes',
     description:
-      'La IA analiza cada cliente y te dice exactamente cuándo y por qué contactarlo hoy.',
+      'La IA analiza cada cliente y te sugiere cuándo y por qué contactarlo hoy.',
     color: 'bg-sky-50',
     iconColor: 'text-sky-600',
     borderColor: 'border-sky-100',
@@ -472,7 +474,7 @@ const steps = [
 
 function HowItWorksSection() {
   return (
-    <section className="py-20 sm:py-28 bg-white">
+    <section className="py-20 sm:py-28 bg-white" id="como-funciona">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16">
           <motion.div
@@ -489,8 +491,8 @@ function HowItWorksSection() {
               De mensaje a venta en tres pasos
             </h2>
             <p className="mt-5 text-lg text-slate-500 max-w-2xl mx-auto leading-relaxed">
-              Sin configuraciones complejas. En menos de 30 minutos tu CRM está
-              operativo, recibiendo mensajes y respondiendo con IA.
+              Sin configuraciones complejas. Conectas tus canales, el agente aprende
+              tu rubro durante el piloto y empieza a responder por ti.
             </p>
           </motion.div>
         </div>
@@ -537,41 +539,26 @@ function HowItWorksSection() {
   )
 }
 
-/* ──────────────── Pricing Section (beta privada — sin precios inventados) ──────────────── */
-const plans = [
+/* ──────────────── Pricing Section (beta privada — piloto controlado, sin precios inventados) ──────────────── */
+const pilotFeatures = [
+  'CRM completo: los 14 módulos, del pipeline a las finanzas',
+  'Agente de IA configurado a tu rubro',
+  'Acompañamiento de implementación de principio a fin',
+  'Datos aislados por organización',
+  'WhatsApp, Telegram e Instagram conectados',
+  'Cotizaciones en PDF, reportes y recordatorios automáticos',
+]
+
+const comingSoon = [
   {
-    name: 'Demo en vivo',
-    price: '$0',
-    period: '',
-    description: 'Crea una cuenta de prueba con datos de ejemplo',
-    features: [
-      'Acceso a los 14 módulos completos',
-      'Agente IA con 11 herramientas',
-      'Datos de ejemplo precargados',
-      'Configura WhatsApp/Telegram/Google',
-      'Exporta reportes en PDF, Excel y CSV',
-      'Sin compromiso de permanencia',
-    ],
-    cta: 'Crear cuenta demo',
-    popular: true,
-    isContact: false,
+    name: 'Acceso para equipos',
+    description:
+      'Abriremos más cupos cuando el piloto actual demuestre estabilidad operando en un negocio real.',
   },
   {
-    name: 'Implementación asistida',
-    price: 'A convenir',
-    period: '',
-    description: 'Te acompañamos en la puesta en marcha',
-    features: [
-      'Instalación en tu servidor o cloud',
-      'Configuración de integraciones',
-      'Capacitación del equipo',
-      'Personalización del agente IA a tu rubro',
-      'Migración inicial de datos',
-      'Acuerdo de tratamiento de datos',
-    ],
-    cta: 'Solicitar contacto',
-    popular: false,
-    isContact: true,
+    name: 'Planes y precios',
+    description:
+      'El modelo de precios se definirá con la retroalimentación del piloto. Nada se cobra automáticamente.',
   },
 ]
 
@@ -593,118 +580,96 @@ function PricingSection() {
               Beta privada
             </span>
             <h2 className="mt-4 text-3xl sm:text-4xl lg:text-5xl font-bold text-slate-900 tracking-tight">
-              Empieza a usarlo hoy mismo
+              Piloto controlado, una empresa a la vez
             </h2>
             <p className="mt-5 text-lg text-slate-500 max-w-2xl mx-auto leading-relaxed">
-              CRM ALBRA es un producto en beta privada. Puedes autoinstalarlo
-              desde el código abierto, probar el demo en vivo o contactarnos
-              para una implementación asistida en tu negocio.
+              Estamos en beta privada: abrimos un cupo por vez para acompañar la
+              implementación de cerca. Puedes probar la demo gratis ahora o solicitar
+              el cupo del piloto.
             </p>
           </motion.div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto items-start">
-          {plans.map((plan, index) => (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto items-stretch">
+          {/* Card destacada: Piloto controlado */}
+          <motion.div
+            initial={{ opacity: 1, y: 24 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, amount: 0.1, margin: "0px 0px -200px 0px" }}
+            transition={{ duration: 0.4 }}
+            whileHover={{ y: -6 }}
+            className="relative rounded-2xl p-8 transition-all duration-300 bg-gradient-to-br from-emerald-600 to-teal-700 text-white shadow-2xl shadow-emerald-600/30 md:scale-105 border-0 flex flex-col"
+          >
+            <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-5 py-1.5 bg-gradient-to-r from-amber-400 to-amber-500 text-amber-900 text-xs font-bold rounded-full shadow-lg shadow-amber-400/30 uppercase tracking-wider">
+              Cupo abierto
+            </div>
+
+            <h3 className="text-xl font-bold text-white mt-2">Piloto controlado</h3>
+            <p className="text-sm mt-1.5 text-emerald-100">
+              Una empresa a la vez, con acompañamiento de principio a fin.
+            </p>
+
+            <div className="mt-7 flex items-baseline gap-1">
+              <span className="text-4xl font-extrabold tracking-tight text-white">1 empresa</span>
+              <span className="text-lg font-medium text-emerald-200">por vez</span>
+            </div>
+            <p className="text-xs text-emerald-100/80 mt-2">
+              Beta privada — plazas limitadas. La demo es gratis; el alcance del piloto se
+              acuerda contigo.
+            </p>
+
+            <ul className="mt-8 space-y-3.5">
+              {pilotFeatures.map((feature) => (
+                <li key={feature} className="flex items-start gap-3">
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 bg-white/20">
+                    <Check className="w-3 h-3 text-emerald-100" strokeWidth={3} />
+                  </div>
+                  <span className="text-sm leading-relaxed text-emerald-50">{feature}</span>
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-9 space-y-3">
+              <a
+                href="mailto:contacto@crm-albra.com?subject=Cupo%20en%20la%20beta%20-%20CRM%20ALBRA"
+                className="w-full inline-flex items-center justify-center gap-2 bg-white text-emerald-700 font-semibold h-12 rounded-xl transition-all duration-200 hover:bg-emerald-50 hover:scale-[1.02] shadow-lg shadow-black/10"
+              >
+                Solicitar cupo en la beta
+                <ArrowRight className="w-4 h-4" />
+              </a>
+              <Button
+                onClick={() => setView('register')}
+                className="w-full font-semibold h-11 rounded-xl transition-all duration-200 bg-white/10 border border-white/30 text-white hover:bg-white/20"
+                size="lg"
+              >
+                Empezar gratis la demo
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
+          </motion.div>
+
+          {/* Estados "Próximamente" — sin precios ni promesas */}
+          {comingSoon.map((item, index) => (
             <motion.div
-              key={plan.name}
+              key={item.name}
               initial={{ opacity: 1, y: 24 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.1, margin: "0px 0px -200px 0px" }}
-              transition={{ duration: 0.4, delay: index * 0.1 }}
-              whileHover={{ y: -6 }}
-              className={`relative rounded-2xl p-8 transition-all duration-300 ${
-                plan.popular
-                  ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white shadow-2xl shadow-emerald-600/30 md:scale-105 border-0'
-                  : 'bg-slate-900 text-white border border-slate-800 shadow-lg'
-              }`}
+              transition={{ duration: 0.4, delay: (index + 1) * 0.1 }}
+              className="relative rounded-2xl p-8 transition-all duration-300 bg-white border border-dashed border-slate-300 text-slate-500 shadow-sm flex flex-col"
             >
-              {plan.popular && (
-                <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-5 py-1.5 bg-gradient-to-r from-amber-400 to-amber-500 text-amber-900 text-xs font-bold rounded-full shadow-lg shadow-amber-400/30 uppercase tracking-wider">
-                  Recomendado
-                </div>
-              )}
+              <span className="self-start px-3 py-1 rounded-full bg-slate-100 text-slate-500 text-xs font-semibold uppercase tracking-wider">
+                Próximamente
+              </span>
 
-              <h3
-                className={`text-xl font-bold ${plan.popular ? 'text-white' : 'text-white'}`}
-              >
-                {plan.name}
-              </h3>
-              <p
-                className={`text-sm mt-1.5 ${plan.popular ? 'text-emerald-100' : 'text-slate-300'}`}
-              >
-                {plan.description}
+              <h3 className="text-xl font-bold text-slate-700 mt-6">{item.name}</h3>
+              <p className="text-sm mt-2 leading-relaxed text-slate-500 flex-1">
+                {item.description}
               </p>
 
-              <div className="mt-7 flex items-baseline gap-1">
-                <span
-                  className={`text-4xl font-extrabold tracking-tight ${
-                    plan.popular ? 'text-white' : 'text-white'
-                  }`}
-                >
-                  {plan.price}
-                </span>
-                {plan.period && (
-                  <span
-                    className={`text-lg font-medium ${
-                      plan.popular ? 'text-emerald-200' : 'text-slate-400'
-                    }`}
-                  >
-                    {plan.period}
-                  </span>
-                )}
-              </div>
-              {!plan.popular && (
-                <p className="text-xs text-slate-400 mt-2">
-                  Sin planes mensuales ocultos. Sin SLA genérico.
-                </p>
-              )}
-
-              <ul className="mt-8 space-y-3.5">
-                {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-3">
-                    <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                        plan.popular ? 'bg-white/20' : 'bg-emerald-500/20'
-                      }`}
-                    >
-                      <Check
-                        className={`w-3 h-3 ${plan.popular ? 'text-emerald-100' : 'text-emerald-400'}`}
-                        strokeWidth={3}
-                      />
-                    </div>
-                    <span
-                      className={`text-sm leading-relaxed ${
-                        plan.popular ? 'text-emerald-50' : 'text-slate-200'
-                      }`}
-                    >
-                      {feature}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-
-              {plan.isContact ? (
-                <a
-                  href="mailto:contacto@crm-albra.com?subject=Implementaci%C3%B3n%20CRM%20ALBRA"
-                  className="w-full mt-9 inline-flex items-center justify-center gap-2 bg-white text-slate-900 font-semibold h-12 rounded-xl transition-all duration-200 hover:bg-slate-100 hover:scale-[1.02]"
-                >
-                  {plan.cta}
-                  <ArrowRight className="w-4 h-4" />
-                </a>
-              ) : (
-                <Button
-                  onClick={() => setView('register')}
-                  className={`w-full mt-9 font-semibold h-12 rounded-xl transition-all duration-200 ${
-                    plan.popular
-                      ? 'bg-white text-emerald-700 hover:bg-emerald-50 shadow-lg shadow-black/10 hover:scale-[1.02]'
-                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md shadow-emerald-500/20 hover:scale-[1.02]'
-                  }`}
-                  size="lg"
-                >
-                  {plan.cta}
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              )}
+              <p className="text-xs text-slate-400 mt-6">
+                Disponible después del piloto actual.
+              </p>
             </motion.div>
           ))}
         </div>
@@ -720,8 +685,10 @@ function PricingSection() {
           CRM ALBRA es un producto en beta privada y se ofrece como software
           instalable. El procesamiento de datos personales (teléfonos, nombres,
           conversaciones) es responsabilidad del operador del sistema, quien
-          debe cumplir con la normativa local de protección de datos y los
-          términos de servicio de WhatsApp, Telegram y Google.
+          debe cumplir con la normativa local de protección de datos — Ley 1581
+          de 2012 en Colombia — y los términos de servicio de WhatsApp, Telegram
+          y Google. Consulta la Política de Privacidad y los Términos en el pie
+          de página.
         </motion.p>
       </div>
     </section>
@@ -729,7 +696,11 @@ function PricingSection() {
 }
 
 /* ──────────────── Footer ──────────────── */
-function Footer() {
+function Footer({ onOpenLegal }: { onOpenLegal: (doc: LegalDoc) => void }) {
+  const { setView } = useAppStore()
+  const year = new Date().getFullYear()
+  const linkClass = 'text-left hover:text-emerald-400 cursor-pointer transition-colors'
+
   return (
     <footer className="bg-slate-900 text-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -745,49 +716,70 @@ function Footer() {
             <p className="text-slate-400 text-sm leading-relaxed max-w-sm">
               Inteligencia comercial que trabaja por ti. Automatiza la captura de prospectos, avanza oportunidades y fideliza clientes con IA.
             </p>
+            <p className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-emerald-400">
+              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+              Beta privada — 1 empresa por vez
+            </p>
           </div>
 
-          {/* Producto */}
+          {/* Producto (solo enlaces que existen) */}
           <div>
             <h4 className="font-semibold text-sm mb-5 text-slate-200">Producto</h4>
             <ul className="space-y-3 text-sm text-slate-400">
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Funciones</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Precios</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Integraciones</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Changelog</li>
+              <li><a href="#features" className={linkClass}>Funciones</a></li>
+              <li><a href="#como-funciona" className={linkClass}>Cómo funciona</a></li>
+              <li><a href="#pricing" className={linkClass}>Piloto controlado</a></li>
+              <li>
+                <button onClick={() => setView('register')} className={linkClass}>
+                  Crear cuenta demo
+                </button>
+              </li>
             </ul>
           </div>
 
-          {/* Empresa */}
+          {/* Beta (estado real del proyecto) */}
           <div>
-            <h4 className="font-semibold text-sm mb-5 text-slate-200">Empresa</h4>
+            <h4 className="font-semibold text-sm mb-5 text-slate-200">Beta</h4>
             <ul className="space-y-3 text-sm text-slate-400">
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Nosotros</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Blog</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Carreras</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Contacto</li>
+              <li>Estado: beta privada</li>
+              <li>Cupos: 1 empresa por vez</li>
+              <li>
+                <a href="mailto:contacto@crm-albra.com" className={linkClass}>
+                  contacto@crm-albra.com
+                </a>
+              </li>
             </ul>
           </div>
 
-          {/* Legal */}
+          {/* Legal (abre resúmenes en dialog) */}
           <div>
             <h4 className="font-semibold text-sm mb-5 text-slate-200">Legal</h4>
             <ul className="space-y-3 text-sm text-slate-400">
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Privacidad</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Términos de Servicio</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Cookies</li>
-              <li className="hover:text-emerald-400 cursor-pointer transition-colors">Seguridad</li>
+              <li>
+                <button onClick={() => onOpenLegal('privacidad')} className={linkClass}>
+                  Política de Privacidad
+                </button>
+              </li>
+              <li>
+                <button onClick={() => onOpenLegal('terminos')} className={linkClass}>
+                  Términos de Servicio
+                </button>
+              </li>
             </ul>
           </div>
         </div>
 
         <div className="mt-14 pt-8 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-slate-500">
-            © 2024 CRM ALBRA. Todos los derechos reservados.
+            © {year} CRM ALBRA · Beta privada. Todos los derechos reservados.
           </p>
           <div className="flex items-center gap-6 text-sm text-slate-500">
-            <span className="hover:text-emerald-400 cursor-pointer transition-colors">Privacidad</span>
-            <span className="hover:text-emerald-400 cursor-pointer transition-colors">Términos</span>
+            <button onClick={() => onOpenLegal('privacidad')} className="hover:text-emerald-400 cursor-pointer transition-colors">
+              Privacidad
+            </button>
+            <button onClick={() => onOpenLegal('terminos')} className="hover:text-emerald-400 cursor-pointer transition-colors">
+              Términos
+            </button>
           </div>
         </div>
       </div>
@@ -798,6 +790,7 @@ function Footer() {
 /* ──────────────── Main Landing Page ──────────────── */
 export function LandingPage() {
   const { view, setView } = useAppStore()
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null)
 
   const showLogin = view === 'login'
   const showRegister = view === 'register'
@@ -805,6 +798,9 @@ export function LandingPage() {
   return (
     <div className="min-h-screen">
       <Navbar />
+
+      {/* Legal Dialog (Términos y Privacidad) */}
+      <LegalDialog doc={legalDoc} onOpenChange={(open) => !open && setLegalDoc(null)} />
 
       {/* Login Dialog */}
       <Dialog open={showLogin} onOpenChange={(open) => !open && setView('landing')}>
@@ -839,7 +835,7 @@ export function LandingPage() {
       <PricingSection />
 
       {/* Footer */}
-      <Footer />
+      <Footer onOpenLegal={setLegalDoc} />
     </div>
   )
 }

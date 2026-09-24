@@ -494,7 +494,7 @@ export function SettingsPage() {
         setInvSpreadsheetId(data.config.spreadsheetId)
         setInvSheetName(data.config.sheetName)
         setInvRange(data.config.range)
-        if (data.config.columnMap) setInvColumnMap(data.config.columnMap)
+        if (data.config.columnMap) setInvColumnMap(data.config.columnMap as unknown as { name: number; description: number; category: number; price: number; duration: number })
         setInvSyncInterval(data.config.syncInterval)
         setInvActive(data.config.isActive)
         setInvLastSync(data.config.lastSyncAt)

@@ -6,10 +6,10 @@ interface User {
   id: string
   email: string
   name: string
-  company?: string
-  phone?: string
+  company?: string | null
+  phone?: string | null
   role: string
-  avatar?: string
+  avatar?: string | null
 }
 
 interface AppState {

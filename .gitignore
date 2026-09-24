@@ -52,3 +52,5 @@ prompt
 server.log
 # Skills directory
 /skills/
+# Reference dump (Twenty CRM repo) — keep Turbopack watcher under inotify limits
+/reference

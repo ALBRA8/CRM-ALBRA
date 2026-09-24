@@ -15,16 +15,36 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Send, Bot, User, Sparkles, Loader2, Settings, AlertTriangle } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Loader2, Settings, AlertTriangle, UserPlus, TrendingUp, CalendarPlus, StickyNote, FileText, List, Zap } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { toast } from 'sonner'
+
+interface AgentAction {
+  type: string
+  summary: string
+}
 
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  actions?: AgentAction[]
+}
+
+// Icono por tipo de acción ejecutada por el agente IA
+function actionIcon(type: string): React.ReactNode {
+  const map: Record<string, React.ReactNode> = {
+    create_client: <UserPlus className="w-3 h-3" />,
+    create_opportunity: <TrendingUp className="w-3 h-3" />,
+    schedule_reservation: <CalendarPlus className="w-3 h-3" />,
+    add_note: <StickyNote className="w-3 h-3" />,
+    quote_summary: <FileText className="w-3 h-3" />,
+    list_recent_clients: <List className="w-3 h-3" />,
+  }
+  return map[type] ?? <Zap className="w-3 h-3" />
 }
 
 export function ChatPage() {
@@ -95,14 +115,26 @@ export function ChatPage() {
         clientId: selectedClientId || undefined,
       })
 
+      const dataAny = data as { reply?: string; content?: string; actions?: AgentAction[] }
+      const replyText = dataAny.reply ?? dataAny.content ?? ''
+      const actions = dataAny.actions
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.content,
+        content: replyText,
         timestamp: new Date(),
+        actions,
       }
 
       setMessages((prev) => [...prev, assistantMessage])
+
+      // Feedback de acciones que el agente IA ejecutó en el CRM
+      if (actions && actions.length > 0) {
+        toast.success(`El agente ejecutó ${actions.length} ${actions.length === 1 ? 'acción' : 'acciones'}`, {
+          description: actions[0]?.summary,
+        })
+      }
     } catch {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -240,6 +272,27 @@ export function ChatPage() {
                   }`}
                 >
                   <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                  {/* Acciones ejecutadas por el agente IA */}
+                  {msg.role === 'assistant' && msg.actions && msg.actions.length > 0 && (
+                    <div className="mt-2 space-y-1.5">
+                      {msg.actions.map((action, i) => (
+                        <div
+                          key={i}
+                          className="flex items-start gap-2 bg-white border border-violet-100 rounded-lg px-2.5 py-1.5"
+                        >
+                          <div className="w-5 h-5 bg-violet-100 text-violet-600 rounded flex items-center justify-center flex-shrink-0 mt-0.5" aria-hidden="true">
+                            {actionIcon(action.type)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide flex items-center gap-1">
+                              <Sparkles className="w-2.5 h-2.5" /> Acción ejecutada
+                            </p>
+                            <p className="text-xs text-slate-600 break-words">{action.summary}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <p className={`text-[10px] mt-1 ${msg.role === 'user' ? 'text-emerald-200' : 'text-slate-400'}`}>
                     {format(msg.timestamp, 'HH:mm', { locale: es })}
                   </p>

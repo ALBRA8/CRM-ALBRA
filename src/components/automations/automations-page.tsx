@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AutomationFormDialog } from './automation-form-dialog'
+import { AutomationFormDialog, triggerTypeLabels } from './automation-form-dialog'
 import { SuggestionsPanel } from './suggestions-panel'
 import { Plus, Play, Zap, Clock, RefreshCw } from 'lucide-react'
 import { format } from 'date-fns'
@@ -18,7 +18,9 @@ interface Automation {
   id: string
   name: string
   type: string
-  trigger: string
+  trigger?: string | null
+  triggerType?: string | null
+  triggerConfig?: string | null
   conditions?: string | null
   actions: string
   message?: string | null
@@ -49,6 +51,19 @@ const triggerLabels: Record<string, string> = {
   before_appointment: 'Antes de cita',
   after_service: 'Después del servicio',
   stage_change: 'Cambio de etapa',
+}
+
+// Parseo tolerante de condiciones/acciones guardadas como JSON string
+function countJsonArray(json: string | null | undefined): number {
+  if (!json) return 0
+  try {
+    const parsed = JSON.parse(json)
+    if (Array.isArray(parsed)) return parsed.length
+    if (parsed && typeof parsed === 'object') return Object.keys(parsed).length
+    return 0
+  } catch {
+    return 0
+  }
 }
 
 export function AutomationsPage() {
@@ -86,8 +101,18 @@ export function AutomationsPage() {
   const handleRunAll = async () => {
     setRunningAll(true)
     try {
-      const result = await api.runAutomations()
-      toast.success(`Automatizaciones ejecutadas: ${(result.results as { remindersSent: number; inactiveRecovered: number; loyaltyFollowUps: number }).remindersSent} recordatorios, ${(result.results as { inactiveRecovered: number }).inactiveRecovered} recuperaciones`)
+      const result = await api.runAutomations() as { processed?: number; results?: { remindersSent: number; inactiveRecovered: number; loyaltyFollowUps: number } }
+      if (typeof result?.processed === 'number') {
+        toast.success(result.processed > 0
+          ? `Ejecución completada: ${result.processed} automatización(es) procesada(s)`
+          : 'No había automatizaciones pendientes por ejecutar', {
+          description: result.processed > 0 ? 'Revisa el timeline de tus clientes para ver los efectos' : undefined,
+        })
+      } else if (result?.results) {
+        toast.success(`Automatizaciones ejecutadas: ${result.results.remindersSent} recordatorios, ${result.results.inactiveRecovered} recuperaciones`)
+      } else {
+        toast.success('Ejecución completada')
+      }
       loadAutomations()
     } catch {
       toast.error('Error al ejecutar automatizaciones')
@@ -136,7 +161,7 @@ export function AutomationsPage() {
             disabled={runningAll}
           >
             <RefreshCw className={`w-4 h-4 mr-2 ${runningAll ? 'animate-spin' : ''}`} />
-            {runningAll ? 'Ejecutando...' : 'Ejecutar Todas'}
+            {runningAll ? 'Ejecutando...' : 'Ejecutar pendientes ahora'}
           </Button>
           <Button
             onClick={() => { setEditAutomation(null); setShowForm(true) }}
@@ -156,27 +181,46 @@ export function AutomationsPage() {
                 <CardContent className="p-5">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <Zap className={`w-4 h-4 ${auto.isActive ? 'text-emerald-500' : 'text-slate-300'}`} />
                         <h3 className="text-sm font-semibold text-slate-900 truncate">{auto.name}</h3>
                         <Badge className={`text-xs ${typeColors[auto.type] ?? 'bg-slate-100 text-slate-600'}`}>
                           {typeLabels[auto.type] ?? auto.type}
                         </Badge>
                       </div>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Trigger: {triggerLabels[auto.trigger] ?? auto.trigger}
+                      {/* Trigger: nuevo formato (triggerType) o legacy (trigger) o Manual */}
+                      <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                        <Clock className="w-3 h-3" aria-hidden="true" />
+                        {auto.triggerType
+                          ? (triggerTypeLabels[auto.triggerType] ?? auto.triggerType)
+                          : auto.trigger
+                            ? `Trigger: ${triggerLabels[auto.trigger] ?? auto.trigger}`
+                            : 'Manual'}
                       </p>
-                      <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
+                      {/* Métricas del workflow */}
+                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                        <Badge variant="outline" className="text-[10px] bg-emerald-50/60 text-emerald-700 border-emerald-200">
+                          Ejecutada {auto.runCount} {auto.runCount === 1 ? 'vez' : 'veces'}
+                        </Badge>
+                        {countJsonArray(auto.conditions) > 0 && (
+                          <Badge variant="outline" className="text-[10px] bg-amber-50/60 text-amber-700 border-amber-200">
+                            {countJsonArray(auto.conditions)} condición(es)
+                          </Badge>
+                        )}
+                        {countJsonArray(auto.actions) > 0 && (
+                          <Badge variant="outline" className="text-[10px] bg-violet-50/60 text-violet-700 border-violet-200">
+                            {countJsonArray(auto.actions)} acción(es)
+                          </Badge>
+                        )}
+                        <span className="text-xs text-slate-400 flex items-center gap-1 ml-1">
+                          <Clock className="w-3 h-3" aria-hidden="true" />
                           {auto.lastRunAt
                             ? `Última: ${format(new Date(auto.lastRunAt), "d MMM, HH:mm", { locale: es })}`
                             : 'Sin ejecutar'}
                         </span>
-                        <span>Ejecuciones: {auto.runCount}</span>
                       </div>
                       {auto.message && (
-                        <p className="text-xs text-slate-400 mt-1 bg-slate-50 p-2 rounded line-clamp-2">
+                        <p className="text-xs text-slate-400 mt-2 bg-slate-50 p-2 rounded line-clamp-2">
                           &quot;{auto.message}&quot;
                         </p>
                       )}

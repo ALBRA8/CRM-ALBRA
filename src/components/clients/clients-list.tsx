@@ -34,6 +34,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ClientFormDialog } from './client-form-dialog'
+import { SavedViewsBar } from './saved-views-bar'
+import { applyFilters, parseViewFilters, type SavedView, type SavedViewFilter } from '@/lib/filters'
 import {
   Search,
   Plus,
@@ -127,6 +129,10 @@ export function ClientsList() {
   const [sourceFilter, setSourceFilter] = useState('all')
   const [page, setPage] = useState(1)
 
+  // Vistas guardadas (filtrado en cliente)
+  const [viewFilters, setViewFilters] = useState<SavedViewFilter[]>([])
+  const [activeViewId, setActiveViewId] = useState<string | null>(null)
+
   // Dialog states
   const [showForm, setShowForm] = useState(false)
   const [editClient, setEditClient] = useState<Client | null>(null)
@@ -153,9 +159,13 @@ export function ClientsList() {
       if (debouncedSearch) params.search = debouncedSearch
       if (temperatureFilter !== 'all') params.temperature = temperatureFilter
       if (sourceFilter !== 'all') params.source = sourceFilter
+      // Con una vista activa traemos más registros y filtramos en cliente
+      if (viewFilters.length > 0) params.limit = '500'
 
       const data = await api.getClients(params)
-      setClients(data.clients as Client[])
+      let list = data.clients as Client[]
+      if (viewFilters.length > 0) list = applyFilters(list, viewFilters)
+      setClients(list)
       setPagination(data.pagination as PaginationData)
     } catch {
       setError(true)
@@ -163,11 +173,25 @@ export function ClientsList() {
     } finally {
       setLoading(false)
     }
-  }, [page, debouncedSearch, temperatureFilter, sourceFilter])
+  }, [page, debouncedSearch, temperatureFilter, sourceFilter, viewFilters])
 
   useEffect(() => {
     loadClients()
   }, [loadClients])
+
+  // ─── Vistas guardadas ─────────────────────────────────────────────────
+
+  const handleApplyView = (view: SavedView | null) => {
+    setActiveViewId(view?.id ?? null)
+    setViewFilters(view ? parseViewFilters(view.filters) : [])
+    setPage(1)
+  }
+
+  const handleViewFiltersChange = (filters: SavedViewFilter[]) => {
+    setViewFilters(filters)
+    if (filters.length === 0) setActiveViewId(null)
+    setPage(1)
+  }
 
   const handleRowClick = (clientId: string) => {
     setSelectedClientId(clientId)
@@ -307,6 +331,16 @@ export function ClientsList() {
         </div>
       </Card>
 
+      {/* Vistas guardadas (estilo Twenty) */}
+      <SavedViewsBar
+        entity="clients"
+        activeViewId={activeViewId}
+        activeFilters={viewFilters}
+        onApply={handleApplyView}
+        onFiltersChange={handleViewFiltersChange}
+        currentSearch={debouncedSearch}
+      />
+
       {/* Error State */}
       {error && (
         <Card className="border-0 shadow-sm p-6 text-center">
@@ -338,16 +372,16 @@ export function ClientsList() {
                 <UserRound className="w-10 h-10 text-emerald-300" />
               </div>
               <h3 className="text-lg font-semibold text-slate-700">
-                {debouncedSearch || sourceFilter !== 'all' || temperatureFilter !== 'all'
+                {debouncedSearch || sourceFilter !== 'all' || temperatureFilter !== 'all' || viewFilters.length > 0
                   ? 'Sin resultados'
                   : 'Agrega tu primer cliente'}
               </h3>
               <p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">
-                {debouncedSearch || sourceFilter !== 'all' || temperatureFilter !== 'all'
+                {debouncedSearch || sourceFilter !== 'all' || temperatureFilter !== 'all' || viewFilters.length > 0
                   ? 'Intenta ajustar los filtros de búsqueda para encontrar lo que buscas'
                   : 'Comienza registrando tus contactos y prospectos para gestionarlos fácilmente'}
               </p>
-              {!debouncedSearch && sourceFilter === 'all' && temperatureFilter === 'all' && (
+              {!debouncedSearch && sourceFilter === 'all' && temperatureFilter === 'all' && viewFilters.length === 0 && (
                 <Button
                   onClick={() => { setEditClient(null); setShowForm(true) }}
                   className="mt-6 bg-emerald-600 hover:bg-emerald-700 text-white"

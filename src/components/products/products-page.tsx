@@ -347,7 +347,7 @@ export function ProductsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <AnimatePresence mode="popLayout">
             {filtered.map((service, idx) => {
-              const catStyle = getCategoryStyle(service.category)
+              const catStyle = getCategoryStyle(service.category ?? null)
               return (
                 <motion.div
                   key={service.id}
@@ -457,7 +457,7 @@ export function ProductsPage() {
               <tbody>
                 <AnimatePresence mode="popLayout">
                   {filtered.map((service) => {
-                    const catStyle = getCategoryStyle(service.category)
+                    const catStyle = getCategoryStyle(service.category ?? null)
                     return (
                       <motion.tr
                         key={service.id}

@@ -51,7 +51,15 @@ export function PushNotificationsCard() {
   }, [])
 
   useEffect(() => {
-    void checkStatus()
+    let cancelled = false
+    const run = async () => {
+      const prev = await checkStatus()
+      if (!cancelled) return prev
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
   }, [checkStatus])
 
   const handleEnable = async () => {
@@ -76,7 +84,7 @@ export function PushNotificationsCard() {
       // 4. Suscribirse al push service del navegador
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
+        applicationServerKey: urlBase64ToUint8Array(publicKey).buffer as ArrayBuffer,
       })
 
       // 5. Enviar la suscripción al backend
