@@ -202,3 +202,24 @@ Work Log:
 Stage Summary:
 - Configuración ordenada por importancia (Negocio primero, Agente IA 2º, Google 3º, canales de comunicación después, operativas al final) y verificada en navegador.
 - Blindaje del repo local replicado al del usuario: .env y db des-rastreados e ignorados, .wa-auth excluida, .env.example profesional commiteable. Repo ALBRA8/CRM-ALBRA inaccesible (404 privado) — pendiente que el usuario lo haga público o comparta detalle adicional si quiere comparación más profunda.
+
+---
+Task ID: 8 (post-entrega)
+Agent: main (Super Z)
+Task: Comparar repo público ALBRA8/CRM-ALBRA (solo extraer lo que falta, NO usarlo como base) + ubicar/crear la secuencia de post-venta.
+
+Work Log:
+- Repo clonado a repo-compare (el usuario aclaró: nuestra versión es la buena; solo revisar qué tiene y falta). Análisis: daemon.mjs (603 líneas, Baileys), knowledge/ (2 txt), leeme_arquitectura.md (arquitectura LEGACY de crm.html + memory.db, NO aplica), .gitignore más completo, .env.example con LLM/NVIDIA/GOOGLE/NEXTAUTH (su versión antigua), deps @whiskeysockets/baileys + @hapi/boom + qrcode + qrcode-terminal + better-sqlite3. Su repo NO tiene secuencia post-venta (solo plantilla). repo-compare eliminado tras extraer lo útil (también limpiaba tsc).
+- PORTADO daemon Baileys → src/whatsapp-daemon/daemon.mjs (567 líneas) ADAPTADO: organizationId (no userId), Client sin temperature/score, agent auto-reply via /api/chat con X-Internal-Secret, endpoints exactos que espera daemon-proxy, CORS localhost, auto-connect si existe sesión, graceful shutdown.
+- Prisma: +modelos WhatsAppConversation (unique org+phone) y WhatsAppMessage (índices conv+createdAt); relaciones en Organization y Client; db push + generate OK.
+- /api/chat: auth dual JWT o X-Internal-Secret (orgId derivado del clientId o primera org); executeAgentAction/auditAndTimeline aceptan userId null.
+- daemon-proxy: POST ahora envía Authorization: Bearer INTERNAL_API_SECRET.
+- workflow-engine: buildActionContext() enriquece payload con clientName/name/phone/email del cliente (en runWorkflowsForTrigger Y resumeWaitingRuns) y send_whatsapp hace envío REAL vía daemon POST /send (8s timeout, resultado sent/error en stepStates).
+- SECUENCIA POST-VENTA creada: trigger opportunity_stage_changed → condición toStage="Cierre Ganado"; pasos: wait 3d → send_whatsapp check-in satisfacción → wait 4d → ai_followup (reseña/recomendación). En demo-seed.ts (orgs nuevas, activa) + scripts/seed-postventa.ts ejecutado en BD viva (1 creada). El repo del usuario NO tenía nada de esto.
+- Deps instaladas: @whiskeysockets/baileys@7.0.0-rc14, qrcode, qrcode-terminal, @hapi/boom, better-sqlite3 (pm trust OK). Script npm wa:daemon.
+- .gitignore: +**/.wa-auth/, .wwebjs_auth/, .wwebjs_cache/, *.zip, .vscode/, .idea/, Thumbs.db. .env.example: +INTERNAL_API_SECRET.
+- VERIFICADO EN VIVO: tsc 0 errores (proyecto), eslint 0, daemon arranca (DB WAL OK), /status responde directo y vía proxy, POST /connect con auth → waiting_qr, QR real renderizado en Configuración→WhatsApp (screenshot whatsapp-qr-settings.png), chat interno responde como agente, /api/automations muestra "Secuencia post-venta" activa con 4 pasos (screenshot automatizaciones-postventa.png). E2E engine ya validado en Task 6.
+- Commit 04717af. Daemon corriendo en background (nohup, log /tmp/wa-daemon.log) esperando escaneo del QR.
+
+Stage Summary:
+- WhatsApp REAL por QR funcionando (falta solo escanear desde el teléfono). Secuencia post-venta visible en Automatizaciones. Del repo del usuario solo se portó lo funcional (daemon, tablas, auth interna); knowledge/ no aplica porque nuestro agente usa NichoConfig en BD; su doc leeme_arquitectura.md describe la arquitectura legacy anterior.
