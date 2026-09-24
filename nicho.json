@@ -1,0 +1,21 @@
+{
+  "branding_name": "CRM ALBRA",
+  "rubro": "Servicios Profesionales",
+  "personality": "Profesional, empático y orientado a resultados. Comunicación cercana pero respetuosa.",
+  "terminology": {
+    "rol_primario": "Cliente",
+    "rol_secundario": "Asesor",
+    "evento": "Cita",
+    "evento_plural": "Citas"
+  },
+  "reglas_oro": [
+    "Siempre confirmar datos antes de agendar",
+    "Ofrecer alternativas cuando no hay disponibilidad",
+    "Seguir cada 48h después de una cotización",
+    "Recuperar clientes inactivos después de 30 días"
+  ],
+  "negociacion": {
+    "descuento_maximo": 10,
+    "estrategia": "Ofrecer descuento parcial primero, mantener margen"
+  }
+}

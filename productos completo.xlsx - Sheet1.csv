@@ -1,0 +1,6 @@
+CÓDIGO,NOMBRE,CATEGORÍA,MARCA,PUNTO DE REORDEN,STOCK ACTUAL,PRECIO UNITARIO,IVA
+REF-001,Laptop Pro 14,Computación,Apple,3,10,1500,16
+REF-002,Monitor 4K,Periféricos,LG,5,2,300,16
+REF-003,Teclado Mecánico,Accesorios,Keychron,10,15,80,16
+REF-004,Mouse Ergonómico,Accesorios,Logitech,10,4,50,16
+REF-005,Impresora Laser,Oficina,HP,2,5,250,16

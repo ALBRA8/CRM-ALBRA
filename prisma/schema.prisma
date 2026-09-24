@@ -1,0 +1,622 @@
+// CRM ALBRA - Schema de Base de Datos
+// Sistema de Inteligencia Comercial SaaS
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// AUTENTICACIÓN Y USUARIOS
+// ============================================
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  password     String
+  name         String
+  company      String?
+  phone        String?
+  role         String   @default("owner") // owner, admin, agent
+  avatar       String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  clients      Client[]
+  opportunities Opportunity[]
+  reservations Reservation[]
+  automations  Automation[]
+  chatLogs     ChatLog[]
+  quotes       Quote[]
+  notifications Notification[]
+}
+
+// ============================================
+// CRM: CLIENTES Y PROSPECTOS
+// ============================================
+
+model Client {
+  id             String   @id @default(cuid())
+  userId         String
+  name           String
+  email          String?
+  phone          String
+  identifier     String?  // Cédula o ID único
+  company        String?
+  address        String?
+  city           String?
+  notes          String?
+  source         String   @default("manual") // manual, whatsapp, telegram, web, referral
+  tags           String?  // JSON array of tags
+  score          Int      @default(0) // Lead score 0-100
+  temperature    String   @default("Frio") // Frio, Tibio, Caliente, Fuego
+  isActive       Boolean  @default(true)
+  lastContactAt  DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id])
+  opportunities  Opportunity[]
+  reservations   Reservation[]
+  preferences    ClientPreference[]
+  serviceHistory ClientServiceHistory[]
+  chatLogs       ChatLog[]
+  quotes         Quote[]
+  whatsappConversations WhatsAppConversation[]
+  telegramConversations TelegramConversation[]
+
+  @@index([userId])
+  @@index([phone])
+}
+
+model ClientPreference {
+  id         String   @id @default(cuid())
+  clientId   String
+  category   String   // communication, service, schedule, etc.
+  key        String
+  value      String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, category, key])
+}
+
+model ClientServiceHistory {
+  id          String   @id @default(cuid())
+  clientId    String
+  serviceType String
+  description String
+  amount      Float?
+  date        DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+// ============================================
+// PIPELINE DE VENTAS
+// ============================================
+
+model PipelineStage {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  order     Int
+  color     String   @default("#6b7280")
+  createdAt DateTime @default(now())
+
+  opportunities Opportunity[]
+
+  @@unique([userId, order])
+}
+
+model Opportunity {
+  id             String   @id @default(cuid())
+  userId         String
+  clientId       String
+  stageId        String
+  title          String
+  interest       String   // En qué mostró interés
+  estimatedValue Float    @default(0)
+  actualValue    Float?
+  probability    Int      @default(50) // 0-100
+  notes          String?
+  nextAction     String?
+  nextActionDate DateTime?
+  closedAt       DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User          @relation(fields: [userId], references: [id])
+  client         Client        @relation(fields: [clientId], references: [id])
+  stage          PipelineStage @relation(fields: [stageId], references: [id])
+  progressNotes  ProgressNote[]
+  quotes         Quote[]
+
+  @@index([userId])
+  @@index([stageId])
+  @@index([clientId])
+}
+
+model ProgressNote {
+  id             String   @id @default(cuid())
+  opportunityId  String
+  stageName      String
+  note           String
+  createdAt      DateTime @default(now())
+
+  opportunity    Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId])
+}
+
+// ============================================
+// SISTEMA DE RESERVAS
+// ============================================
+
+model Reservation {
+  id          String   @id @default(cuid())
+  userId      String
+  clientId    String?
+  title       String
+  description String?
+  serviceType String?
+  date        DateTime
+  duration    Int      @default(60) // minutos
+  status      String   @default("confirmed") // confirmed, cancelled, completed, no_show
+  location    String?
+  notes       String?
+  reminderSent Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id])
+  client      Client?  @relation(fields: [clientId], references: [id])
+
+  @@index([userId])
+  @@index([date])
+  @@index([clientId])
+}
+
+// ============================================
+// COTIZACIONES
+// ============================================
+
+model Quote {
+  id             String   @id @default(cuid())
+  userId         String
+  clientId       String
+  opportunityId  String?
+  quoteNumber    String   @unique
+  status         String   @default("draft") // draft, sent, accepted, rejected, expired
+  subtotal       Float
+  discount       Float    @default(0)
+  tax            Float    @default(0)
+  total          Float
+  notes          String?
+  validUntil     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User        @relation(fields: [userId], references: [id])
+  client         Client      @relation(fields: [clientId], references: [id])
+  opportunity    Opportunity? @relation(fields: [opportunityId], references: [id])
+  items          QuoteItem[]
+
+  @@index([userId])
+  @@index([clientId])
+}
+
+model QuoteItem {
+  id             String   @id @default(cuid())
+  quoteId        String
+  sku            String?
+  description    String
+  quantity       Int
+  unitPrice      Float
+  subtotal       Float
+
+  quote          Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
+}
+
+// ============================================
+// FINANZAS
+// ============================================
+
+model Transaction {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // ingreso, egreso, compra_inventario
+  amount      Float
+  category    String?
+  description String
+  referenceId String?  // ID de la oportunidad, cotización, etc.
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([date])
+}
+
+// ============================================
+// AUTOMATIZACIONES
+// ============================================
+
+model Automation {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  type        String   // reminder, inactive_recovery, loyalty, follow_up, custom
+  trigger     String   // days_inactive, before_appointment, after_service, stage_change
+  conditions  String?  // JSON with conditions
+  actions     String   // JSON with action definitions
+  message     String?  // Template message
+  isActive    Boolean  @default(true)
+  lastRunAt   DateTime?
+  runCount    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([type])
+}
+
+model AutomationLog {
+  id            String   @id @default(cuid())
+  automationId  String
+  clientId      String?
+  status        String   // sent, failed, skipped
+  result        String?
+  executedAt    DateTime @default(now())
+
+  @@index([automationId])
+}
+
+// ============================================
+// CHAT Y AGENTE AI
+// ============================================
+
+model ChatLog {
+  id          String   @id @default(cuid())
+  userId      String
+  clientId    String?
+  role        String   // user, assistant, system, tool
+  content     String
+  toolName    String?
+  toolArgs    String?  // JSON
+  toolResult  String?  // JSON
+  metadata    String?  // JSON
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+  client      Client?  @relation(fields: [clientId], references: [id])
+
+  @@index([userId])
+  @@index([clientId])
+  @@index([createdAt])
+}
+
+// ============================================
+// MEMORIA DEL AGENTE (Aprendizaje)
+// ============================================
+
+model Memory {
+  id        String   @id @default(cuid())
+  userId    String
+  category  String   // product, pricing, policy, faq, preference
+  key       String
+  value     String
+  source    String   @default("agent") // agent, user, system
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, category, key])
+  @@index([userId])
+}
+
+// ============================================
+// SERVICIOS / CATÁLOGO
+// ============================================
+
+model Service {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  category    String?
+  sku         String?  // SKU / código de producto
+  price       Float    @default(0)
+  stock       Int?     // cantidad en inventario (null = servicio sin stock)
+  duration    Int      @default(60) // minutos
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([sku])
+}
+
+// ============================================
+// WHATSAPP INTEGRATION
+// ============================================
+
+model WhatsAppConfig {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  phoneNumberId     String   // Meta Phone Number ID
+  businessAccountId String   // Meta Business Account ID
+  accessToken       String   // Meta Permanent Access Token
+  webhookVerifyToken String  // Webhook verification token
+  webhookSecret     String?  // App secret for signature verification
+  isActive          Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model WhatsAppConversation {
+  id              String    @id @default(cuid())
+  userId          String
+  clientId        String?
+  contactPhone    String
+  contactName     String?
+  lastMessage     String?
+  lastMessageAt   DateTime?
+  lastMessageFrom String?   // contact, agent, human
+  status          String    @default("active") // active, transferred, closed
+  transferredTo   String?   // Human agent name/id
+  unreadCount     Int       @default(0)
+  isAutoReply     Boolean   @default(true) // AI auto-reply enabled
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  client          Client?   @relation(fields: [clientId], references: [id])
+  messages        WhatsAppMessage[]
+
+  @@index([userId])
+  @@index([contactPhone])
+  @@index([lastMessageAt])
+}
+
+model WhatsAppMessage {
+  id              String   @id @default(cuid())
+  conversationId  String
+  userId          String
+  waMessageId     String?  // WhatsApp message ID from Meta
+  direction       String   // inbound, outbound
+  fromNumber      String   // Phone number that sent
+  toNumber        String   // Phone number that received
+  text            String?
+  messageType     String   @default("text") // text, image, document, template
+  metadata        String?  // JSON for media URLs etc
+  senderType      String   @default("contact") // contact, agent, human
+  isRead          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  conversation    WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ============================================
+// TELEGRAM INTEGRATION
+// ============================================
+
+model TelegramConfig {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  botToken     String   // Bot token from @BotFather
+  webhookUrl   String?  // The webhook URL set for the bot
+  botUsername  String?  // Bot username
+  isActive     Boolean  @default(false)
+  autoReply    Boolean  @default(true) // AI auto-reply
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model TelegramConversation {
+  id             String    @id @default(cuid())
+  userId         String
+  clientId       String?
+  chatId         String    @unique // Telegram chat ID
+  contactName    String?
+  contactUsername String?
+  lastMessage    String?
+  lastMessageAt  DateTime?
+  lastMessageFrom String?  // contact, agent, human
+  status         String    @default("active") // active, transferred, closed
+  transferredTo  String?
+  unreadCount    Int       @default(0)
+  isAutoReply    Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  client         Client?   @relation(fields: [clientId], references: [id])
+  messages       TelegramMessage[]
+
+  @@index([userId])
+  @@index([chatId])
+  @@index([lastMessageAt])
+}
+
+model TelegramMessage {
+  id              String   @id @default(cuid())
+  conversationId  String
+  userId          String
+  tgMessageId     String?  // Telegram message ID
+  direction       String   // inbound, outbound
+  fromId          String   // Telegram user/chat ID that sent
+  toId            String   // Telegram chat ID that received
+  text            String?
+  messageType     String   @default("text") // text, image, document, sticker
+  metadata        String?  // JSON
+  senderType      String   @default("contact") // contact, agent, human
+  isRead          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  conversation    TelegramConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ============================================
+// GOOGLE WORKSPACE INTEGRATION
+// ============================================
+
+model GoogleConfig {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  clientId        String   // Google OAuth Client ID
+  clientSecret    String   // Google OAuth Client Secret
+  redirectUri     String?  // Redirect URI for OAuth flow
+  accessToken     String?  // Encrypted access token
+  refreshToken    String?  // Encrypted refresh token
+  tokenExpiry     DateTime? // When access token expires
+  scopes          String?  // JSON array of granted scopes
+  isConnected     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ============================================
+// CLOUD INVENTORY SYNC (Google Sheets)
+// ============================================
+
+model InventorySyncConfig {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  spreadsheetId   String   // Google Sheets spreadsheet ID
+  sheetName       String   @default("Inventario") // Sheet/tab name
+  range           String   @default("A1:Z1000") // Range to read
+  columnMap       String?  // JSON: mapping of columns to Service fields
+  syncInterval    Int      @default(60) // minutes between auto-syncs
+  lastSyncAt      DateTime?
+  lastSyncResult  String?  // JSON with sync summary
+  isActive        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ============================================
+// NOTIFICACIONES
+// ============================================
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // lead, opportunity, reservation, system, message, alert
+  title       String
+  message     String
+  link        String?  // navigation link (e.g., 'clients:abc123')
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ============================================
+// PLANTILLAS DE MENSAJES
+// ============================================
+
+model MessageTemplate {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String   // e.g., "Seguimiento inicial", "Cita confirmada"
+  channel     String   @default("whatsapp") // whatsapp, telegram, email, sms
+  subject     String?  // for email
+  content     String   // template body with {{variables}}
+  variables   String?  // JSON array of variable names: ["nombre", "fecha", "servicio"]
+  category    String?  // follow_up, confirmation, promotion, reminder
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([channel])
+}
+
+// ============================================
+// CAMPOS CUSTOM
+// ============================================
+
+model CustomField {
+  id          String   @id @default(cuid())
+  userId      String
+  entity      String   @default("client") // client, opportunity, etc.
+  name        String   // Field label
+  fieldType   String   // text, number, date, select, boolean
+  options     String?  // JSON array of options for select type
+  isRequired  Boolean  @default(false)
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  values      CustomFieldValue[]
+
+  @@index([userId])
+  @@index([entity])
+}
+
+model CustomFieldValue {
+  id          String   @id @default(cuid())
+  userId      String
+  fieldId     String
+  entityId    String   // client ID, opportunity ID, etc.
+  value       String?
+  
+  field       CustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, entityId])
+  @@index([entityId])
+}
+
+// ============================================
+// AUDIT TRAIL / ACTIVITY LOG
+// ============================================
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  userId      String
+  action      String   // created, updated, deleted, stage_changed, note_added, etc.
+  entity      String   // client, opportunity, quote, reservation, etc.
+  entityId    String?
+  description String
+  metadata    String?  // JSON with before/after values
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity])
+  @@index([entityId])
+  @@index([createdAt])
+}
