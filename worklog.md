@@ -223,3 +223,24 @@ Work Log:
 
 Stage Summary:
 - WhatsApp REAL por QR funcionando (falta solo escanear desde el teléfono). Secuencia post-venta visible en Automatizaciones. Del repo del usuario solo se portó lo funcional (daemon, tablas, auth interna); knowledge/ no aplica porque nuestro agente usa NichoConfig en BD; su doc leeme_arquitectura.md describe la arquitectura legacy anterior.
+
+---
+Task ID: 8
+Agent: main (Super Z)
+Task: (1) Confirmar superioridad de nuestro CRM vs repo GitHub, (2) diff de qué tiene su repo que nos falta (sin adoptar código), (3) ubicar secuencia post-venta en la UI, (4) preparar backup seguro para GitHub.
+
+Work Log:
+- repo-compare/ se había perdido entre sesiones; se re-clonó superficialmente ALBRA8/CRM-ALBRA (público) y GitHub API estaba rate-limited.
+- Comparación objetiva: nuestro schema Prisma tiene Organization + 77 referencias organizationId (multi-tenancy real); el suyo 0 (single-tenant). Rutas API: 75 vs 71. Componentes: 87 vs 88 (paridad). Nuestros modelos unificados (Integration/Settings/Template) vs sus tablas dispersas por canal (WhatsAppConfig/TelegramConfig/GoogleConfig).
+- Su leeme_arquitectura.md describe la arquitectura VIEJA (crm.html estáticos, memory.db, Socket.io) → su repo contiene una versión hermana anterior, el nuestro es la evolución SaaS.
+- Qué tiene su repo que no tenemos: README.md (creado ahora, mejorado), knowledge/ (catalogo + terminos para el agente), leeme_arquitectura.md, MEMORY.md, COPIA_CRM_ALBRA.md, nicho.json (sustituido por NichoConfig), productos CSV, scripts/start-dev.sh, deps bcryptjs/jose/pdfkit/pino, y modelos QuoteItem, ClientServiceHistory, ProgressNote, InventorySyncConfig, TelegramMessage/TelegramConversation, AutomationLog, ChatLog, Memory. Ideas portables a futuro: QuoteItem (cotizaciones con líneas) y knowledge/ (archivos de conocimiento del agente).
+- Secuencia post-venta localizada: demo-seed.ts crea la automatización "Secuencia post-venta" (trigger opportunity_stage_changed → Cierre Ganado; wait 3d → WhatsApp check-in → wait 4d → ai_followup pidiendo reseña; isActive: true) + plantilla WhatsApp "Seguimiento post-venta". UI: sidebar → Automatizaciones (Zap) y Configuración → Plantillas. Ejecución durable vía /api/automations/run + scheduler runDueJobs.
+- HALLAZGO CRÍTICO: el historial git local contiene .env (9327bd7, 2bf3c18) y db/custom.db con clientes reales (4900f0c, fa86856, 781b9f0) hasta 51f7c78 → NO se debe subir ese historial a GitHub.
+- Solución: creado README.md profesional (commit 39bf3e3 en main) + rama huérfana github-main con UN solo commit limpio (b1b684b, 256 archivos, verificado sin .env/custom.db/.wa-auth).
+- Backup local: download/CRM-ALBRA-backup-2026-09-24.zip vía git archive de github-main (859K, 382 archivos, sin secretos).
+- Sin credenciales GitHub en el entorno (sin gh CLI, sin ~/.git-credentials) → se entregan al usuario los comandos exactos de push.
+
+Stage Summary:
+- Confirmado con evidencia: nuestro CRM ES la evolución superior (multi-tenancy, JWT, durable engine, blindaje).
+- Rama github-main lista para subir con historial limpio de 1 commit; main conserva el historial completo de desarrollo local.
+- Pendiente del usuario: push con su PAT (comandos entregados); opcional crear rama backup-version-anterior en GitHub antes del force push.
