@@ -1,0 +1,56 @@
+[
+  {
+    "url": "https://github.com",
+    "name": "Releases · twentyhq/twenty",
+    "snippet": "The open alternative to Salesforce, designed for AI . New features feat(server): validate workflow versions through exceptions, AI model configuration moves ...",
+    "host_name": "github.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://twenty.com",
+    "name": "Twenty Releases — What's New in the Open Source CRM",
+    "snippet": "AI settings now show each model's provider, price per million tokens, context window, maximum output, and data residency. Arabic and Hebrew read right to left. Read more",
+    "host_name": "twenty.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://wz-it.com",
+    "name": "Twenty CRM update: new features up to version 2.0 and",
+    "snippet": "Sep 17, 2025 — Workflows can now be extended with filter conditions . This means automations only continue to run if defined criteria are met - ideal for ... Read more",
+    "host_name": "wz-it.com",
+    "rank": 2,
+    "date": "Sep 17, 2025",
+    "favicon": ""
+  },
+  {
+    "url": "https://community.n8n.io",
+    "name": "Twenty (Open Source CRM) Node - Feature Requests",
+    "snippet": "Jan 16, 2024 — This integration would allow users to automate tasks within Twenty , such as updating customer records, managing opportunities, and tracking ... Read more",
+    "host_name": "community.n8n.io",
+    "rank": 3,
+    "date": "Jan 16, 2024",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.answeroverflow.com",
+    "name": "Hello - , does Twenty CRM has AI chat feature on local setup",
+    "snippet": "Oct 11, 2025 — Twenty CRM has AI chat feature on local setup , Here are more information regarding AI feature in general. AI nodes in workflow but it can be ...",
+    "host_name": "www.answeroverflow.com",
+    "rank": 4,
+    "date": "Oct 11, 2025",
+    "favicon": ""
+  },
+  {
+    "url": "https://docs.twenty.com",
+    "name": "Workflows - Twenty Documentation",
+    "snippet": "Workflows are Twenty's in-app feature for building these automations . They give you the building blocks to create exactly what your business needs, when it ... Read more",
+    "host_name": "docs.twenty.com",
+    "rank": 5,
+    "date": "",
+    "favicon": ""
+  }
+]
