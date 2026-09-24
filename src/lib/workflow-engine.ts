@@ -100,6 +100,27 @@ export function evaluateConditions(conditions: Condition[] | null | undefined, r
 
 // ---------- Ejecución de acciones ----------
 
+/**
+ * Enriquece el payload del evento con datos frescos del cliente
+ * (clientName, name, phone, email) para que las acciones de mensaje puedan
+ * usar {{clientName}} y enviar al teléfono correcto (p. ej. secuencias
+ * post-venta disparadas por opportunity_stage_changed).
+ */
+async function buildActionContext(orgId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const clientId = payload.clientId as string | undefined
+  if (!clientId) return { ...payload }
+  try {
+    const client = await db.client.findUnique({
+      where: { id: clientId },
+      select: { name: true, phone: true, email: true },
+    })
+    if (!client) return { ...payload }
+    return { ...payload, clientName: client.name, name: client.name, phone: client.phone, email: client.email }
+  } catch {
+    return { ...payload }
+  }
+}
+
 async function executeAction(orgId: string, userId: string | null, action: WorkflowAction, ctx: Record<string, unknown>): Promise<Record<string, unknown>> {
   const config = action.config || {}
   switch (action.type) {
@@ -138,6 +159,30 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         if (tpl) body = tpl.body
       }
       const rendered = renderTemplate(body, ctx)
+      // Envío real: WhatsApp intenta entregarse vía el daemon Baileys
+      // (POST /send) si hay teléfono y está conectado; el resto de canales y
+      // los fallos quedan como notificación en cola para revisión manual.
+      let sent = false
+      let sendError: string | undefined
+      if (channel === 'whatsapp' && ctx.phone) {
+        try {
+          const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
+          const daemonSecret = process.env.INTERNAL_API_SECRET || 'crm-albra-internal-2024'
+          const res = await fetch(`${daemonUrl}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${daemonSecret}` },
+            body: JSON.stringify({ to: ctx.phone, text: rendered }),
+            signal: AbortSignal.timeout(8000),
+          })
+          if (res.ok) {
+            sent = true
+          } else {
+            sendError = `daemon ${res.status}`
+          }
+        } catch (err) {
+          sendError = err instanceof Error ? err.message.slice(0, 120) : 'daemon no disponible'
+        }
+      }
       // El envío real lo hace el módulo de integraciones; aquí registramos el intento
       // y el evento de timeline; el daemon de WhatsApp/Telegram envía si está activo.
       const { db: database } = await import('./db')
@@ -158,7 +203,7 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         description: rendered.slice(0, 300),
         source: 'automation',
       })
-      return { queued: true, channel }
+      return { queued: true, channel, sent, error: sendError }
     }
     case 'create_opportunity': {
       const stage = await db.pipelineStage.findFirst({ where: { organizationId: orgId }, orderBy: { order: 'asc' } })
@@ -300,7 +345,8 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
         continue
       }
       const actions = safeParse<WorkflowAction[]>(automation.actions) || []
-      const res = await runActionSteps(event.orgId, automation.createdById, actions, event.payload, 0, [], [])
+      const ctx = await buildActionContext(event.orgId, event.payload)
+      const res = await runActionSteps(event.orgId, automation.createdById, actions, ctx, 0, [], [])
 
       if (!res.done) {
         // PAUSA durable (patrón DELAY de Twenty): el run queda 'waiting' y el
@@ -379,7 +425,8 @@ export async function resumeWaitingRuns(): Promise<number> {
     const prevOutputs = safeParse<Record<string, unknown>[]>(run.output) || []
 
     try {
-      const res = await runActionSteps(automation.organizationId, automation.createdById, actions, payload, run.currentStep, prevStates, prevOutputs)
+      const ctx = await buildActionContext(automation.organizationId, payload)
+      const res = await runActionSteps(automation.organizationId, automation.createdById, actions, ctx, run.currentStep, prevStates, prevOutputs)
       if (!res.done) {
         // Otra espera encadenada: vuelve a pausar (secuencias multi-touch)
         await db.automationRun.update({

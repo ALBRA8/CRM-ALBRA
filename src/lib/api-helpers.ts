@@ -56,7 +56,7 @@ export function paginationMeta(page: number, pageSize: number, total: number) {
 /** Registro de actividad (auditoría) + evento de timeline en un solo paso */
 export async function auditAndTimeline(opts: {
   orgId: string
-  userId?: string
+  userId?: string | null
   action: string
   entity: string
   entityId?: string

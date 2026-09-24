@@ -37,7 +37,7 @@ function str(v: unknown): string {
 
 async function executeAgentAction(
   orgId: string,
-  userId: string,
+  userId: string | null,
   action: string,
   params: Record<string, unknown>
 ): Promise<{ ok: boolean; summary: string; data?: unknown; clientId?: string | null }> {
@@ -304,11 +304,32 @@ POLÍTICA:
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
-    const body = (await req.json().catch(() => ({}))) as { message?: string; clientId?: string }
+    const body = (await req.json().catch(() => ({}))) as { message?: string; clientId?: string; source?: string }
     requireFields(body as unknown as Record<string, unknown>, ['message'])
     const message = String(body.message).slice(0, 4000)
     const selectedClientId = body.clientId || undefined
+
+    // Auth: JWT normal (usuario en la app) O secreto interno compartido con el
+    // daemon de WhatsApp (canal sin sesión de navegador). El orgId se deriva del
+    // cliente indicado por el daemon; sin cliente, la primera organización.
+    const internalSecret = process.env.INTERNAL_API_SECRET || 'crm-albra-internal-2024'
+    const providedSecret = req.headers.get('x-internal-secret') || ''
+    let auth: { orgId: string; userId: string | null }
+    if (providedSecret && providedSecret === internalSecret) {
+      let orgId: string | null = null
+      if (selectedClientId) {
+        const client = await db.client.findUnique({ where: { id: selectedClientId }, select: { organizationId: true } })
+        orgId = client?.organizationId ?? null
+      }
+      if (!orgId) {
+        const org = await db.organization.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } })
+        orgId = org?.id ?? null
+      }
+      if (!orgId) return json({ error: 'No hay organización para resolver el canal' }, { status: 400 })
+      auth = { orgId, userId: null }
+    } else {
+      auth = requireAuth(req)
+    }
 
     // Verificar cliente seleccionado pertenece a la org
     if (selectedClientId) {

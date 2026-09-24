@@ -72,3 +72,13 @@ wa-auth/
 /repo-compare/
 # Plantilla de entorno SÍ se commitea
 !.env.example
+# Sesión WhatsApp — variantes (daemon en cualquier subcarpeta)
+**/.wa-auth/
+.wwebjs_auth/
+.wwebjs_cache/
+# Comprimidos y IDE
+*.zip
+*.tar.gz
+.vscode/
+.idea/
+Thumbs.db

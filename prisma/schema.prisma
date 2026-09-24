@@ -46,6 +46,8 @@ model Organization {
   savedViews        SavedView[]
   agentMemories     AgentMemory[]
   agentSuggestions  AgentSuggestion[]
+  whatsappConversations WhatsAppConversation[]
+  whatsappMessages      WhatsAppMessage[]
   settings          Settings?
   nichoConfig       NichoConfig?
   integration       Integration?
@@ -100,6 +102,7 @@ model Client {
   transactions Transaction[]
   memories     AgentMemory[]
   suggestions  AgentSuggestion[]
+  whatsappConversations WhatsAppConversation[]
 
   @@index([organizationId])
   @@index([organizationId, status])
@@ -523,4 +526,51 @@ model Integration {
   enableInstagram          Boolean @default(false)
   enableGoogle             Boolean @default(false)
   updatedAt                DateTime @updatedAt
+}
+
+// ============ WhatsApp (daemon Baileys, puerto 3002) ============
+// Conversaciones/mensajes reales gestionados por src/whatsapp-daemon/daemon.mjs.
+// Multi-tenant: cada conversación pertenece a la organización del número conectado.
+
+model WhatsAppConversation {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId        String?
+  client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  contactPhone    String
+  contactName     String?
+  lastMessage     String?
+  lastMessageAt   DateTime?
+  lastMessageFrom String?
+  unreadCount     Int      @default(0)
+  isAutoReply     Boolean  @default(true)
+  status          String   @default("active") // active | closed
+  transferredTo   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  messages        WhatsAppMessage[]
+
+  @@unique([organizationId, contactPhone])
+  @@index([organizationId, lastMessageAt])
+}
+
+model WhatsAppMessage {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  waMessageId    String?
+  direction      String   // inbound | outbound
+  fromNumber     String
+  toNumber       String
+  text           String?
+  messageType    String   @default("text")
+  senderType     String   // contact | agent | user
+  isRead         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([organizationId, createdAt])
 }

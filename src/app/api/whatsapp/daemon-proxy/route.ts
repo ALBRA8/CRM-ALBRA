@@ -14,6 +14,7 @@ import { handle, json } from '@/lib/api-helpers'
  */
 
 const DAEMON_URL = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || 'crm-albra-internal-2024'
 const TIMEOUT_MS = 3000
 
 const ALLOWED_GET = [/^\/status$/, /^\/qr$/, /^\/conversations$/, /^\/conversations\/[\w@.:-]+$/]
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
     try {
       const res = await fetch(`${DAEMON_URL}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${INTERNAL_API_SECRET}` },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })
