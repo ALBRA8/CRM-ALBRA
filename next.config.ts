@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // Oculta el indicador "N" de Next.js DevTools (flotante abajo-izquierda)
+  devIndicators: false,
 };
 
 export default nextConfig;
