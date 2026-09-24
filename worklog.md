@@ -147,3 +147,18 @@ Work Log:
 Stage Summary:
 - PROYECTO CRM ALBRA COMPLETO Y CORRIENDO: frontend 100% recuperado + backend multi-tenant 76 rutas + 4 features Twenty (workflows event-driven, agente IA con tools, timeline unificado, vistas guardadas) + P0 de auditoría cerrados + landing honesta con dialog legal.
 - Entregables extra: docs/twenty-insights.md (análisis del repo Twenty), docs/API_CONTRACT.md, crm_albra_frontend_recuperado.zip.
+
+---
+Task ID: 5 (post-entrega)
+Agent: main (Super Z)
+Task: Renombrar etapas del pipeline a embudo profesional (Prospección, Calificación, Oferta, Seguimiento, Cierre Ganado) + responder sobre análisis de Twenty.
+
+Work Log:
+- Verificado que la lógica Ganado/Perdido usa flags isWon/isLost (no nombres) → renombre seguro.
+- demo-seed.ts: STANDARD_STAGES actualizado a 6 etapas (Prospección 0.1 slate, Calificación 0.3 sky, Oferta 0.5 orange, Seguimiento 0.75 amber, Cierre Ganado 1.0 emerald isWon, Cierre Perdido 0 red isLost); seedDemoData ahora busca etapas por nuevos nombres; automatización demo "Aviso de oportunidad" condiciona sobre "Oferta".
+- scripts/rename-stages.ts: migración idempotente que renombra in place (preserva stageId de oportunidades), inserta etapas faltantes, normaliza orden/probabilidad/color/flags, re-sincroniza opportunity.status con flags de etapa y corrige automatizaciones que referenciaban "Cotizado".
+- Ejecutada sobre DB (1 org): 5 renombradas + 1 insertada, 1 automatización corregida, 0 opps afectadas.
+- Verificado vía API en vivo: dashboard devuelve las 6 etapas con orden/colores/flags correctos; oportunidades intactas (Calificación, Prospección, Oferta); landing 200; eslint 0 errores; tsc sin errores de proyecto.
+
+Stage Summary:
+- Pipeline: Prospección → Calificación → Oferta → Seguimiento → Cierre Ganado (+ Cierre Perdido) aplicado en seed para orgs nuevas y en datos existentes. El análisis de Twenty ya estaba documentado en docs/twenty-insights.md (Task 1-b).

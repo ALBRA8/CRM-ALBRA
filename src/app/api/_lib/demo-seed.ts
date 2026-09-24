@@ -8,11 +8,12 @@ import { ensureClientAttrFields, saveClientAttrs } from './clients'
  */
 
 export const STANDARD_STAGES: Array<{ name: string; probability: number; color: string; isWon?: boolean; isLost?: boolean }> = [
-  { name: 'Nuevo', probability: 0.2, color: '#64748b' },
-  { name: 'Contactado', probability: 0.4, color: '#f59e0b' },
-  { name: 'Cotizado', probability: 0.6, color: '#f97316' },
-  { name: 'Ganado', probability: 1, color: '#10b981', isWon: true },
-  { name: 'Perdido', probability: 0, color: '#ef4444', isLost: true },
+  { name: 'Prospección', probability: 0.1, color: '#64748b' },
+  { name: 'Calificación', probability: 0.3, color: '#0ea5e9' },
+  { name: 'Oferta', probability: 0.5, color: '#f97316' },
+  { name: 'Seguimiento', probability: 0.75, color: '#f59e0b' },
+  { name: 'Cierre Ganado', probability: 1, color: '#10b981', isWon: true },
+  { name: 'Cierre Perdido', probability: 0, color: '#ef4444', isLost: true },
 ]
 
 export async function createStandardPipeline(orgId: string): Promise<void> {
@@ -94,8 +95,8 @@ export async function ensureDemoOrganization(): Promise<DemoSeedResult> {
 async function seedDemoData(orgId: string): Promise<void> {
   const stages = await db.pipelineStage.findMany({ where: { organizationId: orgId }, orderBy: { order: 'asc' } })
   const stageByName = new Map(stages.map((s) => [s.name, s]))
-  const cotizado = stageByName.get('Cotizado')
-  const nuevo = stageByName.get('Nuevo')
+  const cotizado = stageByName.get('Oferta')
+  const nuevo = stageByName.get('Prospección')
 
   const demoClients: Array<{
     name: string
@@ -281,13 +282,13 @@ async function seedDemoData(orgId: string): Promise<void> {
       },
       {
         organizationId: orgId,
-        name: 'Aviso de oportunidad en Cotizado',
+        name: 'Aviso de oportunidad en Oferta',
         category: 'custom',
-        description: 'Notifica al admin cuando una oportunidad llega a la etapa Cotizado.',
+        description: 'Notifica al admin cuando una oportunidad llega a la etapa Oferta.',
         triggerType: 'opportunity_stage_changed',
-        conditions: JSON.stringify([{ field: 'toStage', operator: 'equals', value: 'Cotizado' }]),
+        conditions: JSON.stringify([{ field: 'toStage', operator: 'equals', value: 'Oferta' }]),
         actions: JSON.stringify([
-          { type: 'notify_admin', config: { title: 'Oportunidad en etapa Cotizado', body: '{{title}} ({{amount}}) pasó a Cotizado.' } },
+          { type: 'notify_admin', config: { title: 'Oportunidad en etapa Oferta', body: '{{title}} ({{amount}}) pasó a Oferta.' } },
         ]),
         isActive: false,
       },
