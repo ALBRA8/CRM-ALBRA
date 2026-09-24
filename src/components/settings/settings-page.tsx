@@ -688,25 +688,34 @@ export function SettingsPage() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="llm" className="w-full">
+      {/* Orden de izquierda a derecha por importancia:
+          1. Negocio (define el comportamiento del CRM y del agente)
+          2. Agente IA (el cerebro: LLM que potencia chat y automatizaciones)
+          3. Google (Calendar/Gmail)
+          4. Canales de comunicación: WhatsApp → Instagram → Telegram → Email
+          5. Operativas: Inventario → Plantillas → Campos Custom → Equipo → Respaldo */}
+      <Tabs defaultValue="negocio" className="w-full">
         <TabsList className="bg-slate-100 h-10">
+          <TabsTrigger value="negocio" className="gap-1.5 text-xs">
+            <Building2 className="w-3.5 h-3.5" /> Negocio
+          </TabsTrigger>
           <TabsTrigger value="llm" className="gap-1.5 text-xs">
-            <Brain className="w-3.5 h-3.5" /> Chat AI
+            <Brain className="w-3.5 h-3.5" /> Agente IA
+          </TabsTrigger>
+          <TabsTrigger value="google" className="gap-1.5 text-xs">
+            <Cloud className="w-3.5 h-3.5" /> Google
           </TabsTrigger>
           <TabsTrigger value="whatsapp" className="gap-1.5 text-xs">
             <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
           </TabsTrigger>
-          <TabsTrigger value="negocio" className="gap-1.5 text-xs">
-            <Building2 className="w-3.5 h-3.5" /> Negocio
+          <TabsTrigger value="instagram" className="gap-1.5 text-xs">
+            <Instagram className="w-3.5 h-3.5" /> Instagram
           </TabsTrigger>
           <TabsTrigger value="telegram" className="gap-1.5 text-xs">
             <Send className="w-3.5 h-3.5" /> Telegram
           </TabsTrigger>
-          <TabsTrigger value="instagram" className="gap-1.5 text-xs">
-            <Instagram className="w-3.5 h-3.5" /> Instagram
-          </TabsTrigger>
-          <TabsTrigger value="google" className="gap-1.5 text-xs">
-            <Cloud className="w-3.5 h-3.5" /> Google
+          <TabsTrigger value="email" className="gap-1.5 text-xs">
+            <Mail className="w-3.5 h-3.5" /> Email SMTP
           </TabsTrigger>
           <TabsTrigger value="inventario" className="gap-1.5 text-xs">
             <Table className="w-3.5 h-3.5" /> Inventario
@@ -716,9 +725,6 @@ export function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="custom-fields" className="gap-1.5 text-xs">
             <Database className="w-3.5 h-3.5" /> Campos Custom
-          </TabsTrigger>
-          <TabsTrigger value="email" className="gap-1.5 text-xs">
-            <Mail className="w-3.5 h-3.5" /> Email SMTP
           </TabsTrigger>
           <TabsTrigger value="team" className="gap-1.5 text-xs">
             <Users className="w-3.5 h-3.5" /> Equipo

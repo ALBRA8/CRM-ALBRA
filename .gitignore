@@ -54,3 +54,21 @@ server.log
 /skills/
 # Reference dump (Twenty CRM repo) — keep Turbopack watcher under inotify limits
 /reference
+
+# ===== BLINDAJE DE DATOS PRIVADOS (CRM ALBRA) =====
+# Base de datos real con clientes — NUNCA commitear
+db/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+# Sesión de WhatsApp (Baileys) — credenciales de sesión
+.wa-auth/
+wa-auth/
+# Uploads de usuarios
+/upload/
+# Artefactos locales de desarrollo
+/tool-results/
+/repo-compare/
+# Plantilla de entorno SÍ se commitea
+!.env.example
