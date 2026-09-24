@@ -115,3 +115,21 @@ Stage Summary:
 - Features A-D implementadas y compilando end-to-end en el frontend, respetando paleta emerald/slate (+violeta/ámbar/sky solo como colores semánticos de agent/automation/integration), español, responsive mobile-first y accesibilidad (aria-labels, roles, foco).
 - Los 3 archivos nuevos (filters.ts, client-timeline.tsx, saved-views-bar.tsx) + 6 editados (clients-list, client-detail, pipeline-view, automation-form-dialog, automations-page, chat-page) + .gitignore (/reference).
 - Pendiente para QA visual cuando el backend 2-b termine: crear/aplicar vistas guardadas reales, eventos de timeline desde mutaciones (auditAndTimeline) y actions del chat desde el agente.
+
+---
+Task ID: 3 (integración principal)
+Agent: main (Super Z)
+Task: Integración final — completar backend tras timeout de 2-a/2-b, corregir 93 errores TS, verificar seguridad P0 de la auditoría y probar end-to-end.
+
+Work Log:
+- 2-a y 2-b (backend) dejaron 76 rutas escritas antes de agotar contexto; completé su lib compartida (_lib/shared.ts: handle/json/requireFields/bool), corregí rutas relativas de auth/* y custom-fields/values.
+- Corregidos 93 → 0 errores TypeScript: includes inexistentes (user/client en ActivityLog/TimelineEvent → mapas en memoria), filtro temperature vía customFieldValue.findMany por IDs, serializeClientRef null-safe, smtpFromName eliminado, tipos de User en store.ts (null-compat), BufferSource en push card, guards de newStage.
+- Lint: 0 errores (fix react-hooks/set-state-in-effect en push-notifications-card).
+- Segundo dev server caído por inotify: veinte (570MB) movido a /home/z/reference-twenty (por 2-c); reiniciado .zscripts/dev.sh.
+- Tests end-to-end curl: landing 200; demo login OK (8 clientes sembrados); clients/pagination OK; dashboard stats OK (8 clientes, 4 activos, revenue 2400, pipeline 4000, 5 etapas); CHAT IA creó cliente real "Laura Restrepo" con action chip create_client; TIMELINE responde eventos; SAVED-VIEWS CRUD OK (vista compartida creada); WORKFLOW "Bienvenida automática" disparado por client_created → runCount 1 + notificación + seguimiento redactado por IA; suggestions deterministas OK (shape coincide con frontend); settings/templates/quotes/reports/activity/team/export-CSV → 200.
+- Seguridad (bloqueadores de auditoría): nicho PUT sin auth → 401 ✓; con admin → 200 ✓; webhook WhatsApp sin firma → 401 ✓; webhook Telegram sin secret → 401 ✓; rutas de negocio sin token → 401 ✓ (bug 500 corregido en shared.handle con duck-typing de status).
+
+Stage Summary:
+- Sistema completo funcionando: frontend recuperado (17.3k líneas) + backend multi-tenant (76 rutas) + motor de workflows event-driven + agente IA con herramientas + timeline unificado + vistas guardadas + landing honesta con dialog legal.
+- Todos los P0 de la auditoría cerrados y verificados por curl.
+- Pendiente: verificación visual con Agent Browser antes de marcar Complete.
