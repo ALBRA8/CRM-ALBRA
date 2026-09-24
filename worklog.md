@@ -244,3 +244,24 @@ Stage Summary:
 - Confirmado con evidencia: nuestro CRM ES la evolución superior (multi-tenancy, JWT, durable engine, blindaje).
 - Rama github-main lista para subir con historial limpio de 1 commit; main conserva el historial completo de desarrollo local.
 - Pendiente del usuario: push con su PAT (comandos entregados); opcional crear rama backup-version-anterior en GitHub antes del force push.
+
+---
+Task ID: 9
+Agent: main (Super Z)
+Task: (1) Eliminar la "N" flotante que estorbaba el menú, (2) subir backup a GitHub con el token aportado por el usuario.
+
+Work Log:
+- Identificada la "N": es el indicador de desarrollo de Next.js DevTools (badge flotante abajo-izquierda sobre el sidebar). El logo del sidebar es "A" (ALBRA), no era parte de la app.
+- Fix: devIndicators: false en next.config.ts → commit 2a5bacf en main.
+- Reconstruida rama github-main (commit 2238f7b) incluyendo README + fix.
+- Push a GitHub con token del usuario (usado vía remote URL temporal, NUNCA commiteado; output redactado con sed):
+  1. Fetch de su main (ff8b184) y preservado como rama backup-version-anterior.
+  2. Force push de github-main → main (ff8b184...2238f7b, forced update).
+  3. Verificado ls-remote: main=2238f7b (256 archivos, README presente, sin .env/custom.db/.wa-auth), backup-version-anterior=ff8b184.
+- Token eliminado de la config local (remote set-url sin credenciales).
+- Verificación visual con agent-browser: landing + dashboard (login demo@crmalbra.com) sin badge "N"; screenshots en tool-results/.
+
+Stage Summary:
+- GitHub ALBRA8/CRM-ALBRA: main = CRM ALBRA SaaS v2 limpia (1 commit, sin secretos); rama backup-version-anterior = versión anterior preservada.
+- Indicador dev "N" desactivado permanentemente.
+- PENDIENTE AVISO AL USUARIO: revocar/regenerar el token compartido en el chat (quedó expuesto).
