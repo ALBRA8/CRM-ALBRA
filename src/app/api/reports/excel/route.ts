@@ -45,8 +45,9 @@ async function buildWorkbookBuffer(orgId: string, period: string, days: number |
     { header: 'Valor', key: 'v', width: 26 },
   ]
   styleHeader(summary.getRow(1))
-  const income = transactions.filter((t) => t.type === 'income').reduce((a, t) => a + t.amount, 0)
-  const expenses = transactions.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amount, 0)
+  // BUG DE IDIOMA (auditoría Antigravity, crítico #5): la BD guarda 'ingreso'/'egreso'.
+  const income = transactions.filter((t) => t.type === 'ingreso').reduce((a, t) => a + t.amount, 0)
+  const expenses = transactions.filter((t) => t.type === 'egreso').reduce((a, t) => a + t.amount, 0)
   const won = opportunities.filter((o) => o.status === 'won')
   const rows = [
     { k: 'Período', v: period },

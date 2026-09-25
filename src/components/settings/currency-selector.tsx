@@ -51,8 +51,8 @@ export function CurrencySelector() {
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center">
-              <DollarSign className="w-5 h-5 text-emerald-600" />
+            <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-900/50 rounded-lg flex items-center justify-center">
+              <DollarSign className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
               <CardTitle className="text-lg">Moneda del Negocio</CardTitle>
@@ -83,15 +83,15 @@ export function CurrencySelector() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 p-3 bg-emerald-50/50 rounded-lg border border-emerald-100">
-            <div className="w-7 h-7 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <Check className="w-3.5 h-3.5 text-emerald-600" />
+          <div className="flex items-center gap-2 p-3 bg-emerald-50/50 dark:bg-emerald-950/40 rounded-lg border border-emerald-100 dark:border-emerald-900">
+            <div className="w-7 h-7 bg-emerald-100 dark:bg-emerald-900/70 rounded-full flex items-center justify-center flex-shrink-0">
+              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div className="flex-1">
-              <p className="text-xs font-medium text-emerald-900">
+              <p className="text-xs font-medium text-emerald-900 dark:text-emerald-100">
                 Vista previa: <span className="font-mono">{activeInfo.code}</span>
               </p>
-              <p className="text-[11px] text-emerald-700">
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
                 1,234.56 se muestra como: <strong>{new Intl.NumberFormat(activeInfo.locale, { style: 'currency', currency: activeInfo.code }).format(1234.56)}</strong>
               </p>
             </div>

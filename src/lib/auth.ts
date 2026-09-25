@@ -5,9 +5,21 @@ import { NextRequest } from 'next/server'
  * Autenticación JWT sin dependencias externas (HMAC-SHA256 firmado con APP_SECRET)
  * + hash de contraseñas con scrypt. Todos los payloads llevan orgId para el
  * aislamiento multi-tenant (bloqueador #1 de la auditoría).
+ *
+ * SEGURIDAD: NO hay secret fallback hardcodeado. Si APP_SECRET no está definido
+ * en .env con longitud criptográfica, la autenticación falla ruidosamente
+ * (hallazgo crítico #2 de la auditoría Antigravity: backdoor universal).
  */
 
-const SECRET = process.env.APP_SECRET || 'crm-albra-dev-fallback-secret'
+function appSecret(): string {
+  const secret = process.env.APP_SECRET
+  if (!secret || secret.length < 24) {
+    throw new Error(
+      '[auth] APP_SECRET no configurado (mínimo 24 caracteres). Defínelo en .env con `openssl rand -hex 32`. Los secretos fallback fueron eliminados por seguridad.'
+    )
+  }
+  return secret
+}
 
 export interface SessionPayload {
   userId: string
@@ -47,7 +59,7 @@ export function signToken(payload: Omit<SessionPayload, 'exp'>, days = 7): strin
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   const body: SessionPayload = { ...payload, exp: Date.now() + days * 86400_000 }
   const claims = b64url(JSON.stringify(body))
-  const sig = createHmac('sha256', SECRET).update(`${header}.${claims}`).digest('base64url')
+  const sig = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
   return `${header}.${claims}.${sig}`
 }
 
@@ -55,7 +67,7 @@ export function verifyToken(token: string): SessionPayload | null {
   try {
     const [header, claims, sig] = token.split('.')
     if (!header || !claims || !sig) return null
-    const expected = createHmac('sha256', SECRET).update(`${header}.${claims}`).digest('base64url')
+    const expected = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
     const a = Buffer.from(sig)
     const b = Buffer.from(expected)
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null

@@ -62,14 +62,23 @@ export async function llmChat(
     }
   }
 
-  // Fallback: SDK nativo del entorno (sin llave configurada)
-  const { default: ZAI } = await import('z-ai-web-dev-sdk')
-  const zai = await ZAI.create()
-  const completion = await zai.chat.completions.create({
-    messages,
-    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-  })
-  return completion.choices[0]?.message?.content ?? ''
+  // Fallback: SDK nativo del entorno (sin llave configurada). Envuelto en try/catch:
+  // fuera del sandbox (VPS/Docker/Vercel) el SDK no existe y NO debe tumbar la app
+  // con 500 críptico (auditoría Antigravity, crítico #6) — se informa con claridad.
+  try {
+    const { default: ZAI } = await import('z-ai-web-dev-sdk')
+    const zai = await ZAI.create()
+    const completion = await zai.chat.completions.create({
+      messages,
+      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    })
+    return completion.choices[0]?.message?.content ?? ''
+  } catch (err) {
+    console.error('[ai] sin proveedor LLM disponible', err)
+    throw new Error(
+      'No hay proveedor de IA disponible. Configura tu LLM (OpenAI/Groq/compatible) en Configuración → Agente IA con llmBaseUrl + llmApiKey, o define las credenciales del entorno.'
+    )
+  }
 }
 
 /** Extrae el primer objeto JSON de un texto (tolerante a markdown fences) */

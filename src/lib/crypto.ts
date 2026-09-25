@@ -3,12 +3,18 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypt
 /**
  * Cifrado AES-256-GCM para secretos en reposo.
  * Resuelve el bloqueador #4 de la auditoría: tokens sin protección verificable.
- * La clave viene de APP_ENCRYPTION_KEY (hex 32 bytes). Si no está definida,
- * se deriva de APP_SECRET para que el preview nunca falle, registrando aviso.
+ * La clave viene de APP_ENCRYPTION_KEY (hex 32 bytes) o se deriva de APP_SECRET.
+ * SEGURIDAD: sin clave hardcodeada — si no hay variable de entorno, cifra/descifra
+ * falla y los endpoints devuelven error de configuración (nunca una clave pública).
  */
 
 function getKey(): Buffer {
-  const raw = process.env.APP_ENCRYPTION_KEY || process.env.APP_SECRET || 'crm-albra-dev-fallback-key'
+  const raw = process.env.APP_ENCRYPTION_KEY || process.env.APP_SECRET
+  if (!raw) {
+    throw new Error(
+      '[crypto] APP_ENCRYPTION_KEY o APP_SECRET no configurados. Defínelos en .env (`openssl rand -hex 32`).'
+    )
+  }
   return createHash('sha256').update(raw).digest()
 }
 

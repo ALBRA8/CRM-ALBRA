@@ -92,9 +92,16 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Body inválido' }, { status: 400 })
     }
 
-    // Localiza la org validando la firma contra cada app secret configurado
+    // Localiza la org validando la firma contra cada app secret configurado.
+    // OPTIMIZACIÓN (auditoría Antigravity, importante #4): si el webhook trae
+    // phone_number_id, pre-filtramos por él ANTES del bucle criptográfico —
+    // típicamente 1 candidato en vez de desencriptar + HMAC para TODAS las orgs.
+    const phoneNumberId = body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id || null
     const candidates = await db.integration.findMany({
-      where: { metaAppSecretEnc: { not: null } },
+      where: {
+        metaAppSecretEnc: { not: null },
+        ...(phoneNumberId ? { whatsappPhoneId: phoneNumberId } : {}),
+      },
       select: { organizationId: true, metaAppSecretEnc: true, whatsappPhoneId: true, whatsappCloudTokenEnc: true },
     })
     let matchedOrgId: string | null = null

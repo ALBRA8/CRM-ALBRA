@@ -222,40 +222,69 @@ class ApiClient {
     return this.request(`/services?id=${id}`, { method: 'DELETE' })
   }
 
-  // WhatsApp (via daemon)
-  private getDaemonBase() {
-    if (typeof window === 'undefined') return 'http://localhost:3002'
-    const h = window.location.hostname
-    return h === 'localhost' ? 'http://localhost:3002' : `${window.location.protocol}//${h}:3002`
+  // WhatsApp — SIEMPRE vía /api/whatsapp/daemon-proxy con JWT (auditoría Antigravity
+  // críticos #3/#4: antes el frontend hablaba directo al puerto 3002, sin auth;
+  // el envío manual devolvía 401 y las conversaciones eran públicamente legibles).
+  private async proxyGet(path: string) {
+    const headers: Record<string, string> = {}
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`
+    const res = await fetch(`/api/whatsapp/daemon-proxy?path=${encodeURIComponent(path)}`, { headers, cache: 'no-store' })
+    return res.json()
+  }
+
+  private async proxyPost(path: string, data: Record<string, unknown> = {}) {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`
+    const res = await fetch('/api/whatsapp/daemon-proxy', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path, ...data }),
+    })
+    return res.json()
+  }
+
+  private async proxyPut(path: string, data: Record<string, unknown>) {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`
+    const res = await fetch('/api/whatsapp/daemon-proxy', {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ path, ...data }),
+    })
+    return res.json()
+  }
+
+  async getWhatsAppStatus() {
+    return this.proxyGet('/status')
+  }
+
+  async getWhatsAppQr() {
+    return this.proxyGet('/qr')
+  }
+
+  async connectWhatsApp() {
+    return this.proxyPost('/connect')
+  }
+
+  async disconnectWhatsApp() {
+    return this.proxyPost('/disconnect')
   }
 
   async getWhatsAppConversations(params?: Record<string, string>) {
-    const query = params ? '?' + new URLSearchParams(params).toString() : ''
-    const res = await fetch(`${this.getDaemonBase()}/conversations${query}`)
-    return res.json()
+    const query = params ? `?${new URLSearchParams(params).toString()}` : ''
+    return this.proxyGet(`/conversations${query}`)
   }
 
   async getWhatsAppConversation(id: string) {
-    const res = await fetch(`${this.getDaemonBase()}/conversations/${id}`)
-    return res.json()
+    return this.proxyGet(`/conversations/${id}`)
   }
 
   async updateWhatsAppConversation(id: string, data: Record<string, unknown>) {
-    const res = await fetch(`${this.getDaemonBase()}/conversations/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    return res.json()
+    return this.proxyPut(`/conversations/${id}`, data)
   }
 
   async sendWhatsAppMessage(data: Record<string, unknown>) {
-    const res = await fetch(`${this.getDaemonBase()}/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    return res.json()
+    return this.proxyPost('/send', data)
   }
 
   // Telegram
@@ -532,6 +561,26 @@ class ApiClient {
     const a = document.createElement('a')
     a.href = url
     a.download = `reporte_${period}_${new Date().toISOString().split('T')[0]}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  /** Exporta transacciones a CSV con token en el header (window.open no envía JWT). */
+  async downloadTransactionsCsv() {
+    const headers: Record<string, string> = {}
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`
+    }
+    const res = await fetch(`${API_BASE}/export/csv?type=transactions`, { headers })
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: 'Error de conexión' }))
+      throw new Error(error.error || `Error ${res.status}`)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `transacciones_${new Date().toISOString().split('T')[0]}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }

@@ -270,7 +270,9 @@ export function SettingsPage() {
 
   const loadWaStatus = async () => {
     try {
-      const res = await fetch(`${DAEMON_PROXY}?path=/status`)
+      // El proxy ahora exige JWT (auditoría Antigravity #4): mandamos el token
+      const token = api.getToken()
+      const res = await fetch(`${DAEMON_PROXY}?path=/status`, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)
       const data = await res.json() as WaStatus
       setWaStatus(data)
     } catch {
@@ -280,7 +282,8 @@ export function SettingsPage() {
 
   const loadWaQr = async () => {
     try {
-      const res = await fetch(`${DAEMON_PROXY}?path=/qr`)
+      const token = api.getToken()
+      const res = await fetch(`${DAEMON_PROXY}?path=/qr`, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)
       const data = await res.json() as WaQrData
       setWaQr(data)
       if (data.status === 'connected') {
@@ -294,9 +297,10 @@ export function SettingsPage() {
   const handleWaConnect = async () => {
     setWaLoading(true)
     try {
+      const token = api.getToken()
       await fetch(DAEMON_PROXY, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ path: '/connect' }),
       })
       // Wait a moment then start polling
@@ -314,9 +318,10 @@ export function SettingsPage() {
   const handleWaDisconnect = async () => {
     setWaLoading(true)
     try {
+      const token = api.getToken()
       await fetch(DAEMON_PROXY, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ path: '/disconnect' }),
       })
       setWaStatus({ status: 'disconnected', phone: null, lastUpdate: null })

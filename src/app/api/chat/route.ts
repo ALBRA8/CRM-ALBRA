@@ -312,23 +312,21 @@ export async function POST(req: NextRequest) {
     const selectedClientId = body.clientId || undefined
 
     // Auth: JWT normal (usuario en la app) O secreto interno compartido con el
-    // daemon de WhatsApp (canal sin sesión de navegador). El orgId se deriva del
-    // cliente indicado por el daemon; sin cliente, la primera organización.
-    const internalSecret = process.env.INTERNAL_API_SECRET || 'crm-albra-internal-2024'
+    // daemon de WhatsApp (canal sin sesión de navegador).
+    // SEGURIDAD (auditoría Antigravity, crítico #2): sin fallback hardcodeado — si
+    // INTERNAL_API_SECRET no está en .env, el canal interno queda deshabilitado.
+    // SEGURIDAD (crítico #1): el orgId SIEMPRE se resuelve desde el clientId que
+    // envía el daemon; se eliminó el fallback a la primera organización.
+    const internalSecret = process.env.INTERNAL_API_SECRET
     const providedSecret = req.headers.get('x-internal-secret') || ''
     let auth: { orgId: string; userId: string | null }
-    if (providedSecret && providedSecret === internalSecret) {
-      let orgId: string | null = null
-      if (selectedClientId) {
-        const client = await db.client.findUnique({ where: { id: selectedClientId }, select: { organizationId: true } })
-        orgId = client?.organizationId ?? null
+    if (internalSecret && providedSecret && providedSecret === internalSecret) {
+      if (!selectedClientId) {
+        return json({ error: 'clientId requerido para el canal interno (aislamiento multi-tenant)' }, { status: 400 })
       }
-      if (!orgId) {
-        const org = await db.organization.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } })
-        orgId = org?.id ?? null
-      }
-      if (!orgId) return json({ error: 'No hay organización para resolver el canal' }, { status: 400 })
-      auth = { orgId, userId: null }
+      const client = await db.client.findUnique({ where: { id: selectedClientId }, select: { organizationId: true } })
+      if (!client?.organizationId) return json({ error: 'Cliente no encontrado' }, { status: 404 })
+      auth = { orgId: client.organizationId, userId: null }
     } else {
       auth = requireAuth(req)
     }

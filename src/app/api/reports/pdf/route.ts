@@ -10,6 +10,15 @@ import { buildSimplePdf } from '@/lib/pdf'
  * Sin pdfkit: generador PDF propio (src/lib/pdf.ts) — funciona en el bundler sin .afm externos.
  */
 
+function dominantCurrency(currencies: (string | null | undefined)[]): string {
+  const counts = new Map<string, number>()
+  for (const c of currencies) counts.set(c || 'USD', (counts.get(c || 'USD') || 0) + 1)
+  let best = 'USD'
+  let bestN = 0
+  for (const [c, n] of counts) if (n > bestN) { best = c; bestN = n }
+  return best
+}
+
 export async function GET(req: NextRequest) {
   return handle(async () => {
     const auth = getAuth(req)
@@ -19,17 +28,21 @@ export async function GET(req: NextRequest) {
     const from = days ? new Date(Date.now() - days * 86_400_000) : new Date(0)
 
     const [transactions, opportunities, clients] = await Promise.all([
-      db.transaction.findMany({ where: { organizationId: auth.orgId, date: { gte: from } }, select: { type: true, amount: true, category: true, date: true } }),
+      db.transaction.findMany({ where: { organizationId: auth.orgId, date: { gte: from } }, select: { type: true, amount: true, currency: true, category: true, date: true } }),
       db.opportunity.findMany({ where: { organizationId: auth.orgId, createdAt: { gte: from } }, select: { title: true, amount: true, status: true } }),
       db.client.findMany({ where: { organizationId: auth.orgId, createdAt: { gte: from } }, select: { name: true, source: true } }),
     ])
 
-    const income = transactions.filter((t) => t.type === 'income').reduce((a, t) => a + t.amount, 0)
-    const expenses = transactions.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amount, 0)
+    // BUG DE IDIOMA (auditoría Antigravity, crítico #5): la BD guarda los tipos en
+    // español ('ingreso'/'egreso', ver normalizeTxType). Filtrar en inglés daba $0.
+    const income = transactions.filter((t) => t.type === 'ingreso').reduce((a, t) => a + t.amount, 0)
+    const expenses = transactions.filter((t) => t.type === 'egreso').reduce((a, t) => a + t.amount, 0)
     const won = opportunities.filter((o) => o.status === 'won')
     const open = opportunities.filter((o) => o.status === 'open')
 
-    const money = (v: number) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v)
+    // Moneda dominante de las transacciones del período (antes: MXN/USD fijo)
+    const currency = dominantCurrency(transactions.map((t) => t.currency))
+    const money = (v: number) => new Intl.NumberFormat('es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(v)
 
     const lines = [
       { text: `Período: ${period} — generado ${new Date().toLocaleString('es-CO')}`, size: 10 },

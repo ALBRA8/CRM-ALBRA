@@ -23,6 +23,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const AUTH_DIR = join(__dirname, '.wa-auth')
 const PORT = Number(process.env.WHATSAPP_DAEMON_PORT || 3002)
 
+// El daemon es un proceso Node independiente: carga el .env del proyecto para
+// compartir DATABASE_URL e INTERNAL_API_SECRET con el servidor Next.js.
+try {
+  process.loadEnvFile(join(__dirname, '..', '..', '.env'))
+  console.log('[ENV] .env del proyecto cargado')
+} catch {
+  console.warn('[ENV] Sin .env en la raíz — usa variables de entorno del proceso')
+}
+
+// SEGURIDAD (auditoría crítica #2/#4): sin secreto interno no arranca.
+// Evita que el daemon quede expuesto con una clave hardcodeada conocida.
+const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET
+if (!INTERNAL_SECRET || INTERNAL_SECRET.length < 24) {
+  console.error('[ENV] INTERNAL_API_SECRET no configurado (mínimo 24 caracteres). El daemon no arranca por seguridad.')
+  process.exit(1)
+}
+
 // Prevent crashes from unhandled errors
 process.on('uncaughtException', (err) => {
   console.error('[UNCAUGHT] Error:', err.message)
@@ -38,6 +55,7 @@ let qrCodeData = null // base64 QR image
 let qrCodeText = null // raw QR string
 let connectedPhone = null
 let lastConnectionUpdate = null
+let linkedOrgId = null // organización dueña de esta sesión de WhatsApp (multi-tenant)
 
 // ============ Database Helper ============
 // better-sqlite3 directo para evitar overhead de Prisma en el daemon
@@ -60,11 +78,44 @@ try {
   console.error('[DB] Failed to connect:', err.message)
 }
 
-/** Organización dueña del número conectado (deployment típico: 1 número = 1 org). */
+/**
+ * Organización dueña del número conectado.
+ * SEGURIDAD (auditoría crítica #1 — fuga multi-tenant): YA NO se toma la primera
+ * organización de la BD (SELECT ... LIMIT 1). La org se vincula explícitamente
+ * cuando la sesión de WhatsApp se conecta desde la UI de una organización
+ * (POST /connect { orgId }, validado contra la BD y persistido junto a la sesión).
+ * Sin org vinculada, los mensajes entrantes NO se guardan (se avisa en el log).
+ */
+const ORG_META_FILE = join(AUTH_DIR, 'session-org.json')
+
+function persistLinkedOrg(orgId) {
+  try {
+    fs.mkdirSync(AUTH_DIR, { recursive: true })
+    fs.writeFileSync(ORG_META_FILE, JSON.stringify({ orgId, linkedAt: new Date().toISOString() }))
+  } catch (err) {
+    console.error('[ORG] No se pudo persistir la vinculación de organización:', err.message)
+  }
+}
+
+function loadLinkedOrgFromDisk() {
+  try {
+    if (fs.existsSync(ORG_META_FILE)) {
+      const meta = JSON.parse(fs.readFileSync(ORG_META_FILE, 'utf8'))
+      if (meta.orgId && orgExists(meta.orgId)) {
+        linkedOrgId = meta.orgId
+        console.log(`[ORG] Sesión previa vinculada a organización: ${linkedOrgId}`)
+      }
+    }
+  } catch {}
+}
+
+function orgExists(orgId) {
+  if (!db || !orgId) return false
+  return !!db.prepare('SELECT id FROM Organization WHERE id = ?').get(orgId)
+}
+
 function getOrgId() {
-  if (!db) return null
-  const org = db.prepare('SELECT id FROM Organization ORDER BY createdAt ASC LIMIT 1').get()
-  return org?.id ?? null
+  return linkedOrgId
 }
 
 function getOrCreateConversation(orgId, contactPhone, contactName) {
@@ -238,7 +289,7 @@ async function connectToWhatsApp() {
 
         const orgId = getOrgId()
         if (!orgId) {
-          console.warn('[WA] No organization found in DB, skipping message')
+          console.warn('[WA] Mensaje descartado: la sesión no está vinculada a ninguna organización. Reconecta WhatsApp desde Configuración → WhatsApp para vincularla.')
           continue
         }
 
@@ -278,8 +329,8 @@ async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
       content: m.text || ''
     }))
 
-    // Llama al agente del CRM (Next.js) con el secreto interno
-    const internalSecret = process.env.INTERNAL_API_SECRET || 'crm-albra-internal-2024'
+    // Llama al agente del CRM (Next.js) con el secreto interno del .env compartido
+    const internalSecret = process.env.INTERNAL_API_SECRET
     const agentUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
     const response = await fetch(`${agentUrl}/api/chat`, {
       method: 'POST',
@@ -340,14 +391,13 @@ const server = createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 
-  // Secreto interno para operaciones de escritura (POST); GET de lectura abiertos
-  const daemonSecret = process.env.INTERNAL_API_SECRET || 'crm-albra-internal-2024'
+  // SEGURIDAD (auditoría crítica #2/#4): TODOS los métodos exigen el secreto
+  // interno (antes los GET de lectura estaban abiertos y exponían conversaciones).
   const providedAuth = req.headers.authorization?.replace('Bearer ', '') || ''
-  const urlSecret = new URL(req.url, `http://localhost:${PORT}`).searchParams.get('secret')
 
-  if (req.method === 'POST' && providedAuth !== daemonSecret && urlSecret !== daemonSecret) {
+  if (req.method !== 'OPTIONS' && providedAuth !== INTERNAL_SECRET) {
     res.writeHead(401, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <secret> header or ?secret= param' }))
+    res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <INTERNAL_API_SECRET> header' }))
     return
   }
 
@@ -362,7 +412,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && path === '/status') {
-      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate })
+      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate, orgLinked: !!linkedOrgId })
       return
     }
 
@@ -378,11 +428,26 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && path === '/connect') {
+      // Vinculación multi-tenant: el proxy (con sesión JWT de una org) indica a qué
+      // organización pertenece esta sesión de WhatsApp. Se valida contra la BD.
+      const body = await parseBody(req)
+      if (body.orgId) {
+        if (!orgExists(body.orgId)) {
+          jsonResponse(res, { error: 'Organización no encontrada' }, 400)
+          return
+        }
+        linkedOrgId = body.orgId
+        persistLinkedOrg(linkedOrgId)
+        console.log(`[ORG] Sesión vinculada a organización: ${linkedOrgId}`)
+      } else if (!linkedOrgId) {
+        jsonResponse(res, { error: 'orgId requerido: no se conecta una sesión de WhatsApp sin organización (aislamiento multi-tenant)' }, 400)
+        return
+      }
       if (connectionStatus === 'connected') {
-        jsonResponse(res, { status: 'connected', phone: connectedPhone })
+        jsonResponse(res, { status: 'connected', phone: connectedPhone, orgLinked: true })
       } else {
         connectToWhatsApp()
-        jsonResponse(res, { status: 'connecting', message: 'Iniciando conexión...' })
+        jsonResponse(res, { status: 'connecting', message: 'Iniciando conexión...', orgLinked: true })
       }
       return
     }
@@ -396,6 +461,7 @@ const server = createServer(async (req, res) => {
       qrCodeData = null
       qrCodeText = null
       connectedPhone = null
+      linkedOrgId = null
       try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) } catch {}
       jsonResponse(res, { status: 'disconnected', message: 'WhatsApp desconectado' })
       return
@@ -425,6 +491,10 @@ const server = createServer(async (req, res) => {
         return
       }
       const orgId = getOrgId()
+      if (!orgId) {
+        jsonResponse(res, { conversations: [], orgLinked: false })
+        return
+      }
       const conversations = db.prepare(`
         SELECT c.*, cl.name as clientName
         FROM WhatsAppConversation c
@@ -447,8 +517,8 @@ const server = createServer(async (req, res) => {
         SELECT c.*, cl.name as clientName
         FROM WhatsAppConversation c
         LEFT JOIN Client cl ON c.clientId = cl.id
-        WHERE c.id = ?
-      `).get(convId)
+        WHERE c.id = ? AND c.organizationId = ?
+      `).get(convId, getOrgId())
 
       if (!conv) {
         jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
@@ -535,9 +605,11 @@ server.listen(PORT, () => {
   console.log(`   Status: http://localhost:${PORT}/status`)
   console.log(`   QR: http://localhost:${PORT}/qr\n`)
 
-  // Auto-conecta si existe sesión previa
+  // Auto-conecta si existe sesión previa (restaurando la org vinculada)
   if (fs.existsSync(AUTH_DIR)) {
     console.log('[WA] Existing session found, connecting...')
+    loadLinkedOrgFromDisk()
+    if (!linkedOrgId) console.warn('[ORG] Sesión previa SIN organización vinculada — los mensajes entrantes se descartarán hasta reconectar desde la UI')
     connectToWhatsApp()
   } else {
     console.log('[WA] No session found. Waiting for /connect request...')

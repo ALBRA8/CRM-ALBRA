@@ -29,20 +29,19 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
+import { formatCurrency as formatCurrencyActive, subscribeCurrency } from '@/lib/currency'
 
 interface Transaction {
   id: string
   type: string
   amount: number
+  currency?: string | null
   category?: string | null
   description: string
   referenceId?: string | null
   date: string
   createdAt: string
 }
-
-const formatCurrency = (v: number) =>
-  new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 }).format(v)
 
 const categoryLabels: Record<string, string> = {
   venta: 'Venta',
@@ -60,6 +59,13 @@ export function FinancesPage() {
   const [showForm, setShowForm] = useState(false)
   const [totalIngresos, setTotalIngresos] = useState(0)
   const [totalEgresos, setTotalEgresos] = useState(0)
+  // Moneda: usa el selector global del negocio (Configuración → Negocio,
+  // lib/currency) — auditoría Antigravity #6: antes estaba fija en MXN.
+  const [, setCurrencyTick] = useState(0)
+
+  useEffect(() => subscribeCurrency(() => setCurrencyTick((t) => t + 1)), [])
+
+  const formatCurrency = (v: number) => formatCurrencyActive(v)
 
   const loadTransactions = useCallback(async () => {
     try {
@@ -71,11 +77,10 @@ export function FinancesPage() {
       const egresos = egresosData.transactions as Transaction[]
       setTotalIngresos(ingresosData.totals.sum as number)
       setTotalEgresos(egresosData.totals.sum as number)
-      setTransactions(
-        [...ingresos, ...egresos].sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-        )
-      )
+      const all = [...ingresos, ...egresos]
+      setTransactions(all.sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      ))
     } catch {
       toast.error('Error al cargar transacciones')
     } finally {
@@ -137,7 +142,15 @@ export function FinancesPage() {
         </Button>
         <Button
           variant="outline"
-          onClick={() => window.open('/api/export/csv?type=transactions', '_blank')}
+          onClick={async () => {
+            // Descarga con token en el header (window.open no envía JWT → 401)
+            try {
+              await api.downloadTransactionsCsv()
+              toast.success('CSV de transacciones descargado')
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : 'Error al exportar CSV')
+            }
+          }}
           className="gap-1.5"
         >
           <Download className="w-4 h-4" /> Exportar CSV

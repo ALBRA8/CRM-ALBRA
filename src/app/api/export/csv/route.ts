@@ -7,7 +7,7 @@ import { buildCsv } from '@/lib/csv'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
 /**
- * GET /api/export/csv?type=clients|services|quotes — CSV con BOM UTF-8.
+ * GET /api/export/csv?type=clients|services|quotes|transactions — CSV con BOM UTF-8.
  * Autenticación por header Bearer o ?token= (descargas directas desde <a>).
  */
 export async function GET(req: NextRequest) {
@@ -42,8 +42,20 @@ export async function GET(req: NextRequest) {
         ['number', 'client', 'status', 'subtotal', 'tax', 'total', 'currency', 'createdAt'],
         quotes.map((q) => [q.number, q.client?.name || '', q.status, q.subtotal, q.tax, q.total, q.currency, q.createdAt.toISOString()])
       )
+    } else if (type === 'transactions') {
+      // Caso faltante (auditoría Antigravity, importante #1): el botón Exportar CSV
+      // de Finanzas pedía 'transactions' y el backend respondía 400.
+      const txs = await db.transaction.findMany({
+        where: { organizationId: orgId },
+        orderBy: { date: 'desc' },
+        include: { client: { select: { name: true } } },
+      })
+      csv = buildCsv(
+        ['date', 'type', 'amount', 'currency', 'category', 'description', 'method', 'client', 'createdAt'],
+        txs.map((t) => [t.date.toISOString().split('T')[0], t.type, t.amount, t.currency, t.category || '', t.description || '', t.method || '', t.client?.name || '', t.createdAt.toISOString()])
+      )
     } else {
-      return json({ error: 'type debe ser clients | services | quotes' }, { status: 400 })
+      return json({ error: 'type debe ser clients | services | quotes | transactions' }, { status: 400 })
     }
 
     await auditAndTimeline({ orgId, userId: auth.userId, action: 'exported', entity: type, details: { type } })

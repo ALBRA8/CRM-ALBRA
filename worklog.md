@@ -283,3 +283,29 @@ Stage Summary:
 - QuoteItem relacional en producción con datos migrados sin pérdida.
 - Base de conocimiento operativa e inyectada en el agente (canales + chat).
 - Pendiente: commit + push a GitHub (reconstruir github-main).
+
+---
+Task ID: 11
+Agent: main (Super Z)
+Task: Responder a las auditorías Antigravity + Qwen: verificar cada hallazgo contra el código real y corregir los críticos/importantes confirmados.
+
+Work Log:
+- VERIFICACIÓN: los 6 críticos y 4 importantes de Antigravity confirmados uno a uno (Qwen no pudo acceder al repo: 401 → hallazgos genéricos sin valor verificable).
+- CRÍTICO #1 (fuga multi-tenant daemon): daemon.mjs ya NO hace SELECT Organization LIMIT 1. La sesión se vincula por POST /connect {orgId} (validado contra BD, persistido en .wa-auth/session-org.json, restaurado al arrancar). Sin org vinculada los mensajes entrantes se descartan con warning; /conversations/:id filtra por org.
+- CRÍTICO #2 (backdoor por fallbacks): eliminados 'crm-albra-dev-fallback-secret' (auth.ts appSecret() con fail-fast), 'crm-albra-dev-fallback-key' (crypto.ts), 'crm-albra-internal-2024' (chat/route.ts, daemon-proxy, daemon.mjs, workflow-engine). INTERNAL_API_SECRET generado y agregado a .env; daemon hace loadEnvFile y NO arranca sin el secreto (>=24 chars).
+- CRÍTICO #3 (envío WhatsApp 401): whatsapp-page.tsx ya no habla directo al puerto 3002 — todo vía /api/whatsapp/daemon-proxy con JWT (api.proxyGet/Post/Put). Errores del daemon visibles en toasts.
+- CRÍTICO #4 (daemon expuesto): daemon exige Authorization en TODOS los métodos (antes GET abiertos, sin ?secret=); daemon-proxy con requireAuth en GET/POST/PUT (nuevo handler PUT para conversaciones). settings-page y api.ts mandan el token. Verificado: daemon 401 sin auth, proxy 401 sin JWT, 200 con JWT.
+- CRÍTICO #5 (reportes en $0): reports/pdf y reports/excel filtran 'ingreso'/'egreso' (idioma real de la BD) + moneda dominante de las transacciones. PDF de prueba: Ingresos US$2.400, Egresos US$60, Balance US$2.340 (antes $0).
+- CRÍTICO #6 (SDK sandbox): z-ai-web-dev-sdk envuelto en try/catch → error descriptivo "configura tu LLM" en vez de 500 críptico en VPS/Docker.
+- IMPORTANTE #1 (CSV): export/csv soporta 'transactions' (con cliente); finances-page usa api.downloadTransactionsCsv() con token en header (window.open no enviaba JWT).
+- IMPORTANTE #3 (stubs): workflow-engine envía email REAL vía trySendSmtp (SMTP de la org) y telegram REAL vía Bot API (token cifrado de la org); la notificación ahora dice "enviado" o "PENDIENTE de envío (fallo de canal)" — nada engañoso.
+- IMPORTANTE #4 (webhook O(N)): pre-filtro de integraciones por phone_number_id antes del bucle de firma (típicamente 1 candidato).
+- IMPORTANTE #6 (moneda): finances-page usa el selector global del negocio (lib/currency, COP default) vía subscribeCurrency.
+- MEJORABLES: package.json renombrado a crm-albra-saas; build multiplataforma (scripts/copy-standalone.mjs con fs.cpSync) y start standalone (start-standalone.mjs) — sin cp/bun; Prisma log:['query'] solo en desarrollo; eliminada carpeta tests/ de artefactos sandbox; dark: variants en currency-selector (Vista previa ilegible en oscuro).
+- VERIFICACIÓN END-TO-END (13 tests): 401/200 daemon, 401 proxy sin JWT, login demo, CSV 200 con datos, PDF/Excel 200 con cifras reales, backdoor viejo cerrado (401), /connect sin org → 400 multi-tenant, /conversations sin org → vacío. UI: dashboard/clientes/finanzas/whatsapp/config en oscuro OK; finanzas muestra moneda global.
+- NOTA OPERATIVA: la sesión previa de WhatsApp quedó sin org vinculada (seguro por diseño) → reconectar por QR desde Configuración → WhatsApp para atarla a la organización.
+
+Stage Summary:
+- Los 6 críticos de Antigravity CERRADOS y verificados con tests automatizados de curl + UI.
+- Aún pendientes para producción real (roadmap, no bloquean el código): batería de tests Vitest, Dockerfile, reestructurar SPA a rutas App Router, daemon agnóstico de BD para Postgres, considerar WhatsApp Cloud API como canal primario (ya implementado como alternativa a Baileys).
+- PENDIENTE: reconstruir github-main y force push (incluye Task 10: QuoteItem + knowledge + tema oscuro).

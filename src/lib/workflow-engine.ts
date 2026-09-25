@@ -1,5 +1,6 @@
 import { db } from './db'
 import { recordTimelineEvent } from './timeline'
+import { decryptSecret } from './crypto'
 
 /**
  * Motor de workflows disparado por eventos (feature #1 del plan aprobado,
@@ -159,47 +160,91 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         if (tpl) body = tpl.body
       }
       const rendered = renderTemplate(body, ctx)
-      // Envío real: WhatsApp intenta entregarse vía el daemon Baileys
-      // (POST /send) si hay teléfono y está conectado; el resto de canales y
-      // los fallos quedan como notificación en cola para revisión manual.
+      // ENVÍO REAL (auditoría Antigravity, importante #3 — antes email/telegram eran
+      // stubs que solo creaban una notificación interna):
+      //  - whatsapp → daemon Baileys (POST /send con secreto server-to-server)
+      //  - email    → SMTP de la organización (mail.ts trySendSmtp)
+      //  - telegram → Bot API con el token cifrado de la organización
+      // Los fallos quedan registrados como notificación en cola para revisión.
       let sent = false
       let sendError: string | undefined
       if (channel === 'whatsapp' && ctx.phone) {
         try {
           const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
-          const daemonSecret = process.env.INTERNAL_API_SECRET || 'crm-albra-internal-2024'
-          const res = await fetch(`${daemonUrl}/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${daemonSecret}` },
-            body: JSON.stringify({ to: ctx.phone, text: rendered }),
-            signal: AbortSignal.timeout(8000),
-          })
-          if (res.ok) {
-            sent = true
+          const daemonSecret = process.env.INTERNAL_API_SECRET
+          if (!daemonSecret) {
+            sendError = 'INTERNAL_API_SECRET no configurado'
           } else {
-            sendError = `daemon ${res.status}`
+            const res = await fetch(`${daemonUrl}/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${daemonSecret}` },
+              body: JSON.stringify({ to: ctx.phone, text: rendered }),
+              signal: AbortSignal.timeout(8000),
+            })
+            if (res.ok) {
+              sent = true
+            } else {
+              sendError = `daemon ${res.status}`
+            }
           }
         } catch (err) {
           sendError = err instanceof Error ? err.message.slice(0, 120) : 'daemon no disponible'
         }
+      } else if (channel === 'email' && ctx.email) {
+        try {
+          const { getSmtpConfig, trySendSmtp } = await import('./mail')
+          const cfg = await getSmtpConfig(orgId)
+          if (!cfg) {
+            sendError = 'SMTP no configurado (Configuración → Email)'
+          } else {
+            const subject = String(config.subject || `Mensaje de ${cfg.from}`)
+            const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${rendered.replace(/\n/g, '<br>')}</div>`
+            const result = await trySendSmtp(cfg, String(ctx.email), subject, html, rendered)
+            sent = result.ok
+            if (!result.ok) sendError = (result.error || 'fallo SMTP').slice(0, 120)
+          }
+        } catch (err) {
+          sendError = err instanceof Error ? err.message.slice(0, 120) : 'error de email'
+        }
+      } else if (channel === 'telegram') {
+        try {
+          const integration = await db.integration.findFirst({
+            where: { organizationId: orgId, telegramBotTokenEnc: { not: null } },
+            select: { telegramBotTokenEnc: true },
+          })
+          const token = integration ? decryptSecret(integration.telegramBotTokenEnc) : null
+          const chatId = (ctx.telegramChatId || ctx.chatId || ctx.phone) as string | undefined
+          if (!token) {
+            sendError = 'Telegram no configurado (falta token del bot)'
+          } else if (!chatId) {
+            sendError = 'falta chatId de Telegram para el destinatario'
+          } else {
+            const { sendTelegramBotMessage } = await import('./integrations')
+            const result = await sendTelegramBotMessage({ token, chatId: String(chatId), text: rendered })
+            sent = result.ok
+            if (!result.ok) sendError = (result.error || 'fallo Telegram').slice(0, 120)
+          }
+        } catch (err) {
+          sendError = err instanceof Error ? err.message.slice(0, 120) : 'error de telegram'
+        }
       }
-      // El envío real lo hace el módulo de integraciones; aquí registramos el intento
-      // y el evento de timeline; el daemon de WhatsApp/Telegram envía si está activo.
+      // Registro del intento + evento de timeline (auditable). El título deja claro
+      // si el mensaje SALIÓ de verdad o quedó pendiente — nada de engaños.
       const { db: database } = await import('./db')
       await database.notification.create({
         data: {
           organizationId: orgId,
           type: 'automation',
-          title: `Mensaje ${channel} programado`,
+          title: `Mensaje ${channel} ${sent ? 'enviado' : 'PENDIENTE de envío (fallo de canal)'}`,
           body: rendered.slice(0, 500),
-          data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null }),
+          data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent, error: sendError ?? null }),
         },
       })
       await recordTimelineEvent({
         orgId,
         clientId: (ctx.clientId as string) || null,
         type: channel,
-        title: `Mensaje ${channel} (automatización)`,
+        title: `Mensaje ${channel} (automatización)${sent ? '' : ' — no entregado'}`,
         description: rendered.slice(0, 300),
         source: 'automation',
       })

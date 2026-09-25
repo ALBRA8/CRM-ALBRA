@@ -30,11 +30,9 @@ import { es } from 'date-fns/locale'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 
-const DAEMON_BASE = typeof window !== 'undefined' 
-  ? (window.location.hostname === 'localhost' 
-    ? 'http://localhost:3002' 
-    : `${window.location.protocol}//${window.location.hostname}:3002`)
-  : 'http://localhost:3002'
+/* El frontend NUNCA habla directo al daemon (puerto 3002): todo pasa por
+ * /api/whatsapp/daemon-proxy con JWT (auditoría Antigravity, críticos #3/#4).
+ * Antes el envío manual daba 401 y las conversaciones eran legibles sin login. */
 
 /* ──── Types ──── */
 interface Conversation {
@@ -100,8 +98,7 @@ export function WhatsAppPage() {
 
   const loadStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${DAEMON_BASE}/status`)
-      const data = await res.json() as WaDaemonStatus
+      const data = await api.getWhatsAppStatus() as WaDaemonStatus
       setDaemonStatus(data)
     } catch {
       setDaemonStatus({ status: 'daemon_offline', phone: null, lastUpdate: null })
@@ -110,8 +107,7 @@ export function WhatsAppPage() {
 
   const loadConversations = useCallback(async () => {
     try {
-      const res = await fetch(`${DAEMON_BASE}/conversations`)
-      const data = await res.json() as { conversations: Conversation[] }
+      const data = await api.getWhatsAppConversations() as { conversations: Conversation[] }
       setConversations(data.conversations ?? [])
     } catch {
       // Daemon may be offline
@@ -143,8 +139,10 @@ export function WhatsAppPage() {
     setSelectedId(id)
     setLoadingMessages(true)
     try {
-      const res = await fetch(`${DAEMON_BASE}/conversations/${id}`)
-      const data = await res.json() as { conversation: Conversation & { messages: WaMessage[] } }
+      const data = await api.getWhatsAppConversation(id) as { conversation?: Conversation & { messages: WaMessage[] }; error?: string }
+      if (data.error) {
+        toast.error(data.error)
+      }
       setMessages(data.conversation?.messages ?? [])
       // Mark as read locally
       setConversations(prev => prev.map(c => c.id === id ? { ...c, unreadCount: 0 } : c))
@@ -162,12 +160,12 @@ export function WhatsAppPage() {
       const conv = conversations.find(c => c.id === selectedId)
       if (!conv) return
 
-      // Send via daemon
-      await fetch(`${DAEMON_BASE}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: conv.contactPhone, text: input.trim() }),
-      })
+      // Envío vía backend (proxy autenticado): inyecta el secreto server-to-server
+      const result = await api.sendWhatsAppMessage({ to: conv.contactPhone, text: input.trim() }) as { success?: boolean; error?: string }
+      if (result?.error) {
+        toast.error(result.error)
+        return
+      }
 
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
@@ -192,11 +190,7 @@ export function WhatsAppPage() {
 
   const toggleAutoReply = async (conv: Conversation) => {
     try {
-      await fetch(`${DAEMON_BASE}/conversations/${conv.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isAutoReply: !conv.isAutoReply }),
-      })
+      await api.updateWhatsAppConversation(conv.id, { isAutoReply: !conv.isAutoReply })
       setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, isAutoReply: !c.isAutoReply } : c))
       toast.success(conv.isAutoReply ? 'Agente IA desactivado' : 'Agente IA activado')
     } catch {
@@ -206,11 +200,7 @@ export function WhatsAppPage() {
 
   const takeOverConversation = async (conv: Conversation) => {
     try {
-      await fetch(`${DAEMON_BASE}/conversations/${conv.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'active', isAutoReply: false, transferredTo: null }),
-      })
+      await api.updateWhatsAppConversation(conv.id, { status: 'active', isAutoReply: false, transferredTo: null })
       setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, status: 'active', isAutoReply: false, transferredTo: null } : c))
       toast.success('Conversación retomada')
     } catch {
