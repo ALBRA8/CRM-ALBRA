@@ -7,6 +7,7 @@
     "build": "next build && node scripts/copy-standalone.mjs",
     "start": "node scripts/start-standalone.mjs",
     "lint": "eslint .",
+    "test": "vitest run",
     "db:push": "prisma db push --accept-data-loss",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -99,6 +100,7 @@
     "eslint-config-next": "^16.1.1",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.1"
   }
 }
