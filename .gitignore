@@ -82,3 +82,4 @@ wa-auth/
 .vscode/
 .idea/
 Thumbs.db
+agent-ctx/

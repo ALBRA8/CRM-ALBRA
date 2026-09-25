@@ -1,0 +1,79 @@
+# ============================================================
+# CRM ALBRA — .dockerignore
+# Mantener el contexto de build pequeño y la imagen SIN secretos.
+# REGLA DE ORO: nada de .env, db/*.db* ni sesión de WhatsApp (.wa-auth)
+# debe llegar nunca a la imagen.
+# ============================================================
+
+# ---------- Secretos y entorno (NUNCA en la imagen) ----------
+.env
+.env.*
+# La plantilla SÍ entra (documentación de variables para quien construya)
+!.env.example
+
+# ---------- Datos privados: BD y sesión de WhatsApp ----------
+db/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+# Sesión de Baileys (si se filtra, roban el número): cualquier ubicación
+.wa-auth/
+**/.wa-auth/
+wa-auth/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# ---------- Dependencias y builds (se regeneran en el contenedor) ----------
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---------- Git ----------
+.git
+.gitignore
+.gitattributes
+
+# ---------- Tests (los añade otro agente; no se necesitan en la imagen) ----------
+tests/
+coverage/
+
+# ---------- Carpetas/artefactos locales del sandbox ----------
+agent-ctx/
+docs/
+examples/
+reference/
+download/
+upload/
+tool-results/
+repo-compare/
+skills/
+Caddyfile
+
+# ---------- Logs y comprimidos ----------
+*.log
+dev.log
+dev.out.log
+worklog.md
+*.zip
+*.tar.gz
+
+# ---------- SO / IDE ----------
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+.claude
+.z-ai-config
+
+# ---------- Notas ----------
+# NO excluir (los necesita `next build` / el runtime):
+#   prisma/         → esquema para prisma generate + db push
+#   src/            → código de la app + whatsapp-daemon/daemon.mjs
+#   public/         → estáticos que copy-standalone.mjs lleva al standalone
+#   scripts/        → copy-standalone.mjs (build) + docker-entrypoint.sh
+#   next.config.ts, tsconfig.json, postcss.config.mjs, tailwind.config.ts,
+#   package.json, bun.lock
