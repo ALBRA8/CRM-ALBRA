@@ -83,3 +83,4 @@ wa-auth/
 .idea/
 Thumbs.db
 agent-ctx/
+/download/
