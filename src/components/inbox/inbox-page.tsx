@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2 } from 'lucide-react'
+import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2, Mic } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -298,6 +298,11 @@ export function InboxPage() {
                             : 'bg-white text-slate-800 border border-slate-100 rounded-bl-sm'
                         )}
                       >
+                        {m.messageType === 'voice' && (
+                          <span className="flex items-center gap-1 text-[10px] font-medium text-slate-500 mb-0.5">
+                            <Mic className="w-3 h-3" /> Nota de voz (transcrita)
+                          </span>
+                        )}
                         {m.text}
                         <span className={cn('block text-[9px] mt-1', m.direction === 'out' ? (m.senderType === 'agent' ? 'text-amber-600' : 'text-emerald-200') : 'text-slate-400')}>
                           {m.senderType === 'agent' ? 'Agente IA · ' : ''}

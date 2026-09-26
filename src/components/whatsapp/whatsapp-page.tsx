@@ -24,6 +24,7 @@ import {
   Loader2,
   QrCode,
   RefreshCw,
+  Mic,
 } from 'lucide-react'
 import { format, isToday, isYesterday, isThisWeek } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -404,6 +405,11 @@ export function WhatsAppPage() {
                           <span className="text-[9px] opacity-70">
                             {msg.senderType === 'agent' ? 'IA' : 'Tú'}
                           </span>
+                        </div>
+                      )}
+                      {msg.messageType === 'voice' && (
+                        <div className="flex items-center gap-1 text-[9px] font-medium text-slate-500 dark:text-slate-400 mb-0.5">
+                          <Mic className="w-2.5 h-2.5" /> Nota de voz (transcrita)
                         </div>
                       )}
                       <p className="text-[13px] whitespace-pre-wrap leading-relaxed">{msg.text}</p>

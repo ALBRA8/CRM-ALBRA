@@ -47,6 +47,8 @@ export interface InboxMessage {
   senderType: 'contact' | 'agent' | 'user'
   text: string
   createdAt: string
+  /** 'voice' si es una nota de voz transcrita (chip 🎙 en la UI). */
+  messageType?: string
 }
 
 const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = {
@@ -132,6 +134,7 @@ export function timelineToMessages(
         senderType: direction === 'in' ? 'contact' : e.source === 'agent' ? 'agent' : 'user',
         text: e.description || e.title || '',
         createdAt: e.createdAt.toISOString(),
+        ...(meta.voice ? { messageType: 'voice' } : {}),
       } satisfies InboxMessage
     })
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -357,7 +360,7 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
       where: { organizationId: orgId, conversationId: parsed.id },
       orderBy: { createdAt: 'desc' },
       take: 200,
-      select: { id: true, direction: true, senderType: true, text: true, createdAt: true },
+      select: { id: true, direction: true, senderType: true, text: true, createdAt: true, messageType: true },
     })
     return rows
       .map((m) => ({
@@ -366,6 +369,7 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
         senderType: m.senderType === 'contact' ? ('contact' as const) : m.senderType === 'agent' ? ('agent' as const) : ('user' as const),
         text: m.text || '',
         createdAt: m.createdAt.toISOString(),
+        ...(m.messageType === 'voice' ? { messageType: 'voice' } : {}),
       }))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }

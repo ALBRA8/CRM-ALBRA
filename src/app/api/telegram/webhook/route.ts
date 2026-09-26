@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { safeEquals, parseTelegramState, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
 import { notifyOrganization } from '@/lib/push'
 import { llmChat } from '@/lib/ai'
+import { transcribeAudioBase64 } from '@/lib/asr'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 
@@ -22,6 +23,8 @@ interface TgMessage {
   from?: { id: number; first_name?: string; last_name?: string; username?: string }
   chat: { id: number; type: string }
   text?: string
+  voice?: { file_id: string; duration?: number; mime_type?: string }
+  audio?: { file_id: string; duration?: number; mime_type?: string }
 }
 
 interface TgUpdate {
@@ -56,11 +59,49 @@ export async function POST(req: NextRequest) {
     const orgId = matched.organizationId
     const update = JSON.parse(rawBody) as TgUpdate
     const message = update.message || update.edited_message || update.channel_post
-    if (!message?.text) return json({ ok: true })
+    if (!message) return json({ ok: true })
 
-    const text = message.text.slice(0, 4000)
     const senderName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || null
     const platformKey = `tg:${message.chat.id}`
+
+    // Notas de voz / audio: antes se descartaban silenciosamente ("if (!message?.text)").
+    // Ahora se descargan del Bot API, se transcriben (ASR) y fluyen como texto por el
+    // mismo camino: timeline, workflows message_received y auto-respuesta IA.
+    let text = message.text ? message.text.slice(0, 4000) : null
+    let isVoice = false
+    if (!text && (message.voice || message.audio)) {
+      const audio = message.voice || message.audio!
+      try {
+        const integration0 = await db.integration.findUnique({ where: { organizationId: orgId } })
+        const state0 = parseTelegramState(integration0?.telegramBotTokenEnc)
+        if (!state0.token) throw new Error('sin token de bot configurado')
+        const buffer = await downloadTelegramFile({ token: state0.token, fileId: audio.file_id })
+        text = await transcribeAudioBase64(buffer.toString('base64'))
+        isVoice = true
+        console.log(`[telegram webhook] nota de voz transcrita (${audio.duration ?? '?'}s): ${text.slice(0, 60)}`)
+      } catch (err) {
+        // Fail-open a humano: la nota queda registrada en timeline + push al equipo
+        console.error('[telegram webhook] nota de voz no transcrita', err)
+        const fbClient = await findOrCreateChannelClient({ orgId, platformKey, name: senderName, source: 'telegram' })
+        await recordTimelineEvent({
+          orgId,
+          clientId: fbClient?.id || null,
+          type: 'telegram',
+          title: `Nota de voz recibida de ${senderName || platformKey} (no transcrita)`,
+          description: 'No se pudo transcribir la nota de voz automáticamente. Revísala en la app de Telegram.',
+          metadata: { chatId: String(message.chat.id), direction: 'in', voice: true, reason: err instanceof Error ? err.message : 'desconocido' },
+          source: 'integration',
+        })
+        await notifyOrganization(orgId, {
+          type: 'integration',
+          title: 'Telegram: nota de voz sin transcribir',
+          body: `${senderName || platformKey} envió una nota de voz que no se pudo transcribir. Revisa el chat en Telegram.`,
+          data: JSON.stringify({ clientId: fbClient?.id, channel: 'telegram' }),
+        })
+        return json({ ok: true })
+      }
+    }
+    if (!text) return json({ ok: true })
 
     // 1) Cliente asociado (find-or-create, aislado por org)
     const client = await findOrCreateChannelClient({ orgId, platformKey, name: senderName, source: 'telegram' })
@@ -70,9 +111,9 @@ export async function POST(req: NextRequest) {
       orgId,
       clientId: client?.id || null,
       type: 'telegram',
-      title: `Mensaje recibido de ${senderName || platformKey}`,
+      title: isVoice ? `Nota de voz de ${senderName || platformKey} (transcrita)` : `Mensaje recibido de ${senderName || platformKey}`,
       description: text.slice(0, 500),
-      metadata: { chatId: String(message.chat.id), direction: 'in', messageId: message.message_id },
+      metadata: { chatId: String(message.chat.id), direction: 'in', messageId: message.message_id, ...(isVoice ? { voice: true } : {}) },
       source: 'integration',
     })
 
@@ -141,4 +182,24 @@ export async function POST(req: NextRequest) {
     // Nunca 500 a Telegram: evita reintentos infinitos
     return json({ ok: true, processed: false })
   }
+}
+
+/** Descarga un archivo (nota de voz) del Bot API de Telegram vía getFile. */
+async function downloadTelegramFile({ token, fileId }: { token: string; fileId: string }): Promise<Buffer> {
+  const metaRes = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!metaRes.ok) throw new Error(`getFile ${metaRes.status}`)
+  const meta = (await metaRes.json()) as { ok?: boolean; result?: { file_path?: string } }
+  const filePath = meta.result?.file_path
+  if (!filePath) throw new Error('getFile sin file_path')
+
+  const binRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, {
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!binRes.ok) throw new Error(`descarga de audio ${binRes.status}`)
+  return Buffer.from(await binRes.arrayBuffer())
 }

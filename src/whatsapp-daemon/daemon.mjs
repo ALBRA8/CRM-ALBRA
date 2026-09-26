@@ -10,7 +10,7 @@
  * Arranque: bun run wa:daemon  ó  node src/whatsapp-daemon/daemon.mjs
  */
 
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys'
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys'
 import QRCode from 'qrcode'
 import qrcodeTerminal from 'qrcode-terminal'
 import { createServer } from 'http'
@@ -156,14 +156,14 @@ function getOrCreateConversation(orgId, contactPhone, contactName) {
   return conv
 }
 
-function saveMessage(conversationId, orgId, direction, fromNumber, toNumber, text, senderType, waMessageId = null) {
+function saveMessage(conversationId, orgId, direction, fromNumber, toNumber, text, senderType, waMessageId = null, messageType = 'text') {
   if (!db) return null
 
   const msgId = generateId()
   db.prepare(`
     INSERT INTO WhatsAppMessage (id, organizationId, conversationId, waMessageId, direction, fromNumber, toNumber, text, messageType, senderType, isRead, createdAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'text', ?, ?, datetime('now'))
-  `).run(msgId, orgId, conversationId, waMessageId, direction, fromNumber, toNumber, text, senderType, direction === 'outbound' ? 1 : 0)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(msgId, orgId, conversationId, waMessageId, direction, fromNumber, toNumber, text, messageType, senderType, direction === 'outbound' ? 1 : 0)
 
   // Actualiza el último mensaje de la conversación
   const lastFrom = direction === 'inbound' ? 'contact' : senderType
@@ -178,6 +178,36 @@ function saveMessage(conversationId, orgId, direction, fromNumber, toNumber, tex
 
 function generateId() {
   return 'c' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8)
+}
+
+// ============ Notas de voz (ASR vía Next.js interno) ============
+// El daemon solo descarga el media (Baileys); la transcripción vive en el
+// servidor Next (POST /api/whatsapp/transcribe con X-Internal-Secret).
+
+async function downloadWaAudio(content) {
+  // audioMessage y pttMessage son tipo 'audio'; documento de audio va como 'document'
+  const mediaType = content.mimetype && !content.mimetype.startsWith('audio/') ? 'document' : 'audio'
+  const stream = await downloadContentFromMessage(content, mediaType)
+  const chunks = []
+  for await (const chunk of stream) chunks.push(chunk)
+  return Buffer.concat(chunks)
+}
+
+async function transcribeViaApi(audioBuffer) {
+  const internalSecret = process.env.INTERNAL_API_SECRET
+  const agentUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
+  const res = await fetch(`${agentUrl}/api/whatsapp/transcribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret },
+    body: JSON.stringify({ audioBase64: audioBuffer.toString('base64'), mime: 'audio/ogg' }),
+    signal: AbortSignal.timeout(90_000),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`transcribe ${res.status}: ${detail.slice(0, 200)}`)
+  }
+  const data = await res.json()
+  return (data.text || '').trim() || null
 }
 
 // ============ WhatsApp Connection ============
@@ -271,13 +301,7 @@ async function connectToWhatsApp() {
 
     for (const msg of messages) {
       try {
-        const textContent = msg.message?.conversation ||
-                           msg.message?.extendedTextMessage?.text ||
-                           null
-
-        if (!textContent) continue
-
-        // Ignora estados y grupos
+        // Ignora estados y grupos (antes de procesar contenido/media)
         const from = msg.key.remoteJid
         if (from === 'status@broadcast' || from.includes('@g.us')) continue
 
@@ -285,26 +309,64 @@ async function connectToWhatsApp() {
         const contactName = msg.pushName || contactPhone
         const waMessageId = msg.key.id
 
-        console.log(`[WA] Message from ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
-
         const orgId = getOrgId()
         if (!orgId) {
           console.warn('[WA] Mensaje descartado: la sesión no está vinculada a ninguna organización. Reconecta WhatsApp desde Configuración → WhatsApp para vincularla.')
           continue
         }
 
+        let textContent = msg.message?.conversation ||
+                          msg.message?.extendedTextMessage?.text ||
+                          null
+        let messageType = 'text'
+        let voiceTranscribed = false // la IA solo responde a voz con transcripción
+
+        // Notas de voz (audioMessage/ptt/documento de audio): antes se descartaban
+        // silenciosamente. Ahora se descargan, se transcriben vía el endpoint
+        // interno de ASR y se guardan como messageType='voice'.
+        if (!textContent) {
+          const audioContent = msg.message?.audioMessage ||
+                               msg.message?.pttMessage ||
+                               (msg.message?.documentMessage?.mimetype?.startsWith('audio/') ? msg.message.documentMessage : null)
+
+          if (audioContent) {
+            messageType = 'voice'
+            let transcribed = null
+            try {
+              const buf = await downloadWaAudio(audioContent)
+              if (buf && buf.length > 0) transcribed = await transcribeViaApi(buf)
+            } catch (err) {
+              console.error('[WA] Nota de voz sin transcribir:', err?.message || err)
+            }
+            if (transcribed) {
+              textContent = transcribed
+              voiceTranscribed = true
+              console.log(`[WA] Nota de voz transcrita de ${contactPhone}: ${transcribed.substring(0, 50)}...`)
+            } else {
+              // Fail-open a humano: el mensaje NO se pierde; queda visible en la
+              // bandeja para gestión manual y la IA no responde sola.
+              textContent = '🎤 Nota de voz (no se pudo transcribir automáticamente)'
+              console.warn(`[WA] Nota de voz de ${contactPhone} guardada sin transcripción`)
+            }
+          } else {
+            continue // ni texto ni audio: se ignora como antes (stickers, imágenes, etc.)
+          }
+        }
+
+        console.log(`[WA] Message from ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
+
         const conv = getOrCreateConversation(orgId, contactPhone, contactName)
         if (!conv) continue
 
-        saveMessage(conv.id, orgId, 'inbound', contactPhone, connectedPhone || '', textContent, 'contact', waMessageId)
+        saveMessage(conv.id, orgId, 'inbound', contactPhone, connectedPhone || '', textContent, 'contact', waMessageId, messageType)
 
         // Actualiza último contacto del cliente
         if (conv.clientId && db) {
           db.prepare("UPDATE Client SET lastContactAt = datetime('now'), updatedAt = datetime('now') WHERE id = ?").run(conv.clientId)
         }
 
-        // Auto-respuesta con IA si está habilitada
-        if (conv.isAutoReply && conv.status === 'active') {
+        // Auto-respuesta con IA si está habilitada (voz: solo si se transcribió)
+        if (conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed)) {
           console.log(`[WA] Auto-reply enabled for ${contactPhone}, calling agent...`)
           triggerAgentReply(orgId, conv, textContent, contactPhone)
         }

@@ -12,6 +12,8 @@ import {
   sendWhatsAppCloud,
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-agent'
+import { transcribeAudioBase64 } from '@/lib/asr'
+import { notifyOrganization } from '@/lib/push'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 
@@ -38,6 +40,7 @@ interface WaValue {
     timestamp?: string
     text?: { body?: string }
     type?: string
+    audio?: { id: string; mime_type?: string }
     button?: { text?: string }
     interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } }
   }>
@@ -145,7 +148,40 @@ export async function POST(req: NextRequest) {
     }
 
     for (const message of value.messages || []) {
-      const text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
+      let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
+      let isVoice = false
+
+      // Notas de voz (Cloud API type 'audio'): antes se descartaban ("if (!text) continue").
+      // Se descargan del Graph API con el token Cloud de la org y se transcriben (ASR).
+      if (!text && message.audio && matchedCloudToken) {
+        try {
+          const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.audio.id })
+          text = await transcribeAudioBase64(buf.toString('base64'))
+          isVoice = true
+        } catch (err) {
+          // Fail-open a humano: la nota queda registrada en timeline + push al equipo
+          console.error('[whatsapp webhook] nota de voz no transcrita', err)
+          const phoneFall = normalizePhone(message.from)
+          if (phoneFall) {
+            const fbClient = await findOrCreateChannelClient({ orgId: matchedOrgId, platformKey: phoneFall, name: null, source: 'whatsapp' })
+            await recordTimelineEvent({
+              orgId: matchedOrgId,
+              clientId: fbClient?.id || null,
+              type: 'whatsapp',
+              title: `Nota de voz recibida de ${phoneFall} (no transcrita)`,
+              description: 'No se pudo transcribir la nota de voz automáticamente. Escucha el audio desde WhatsApp.',
+              metadata: { from: phoneFall, direction: 'in', voice: true, reason: err instanceof Error ? err.message : 'desconocido' },
+              source: 'integration',
+            })
+            await notifyOrganization(matchedOrgId, {
+              type: 'integration',
+              title: 'WhatsApp: nota de voz sin transcribir',
+              body: `${phoneFall} envió una nota de voz que no se pudo transcribir. Escucha el audio en WhatsApp.`,
+              data: JSON.stringify({ clientId: fbClient?.id, channel: 'whatsapp' }),
+            })
+          }
+        }
+      }
       if (!text) continue
       const phone = normalizePhone(message.from)
       if (!phone) continue
@@ -158,9 +194,9 @@ export async function POST(req: NextRequest) {
         orgId: matchedOrgId,
         clientId: client?.id || null,
         type: 'whatsapp',
-        title: `Mensaje recibido de ${profileName || phone}`,
+        title: isVoice ? `Nota de voz de ${profileName || phone} (transcrita)` : `Mensaje recibido de ${profileName || phone}`,
         description: text.slice(0, 500),
-        metadata: { from: phone, direction: 'in', messageId: message.id },
+        metadata: { from: phone, direction: 'in', messageId: message.id, ...(isVoice ? { voice: true } : {}) },
         source: 'integration',
       })
 
@@ -219,4 +255,22 @@ export async function POST(req: NextRequest) {
     console.error('[whatsapp webhook]', err)
     return json({ ok: true, processed: false })
   }
+}
+
+/** Descarga un media (nota de voz) de la Cloud API de Meta vía Graph API. */
+async function downloadWaCloudMedia({ token, mediaId }: { token: string; mediaId: string }): Promise<Buffer> {
+  const metaRes = await fetch(`https://graph.facebook.com/v21.0/${mediaId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!metaRes.ok) throw new Error(`graph media ${metaRes.status}`)
+  const meta = (await metaRes.json()) as { url?: string }
+  if (!meta.url) throw new Error('graph media sin url')
+
+  const binRes = await fetch(meta.url, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(60_000),
+  })
+  if (!binRes.ok) throw new Error(`descarga de audio ${binRes.status}`)
+  return Buffer.from(await binRes.arrayBuffer())
 }
