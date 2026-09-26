@@ -1,6 +1,7 @@
 import { db } from './db'
 import { llmChat } from './ai'
 import { buildKnowledgeContext } from './knowledge'
+import { notifyOrganization } from './push'
 
 /**
  * Auto-respuesta del agente IA para canales entrantes (Telegram / Instagram).
@@ -21,14 +22,12 @@ export async function llmReplyOrNotification(opts: {
   const wantsHuman = handoffKeywords.some((k) => incomingText.toLowerCase().includes(k.toLowerCase()))
 
   if (wantsHuman) {
-    await db.notification.create({
-      data: {
-        organizationId: orgId,
-        type: 'integration',
-        title: `${channelLabel}: el cliente pide un humano`,
-        body: incomingText.slice(0, 200),
-        data: JSON.stringify({ clientId, channel: channelLabel.toLowerCase() }),
-      },
+    // Handoff: notificación in-app + web-push al equipo (Fase 4)
+    await notifyOrganization(orgId, {
+      type: 'integration',
+      title: `${channelLabel}: el cliente pide un humano`,
+      body: incomingText.slice(0, 200),
+      data: JSON.stringify({ clientId, channel: channelLabel.toLowerCase() }),
     })
     return { replied: false, handoff: true }
   }

@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { safeEquals, parseTelegramState, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
+import { notifyOrganization } from '@/lib/push'
 import { llmChat } from '@/lib/ai'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
@@ -124,15 +125,12 @@ export async function POST(req: NextRequest) {
           console.error('[telegram webhook] auto-respuesta IA falló', err)
         }
       } else if (wantsHuman && state.token) {
-        // Transferencia a humano: notificar y no responder con IA
-        await db.notification.create({
-          data: {
-            organizationId: orgId,
-            type: 'integration',
-            title: 'Telegram: el cliente pide un humano',
-            body: `${senderName || platformKey}: ${text.slice(0, 200)}`,
-            data: JSON.stringify({ clientId: client?.id, channel: 'telegram' }),
-          },
+        // Transferencia a humano: notificación in-app + web-push (no responde la IA)
+        await notifyOrganization(orgId, {
+          type: 'integration',
+          title: 'Telegram: el cliente pide un humano',
+          body: `${senderName || platformKey}: ${text.slice(0, 200)}`,
+          data: JSON.stringify({ clientId: client?.id, channel: 'telegram' }),
         })
       }
     }

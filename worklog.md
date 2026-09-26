@@ -461,3 +461,22 @@ Work Log:
 Stage Summary:
 - Fase 2 100% verificada en vivo (toggle persistente + reparto circular real). Única limitación: el dev server arrancado manualmente puede morir entre llamadas del sandbox; para el usuario el preview estable llega al reiniciar la sesión.
 - Pendientes con Fase 3 aplazada: (a) usuario: revocar token GitHub + crear uno con scopes repo+workflow para push (rama github-main 922f5fc lista) y publicar ci.yml; (b) re-guardar credenciales SMTP/Telegram; (c) 6 errores de lint preexistentes en scripts/*.js y theme-toggle (cosmético); (d) Fase 4 futuro: Stripe, omnicanal, IA de cierre, PWA.
+---
+Task ID: 17-a
+Agent: general-purpose (subagente lint+audit)
+Task: Eliminar los 5 errores ESLint de scripts/*.js (no-require-imports) + reducir vulnerabilidades sharp/libvips del npm audit.
+
+Work Log:
+- TAREA 1: los 3 scripts (extract-quote-items.js, restore-quote-items.js, seed-knowledge-demo.js) no usaban __dirname/require.resolve/module.exports → conversión ESM real. Técnica elegida: renombrar a .mjs (repo ya usa esa convención: ensure-env.mjs, seed-agent-demo.mjs, etc.) y convertir `const { PrismaClient } = require('@prisma/client')` → `import { PrismaClient } from '@prisma/client'` y `require('fs')` → `import fs from 'node:fs'`. No se añadió "type":"module" a package.json (evitar impacto en otros .js). Ningún otro archivo referenciaba los nombres .js (verificado con rg; solo menciones históricas en worklog).
+- Verificado import ESM de @prisma/client: `node -e "import('@prisma/client')..."` → PrismaClient ok. Sintaxis: `node --check` sobre los 3 .mjs → parsean. NO se ejecutaron los scripts (mutan BD).
+- VERIFICACIÓN TAREA 1: `npx eslint scripts/ --no-error-on-unmatched-pattern` → salida: `✔ 0 problems (exit 0)`. Lint completo del repo: queda solo 1 error preexistente (theme-toggle.tsx:18 react-hooks/set-state-in-effect, fuera de alcance).
+- TAREA 2: audit inicial: total 8 (6 moderate, 2 high, 0 critical) = sharp(high), js-yaml(high, vía @mdxeditor/editor), prismjs(moderate, vía react-syntax-highlighter), uuid(moderate, vía exceljs) + los padres @mdxeditor/editor, react-syntax-highlighter, refractor, exceljs. sharp: 2 advisories — libvips CVE-2026-33327/33328/35590/35591 (fixed en 0.35.0) y libheif GHSA-g89c-p67h-r497 + GHSA-2jg2-4ch7-h545 (fixed en 0.35.4).
+- Fix aplicado: `bun add sharp@latest` → sharp 0.35.4 en package.json (^0.34.3→^0.35.4) y bun.lock (subárbol @img/* completo: binarios 0.34.5→0.35.4, libvips 1.2.4→1.3.3, @img/colour 1.0.0→1.1.0). Es paquete DIRECTO, fixAvailable pasó de {isSemVerMajor:true} a `true` (no-breaking). Smoke test: `require('sharp')` + conversión SVG→PNG real OK (libvips carga). Nota: node_modules/sharp ya estaba en 0.35.4 antes del add (estado inconsistente previo); ahora manifest+lock+node_modules coinciden.
+- npm audit DESPUÉS: total sigue 8 porque npm audit lee package-lock.json (stale, sharp 0.34.5). Intenté sincronizar SOLO el lockfile con `npm install --package-lock-only --ignore-scripts` → ERESOLVE preexistente (next-auth ^4.24.11); requiere --force/--legacy-peer-deps que las reglas prohíben → package-lock.json NO tocado (md5 verificado idéntico). En el árbol REAL (bun.lock + node_modules) las 2 advisories de sharp ya NO aplican (0.35.4 ≥ fixed de ambas).
+- Las otras 7 vulnerabilidades: fixes son breaking (semver-major de padres UI: @mdxeditor/editor@4.2.5, react-syntax-highlighter@16.1.1) o un downgrade mayor (exceljs@3.4.0) → NO aplicadas, fuera de alcance, costo documentado.
+- Post-dependencias: `npx tsc --noEmit` → 0 errores (exit 0). Sin commit, sin push, sin build, sin tests. src/ intacto.
+
+Stage Summary:
+- TAREA 1 COMPLETA: scripts/ lint limpio (✔ 0 problems). 3 scripts CJS convertidos a ESM .mjs (misma lógica, imports `@prisma/client` + `node:fs`), parseo verificado con node --check.
+- TAREA 2 COMPLETA en árbol real: sharp 0.35.4 fijado en package.json + bun.lock (elimina las 2 advisories de libvips/libheif: 6 CVEs), verificado con smoke test y tsc 0 errores. npm audit CLI sigue marcando 8 por leer el package-lock.json stale que npm no puede regenerar sin --force (ERESOLVE de next-auth preexistente) — no es exposición real del runtime; si se quiere audit=7, requiere resolver los peers de npm o migrar el lockfile, decisión del agente principal.
+- Restantes 7 (js-yaml/prismjs/uuid + padres): requieren majors breaking de UI deps o downgrade de exceljs → pendiente de decisión de producto.

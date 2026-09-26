@@ -287,6 +287,25 @@ class ApiClient {
     return this.proxyPost('/send', data)
   }
 
+  // Bandeja omnicanal (Fase 4) — unifica WhatsApp + Telegram + Instagram
+  async getInbox(params?: Record<string, string>) {
+    const query = params ? `?${new URLSearchParams(params).toString()}` : ''
+    return this.request(`/inbox${query}`)
+  }
+
+  async getInboxMessages(key: string) {
+    return this.request(`/inbox?key=${encodeURIComponent(key)}`)
+  }
+
+  async sendInboxMessage(data: { key: string; contactHandle: string; clientId?: string | null; text: string }) {
+    return this.request('/inbox/send', { method: 'POST', body: JSON.stringify(data) })
+  }
+
+  // Web-push (Fase 4) — la API dedupe por endpoint, es seguro re-llamar
+  async subscribePush(subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) {
+    return this.request('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) })
+  }
+
   // Telegram
   async getTelegramConfig() {
     return this.request('/telegram/config')

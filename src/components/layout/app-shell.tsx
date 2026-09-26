@@ -20,6 +20,8 @@ import { FinancesPage } from '@/components/finances/finances-page'
 import { SettingsPage } from '@/components/settings/settings-page'
 import { ProductsPage } from '@/components/products/products-page'
 import { WhatsAppPage } from '@/components/whatsapp/whatsapp-page'
+import { InboxPage } from '@/components/inbox/inbox-page'
+import { PushManager } from '@/components/pwa/push-manager'
 import { TeamPage } from '@/components/team/team-page'
 import { ActivityPage } from '@/components/activity/activity-page'
 import { ReportsPage } from '@/components/reports/reports-page'
@@ -189,6 +191,8 @@ function renderView(view: string): ReactNode {
       return <ProductsPage />
     case 'whatsapp':
       return <WhatsAppPage />
+    case 'inbox':
+      return <InboxPage />
     case 'automations':
       return <AutomationsPage />
     case 'chat':
@@ -237,6 +241,7 @@ export function AppShell({ initialView, initialClientId, initialQuoteId }: AppSh
 
   return (
     <>
+      <PushManager />
       <AppLayout>
         {content}
       </AppLayout>

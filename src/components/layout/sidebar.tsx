@@ -20,6 +20,7 @@ import {
   X,
   BarChart3,
   MessageCircle,
+  Inbox,
   Shield,
   Clock,
 } from 'lucide-react'
@@ -49,6 +50,7 @@ const navItems = [
   { id: 'calendar', label: 'Calendario', icon: Calendar, perm: 'reservations.read' },
   { id: 'quotes', label: 'Cotizaciones', icon: FileText, perm: 'quotes.read' },
   { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, perm: 'whatsapp.read' },
+  { id: 'inbox', label: 'Bandeja', icon: Inbox, perm: 'whatsapp.read' },
   { id: 'automations', label: 'Automatizaciones', icon: Zap, perm: 'automations.read' },
   { id: 'chat', label: 'Chat AI', icon: MessageSquare, perm: 'ai.use' },
   { id: 'finances', label: 'Finanzas', icon: DollarSign, perm: 'transactions.read' },
