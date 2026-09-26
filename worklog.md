@@ -446,3 +446,18 @@ Work Log:
 
 Stage Summary:
 - Fase 2 completa y verificada (100/100 tests, tsc, build, E2E navegador). Preview requiere reinicio de sesión; GitHub requiere token nuevo del usuario.
+---
+Task ID: 16
+Agent: main (Super Z)
+Task: Verificación en vivo pendiente de la Fase 2 (Task 15) tras reinicio de sesión + responder al usuario qué queda pendiente con Fase 3 aplazada.
+
+Work Log:
+- Preview levantado manualmente (bun run dev en background): HTTP 200. El reinicio de sesión del sandbox refrescó el cliente Prisma, así que los 3 campos nuevos (User.leadCount/lastLeadAt, Settings.autoAssignLeads) YA están operativos en vivo.
+- E2E real (scripts/verify-roundrobin-e2e.mjs): POST /api/auth/demo 200 + cookie HttpOnly; GET /api/settings expone leadRouting.autoAssign=true; PUT /api/settings 200 (el 500 heredado del cliente Prisma viejo quedó RESUELTO) y el toggle PERSISTE en BD tras re-GET.
+- Round-robin verificado en BD: 3 clientes creados sin responsable → asignación circular demo@ → agente@ → demo@, leadCount acumulado (2/1), lastLeadAt actualizado. El primer intento de script "falló" solo por forma de respuesta (el POST no devuelve assignedToId); la BD es la verdad.
+- Limpieza: 3 clientes RR-Verify-* eliminados de la org demo, leadCount/lastLeadAt reseteados para dejar demo limpia.
+- Sin cambios en src/: no requiere re-run de tests/build (commit f29ac51 sigue siendo el estado).
+
+Stage Summary:
+- Fase 2 100% verificada en vivo (toggle persistente + reparto circular real). Única limitación: el dev server arrancado manualmente puede morir entre llamadas del sandbox; para el usuario el preview estable llega al reiniciar la sesión.
+- Pendientes con Fase 3 aplazada: (a) usuario: revocar token GitHub + crear uno con scopes repo+workflow para push (rama github-main 922f5fc lista) y publicar ci.yml; (b) re-guardar credenciales SMTP/Telegram; (c) 6 errores de lint preexistentes en scripts/*.js y theme-toggle (cosmético); (d) Fase 4 futuro: Stripe, omnicanal, IA de cierre, PWA.
