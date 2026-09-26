@@ -1,6 +1,6 @@
 // Restaura los items extraídos como filas de la tabla QuoteItem
-const { PrismaClient } = require('@prisma/client')
-const fs = require('fs')
+import { PrismaClient } from '@prisma/client'
+import fs from 'node:fs'
 const db = new PrismaClient()
 
 async function main() {

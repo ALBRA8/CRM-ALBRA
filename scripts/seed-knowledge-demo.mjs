@@ -1,6 +1,6 @@
 // Siembra las 2 entradas demo de conocimiento en la organización demo EXISTENTE
 // (si aún no tiene ninguna), para que el usuario las vea funcionando de inmediato.
-const { PrismaClient } = require('@prisma/client')
+import { PrismaClient } from '@prisma/client'
 const db = new PrismaClient()
 
 async function main() {

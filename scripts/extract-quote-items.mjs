@@ -1,6 +1,6 @@
 // Extrae los items JSON de las cotizaciones existentes antes de migrar a tabla QuoteItem
-const { PrismaClient } = require('@prisma/client')
-const fs = require('fs')
+import { PrismaClient } from '@prisma/client'
+import fs from 'node:fs'
 const db = new PrismaClient()
 
 async function main() {
