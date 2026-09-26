@@ -480,3 +480,23 @@ Stage Summary:
 - TAREA 1 COMPLETA: scripts/ lint limpio (✔ 0 problems). 3 scripts CJS convertidos a ESM .mjs (misma lógica, imports `@prisma/client` + `node:fs`), parseo verificado con node --check.
 - TAREA 2 COMPLETA en árbol real: sharp 0.35.4 fijado en package.json + bun.lock (elimina las 2 advisories de libvips/libheif: 6 CVEs), verificado con smoke test y tsc 0 errores. npm audit CLI sigue marcando 8 por leer el package-lock.json stale que npm no puede regenerar sin --force (ERESOLVE de next-auth preexistente) — no es exposición real del runtime; si se quiere audit=7, requiere resolver los peers de npm o migrar el lockfile, decisión del agente principal.
 - Restantes 7 (js-yaml/prismjs/uuid + padres): requieren majors breaking de UI deps o downgrade de exceljs → pendiente de decisión de producto.
+---
+Task ID: 17
+Agent: main (Super Z)
+Task: Pendientes menores (vía subagente 17-a) + arranque de Fase 4 del Plan Maestro: bandeja omnicanal + PWA push.
+
+Work Log:
+- 17-a (subagente): 5 errores de eslint en scripts/*.js eliminados con conversión ESM real (.js→.mjs, require→import; node --check OK). sharp → 0.35.4 (libvips CVE-2026-33327/33328/35590/35591 y libheif GHSAs cerradas en el árbol real; package-lock stale por ERESOLVE preexistente de next-auth, documentado). tsc 0 errores.
+- BANDEJA OMNICANAL: src/lib/inbox.ts — merge read-only de WhatsAppConversation (daemon) + TimelineEvent telegram/instagram agrupado por cliente; keys estables wa:/tg:/ig con parseo fail-closed; markInboxRead (WA unreadCount=0, TG/IG metadata.readAt); sendInboxMessage reutiliza lib/integrations (Bot API / Graph API) y el contrato {to,text} del daemon; nunca lanza. API: GET /api/inbox (lista|messages) + POST /api/inbox/send (requireAuth, 400 descriptivos, nunca 500).
+- UI /inbox: dos paneles (lista con badges de canal, filtros, no leídos + hilo con burbujas in/out, sello 'Agente IA activo', composer con Enter para enviar, optimista con rollback); polling 12s; móvil alterna lista/hilo. Registro: views.ts (inbox:'/inbox', perm whatsapp.read), sidebar (navItem Inbox), app-shell (case inbox + PushManager montado), src/app/inbox/page.tsx (deep-link real), api.ts (getInbox/getInboxMessages/sendInboxMessage/subscribePush).
+- PWA: manifest.ts (Next sirve /manifest.webmanifest, iconos 192/512 + maskable); public/sw.js (push → showNotification, notificationclick → focus/openWindow, sin cache de assets por decisión); iconos generados del logo.svg con sharp (scripts/generate-pwa-icons.mjs); PushManager (registro SW + subscribe silencioso si permiso granted, toast de permiso máx 1 vez cada 7 días, silencio si denied).
+- PUSH saliente: src/lib/push.ts — sendPushToOrganization (lee push_subscription, descifra VAPID privada, web-push allSettled, purga 404/410) + notifyOrganization (notificación in-app + push). Cableado en los 2 handoffs de canal: channel-agent.ts y telegram webhook ('el cliente pide un humano' ahora avisa por push).
+- DEMO: scripts/seed-inbox-demo.mjs siembra 1 hilo WhatsApp (María González) + 1 de Telegram (Carlos Rodríguez) en la org albra-demo para que la Bandeja se vea viva.
+- Tests: +17 (unit inbox: keys/timelineToMessages/merge; integración: 401, merge 3 canales, orden, aislamiento org-b, hilo+mark-read WA/TG, key inválida 400, texto vacío 400, canal sin configurar 400 descriptivo). Batería: 117/117. tsc 0 errores. npm run build OK (/inbox y /manifest.webmanifest visibles en el listado).
+- E2E navegador: login demo → /inbox por URL directa (deep-link OK), 'Bandeja' en sidebar; lista muestra 2 conversaciones con unread correctos; hilo de María con 'vía WhatsApp · +57 310 555 0101', burbujas del agente etiquetadas 'Agente IA ·'; hilo de Carlos con composer 'Responder por Telegram…'; tras abrir hilos unread WA=0/TG=0 server-side; sin errores de consola.
+- Commits: a013cf2 (lint+sharp) y 0338864 (fase 4). Push a GitHub PENDIENTE de token con scopes repo+workflow (rama github-main desactualizada: no incluye Task 16/17).
+
+Stage Summary:
+- Fase 4 arrancada: bandeja omnicanal COMPLETA (3 canales, lectura+respuesta) y PWA/push COMPLETOS (manifest+SW+push saliente en handoffs).
+- Pendiente Fase 4 para próximas iteraciones: Stripe (suscripciones/pagos — requiere cuenta y claves), IA de cierre (sugerencias en pipeline), cache offline del SW.
+- Preexistente aceptado: 1 warning react-hooks en theme-toggle (solo visible en lint completo del repo, que excede el timeout del sandbox).
