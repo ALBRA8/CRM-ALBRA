@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, Sparkles, Copy, Check, ArrowUpRight, ArrowDownRight, Minus, Send } from 'lucide-react'
+import { Loader2, Sparkles, Copy, Check, ArrowUpRight, ArrowDownRight, Minus, Send, Info } from 'lucide-react'
 import { toast } from 'sonner'
 
 /**
@@ -144,7 +144,7 @@ export function DealAiDialog({ open, data, onClose, onApplied }: DealAiDialogPro
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 whitespace-pre-wrap">
                 {suggestion.suggestedMessage}
               </div>
-              {data.channels.length > 0 && (
+              {data.channels.length > 0 ? (
                 <div className="flex flex-wrap gap-2 mt-2">
                   {data.channels.map((c) => (
                     <Button
@@ -160,6 +160,11 @@ export function DealAiDialog({ open, data, onClose, onApplied }: DealAiDialogPro
                     </Button>
                   ))}
                 </div>
+              ) : (
+                <p className="flex items-start gap-1.5 text-xs text-slate-400 mt-2">
+                  <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  Este cliente no tiene canales activos conectados. Copia el mensaje y envíalo manualmente.
+                </p>
               )}
             </div>
           )}

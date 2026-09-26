@@ -213,7 +213,8 @@ export function AutomationsPage() {
   const handleRunAll = async () => {
     setRunningAll(true)
     try {
-      const result = await api.runAutomations() as { processed?: number; results?: { remindersSent: number; inactiveRecovered: number; loyaltyFollowUps: number } }
+      // Contadores honestos del endpoint (Task 19-b): runs reales ejecutados.
+      const result = await api.runAutomations() as { processed?: number; results?: { runsTriggered: number; succeeded: number; failed: number } }
       if (typeof result?.processed === 'number') {
         toast.success(result.processed > 0
           ? `Ejecución completada: ${result.processed} automatización(es) procesada(s)`
@@ -221,7 +222,7 @@ export function AutomationsPage() {
           description: result.processed > 0 ? 'Revisa el timeline de tus clientes para ver los efectos' : undefined,
         })
       } else if (result?.results) {
-        toast.success(`Automatizaciones ejecutadas: ${result.results.remindersSent} recordatorios, ${result.results.inactiveRecovered} recuperaciones`)
+        toast.success(`Automatizaciones ejecutadas: ${result.results.succeeded} exitosa(s), ${result.results.failed} fallida(s)`)
       } else {
         toast.success('Ejecución completada')
       }

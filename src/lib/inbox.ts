@@ -55,6 +55,33 @@ const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = 
   instagram: 'Instagram',
 }
 
+/** Prefijo de la key del canal WhatsApp directo (sin conversación previa). */
+const WA_NEW_PREFIX = 'wa-new'
+
+/**
+ * Normaliza un teléfono al formato que usa el daemon (E.164 sin '+', solo
+ * dígitos: '573001110000'). Quita TODO lo que no sea dígito (espacios, '+',
+ * guiones…). Devuelve null si no quedan dígitos suficientes (fail-closed):
+ * nunca se ofrece/envía a un teléfono basura.
+ */
+export function normalizeWaPhone(raw: string | null | undefined): string | null {
+  if (!raw || typeof raw !== 'string') return null
+  const digits = raw.replace(/\D/g, '')
+  return digits.length >= 7 ? digits : null
+}
+
+/**
+ * Parseo de la key del canal WhatsApp directo "wa-new:<teléfono>".
+ * Devuelve el teléfono normalizado o null si la key no es wa-new:/el teléfono
+ * es inválido (fail-closed). Es la key que ofrece el diálogo de IA de cierre
+ * cuando el cliente tiene teléfono pero NUNCA ha tenido conversación: el envío
+ * crea la conversación bajo demanda (find-or-create).
+ */
+export function parseWaNewKey(key: string): string | null {
+  if (typeof key !== 'string' || !key.startsWith(`${WA_NEW_PREFIX}:`)) return null
+  return normalizeWaPhone(key.slice(WA_NEW_PREFIX.length + 1))
+}
+
 // ---------- helpers de key (puros, testeables) ----------
 
 export function makeInboxKey(channel: InboxChannel, id: string): string {
@@ -262,6 +289,28 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
   } catch (err) {
     console.error('[inbox] canal whatsapp (cliente) no disponible', err)
   }
+  if (!options.some((o) => o.channel === 'whatsapp')) {
+    // Task 19-b: cliente SIN conversación activa pero CON teléfono → canal
+    // directo "wa-new:<teléfono>". El envío crea la conversación bajo demanda
+    // (find-or-create) y manda por el mismo camino daemon que wa:<convId>.
+    try {
+      const client = await db.client.findFirst({
+        where: { organizationId: orgId, id: clientId },
+        select: { phone: true },
+      })
+      const phone = normalizeWaPhone(client?.phone)
+      if (phone) {
+        options.push({
+          key: `${WA_NEW_PREFIX}:${phone}`,
+          channel: 'whatsapp',
+          channelLabel: 'WhatsApp',
+          contactHandle: phone,
+        })
+      }
+    } catch (err) {
+      console.error('[inbox] teléfono del cliente no disponible', err)
+    }
+  }
   try {
     const events = await db.timelineEvent.findMany({
       where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram'] } },
@@ -369,10 +418,84 @@ export interface InboxSendResult {
 }
 
 /**
+ * Envía por el daemon Baileys con el contrato { to, text } y el secreto
+ * server-to-server. Único camino de envío WhatsApp (lo usan tanto las
+ * conversaciones existentes "wa:<convId>" como las directas "wa-new:<teléfono>").
+ */
+async function sendViaDaemon(to: string, text: string): Promise<InboxSendResult> {
+  const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
+  const secret = process.env.INTERNAL_API_SECRET
+  if (!secret) return { ok: false, error: 'INTERNAL_API_SECRET no configurado en el servidor' }
+  const res = await fetch(`${daemonUrl}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+    body: JSON.stringify({ to, text }),
+    signal: AbortSignal.timeout(5000),
+  })
+  const data = (await res.json().catch(() => ({}))) as { error?: string }
+  if (!res.ok || data.error) return { ok: false, error: data.error || `WhatsApp no pudo enviar (HTTP ${res.status})` }
+  return { ok: true }
+}
+
+/**
+ * Envío WhatsApp DIRECTO (Task 19-b) a un teléfono sin conversación previa:
+ * primero manda por el MISMO camino daemon que "wa:<convId>" (si el daemon
+ * falla no se crea nada) y, solo si el envío salió, find-or-create de la
+ * conversación (unique organizationId+contactPhone) con el nombre del cliente
+ * y lastMessage/lastMessageAt/lastMessageFrom ('out') igual que deja el daemon
+ * en los mensajes entrantes (texto truncado a 100). Trazabilidad idéntica al
+ * caso existente: sin timeline ni fila de mensaje (los dueña el daemon).
+ */
+async function sendWhatsAppDirect(opts: {
+  orgId: string
+  userId: string
+  phone: string
+  clientId?: string | null
+  text: string
+}): Promise<InboxSendResult> {
+  const text = opts.text.trim().slice(0, 4000)
+  if (!text) return { ok: false, error: 'El mensaje está vacío' }
+  try {
+    const sent = await sendViaDaemon(opts.phone, text)
+    if (!sent.ok) return sent
+
+    let contactName: string | null = null
+    if (opts.clientId) {
+      const client = await db.client.findFirst({
+        where: { organizationId: opts.orgId, id: opts.clientId },
+        select: { name: true },
+      })
+      contactName = client?.name || null
+    }
+    await db.whatsAppConversation.upsert({
+      where: {
+        organizationId_contactPhone: { organizationId: opts.orgId, contactPhone: opts.phone },
+      },
+      create: {
+        organizationId: opts.orgId,
+        clientId: opts.clientId || null,
+        contactPhone: opts.phone,
+        contactName: contactName || opts.phone,
+        lastMessage: text.slice(0, 100),
+        lastMessageAt: new Date(),
+        lastMessageFrom: 'out',
+      },
+      // Ya existía conversación para ese teléfono → no se toca (igual que wa:<convId>).
+      update: {},
+    })
+    return { ok: true }
+  } catch (err) {
+    console.error('[inbox] envío WhatsApp directo falló', err)
+    return { ok: false, error: 'No se pudo enviar el mensaje. Intenta de nuevo.' }
+  }
+}
+
+/**
  * Envía un mensaje por el canal de la conversación. Reutiliza las mismas
  * funciones de lib/integrations que los endpoints /telegram/send y /instagram/send
  * (misma trazabilidad en timeline, source="manual"), y el mismo contrato
- * { to, text } del daemon para WhatsApp.
+ * { to, text } del daemon para WhatsApp (también para la key directa
+ * "wa-new:<teléfono>" de clientes sin conversación previa).
  */
 export async function sendInboxMessage(opts: {
   orgId: string
@@ -382,6 +505,18 @@ export async function sendInboxMessage(opts: {
   clientId?: string | null
   text: string
 }): Promise<InboxSendResult> {
+  // Canal WhatsApp directo (Task 19-b): sin conversación previa, se crea al vuelo.
+  const waNewPhone = parseWaNewKey(opts.key)
+  if (waNewPhone) {
+    return sendWhatsAppDirect({
+      orgId: opts.orgId,
+      userId: opts.userId,
+      phone: waNewPhone,
+      clientId: opts.clientId,
+      text: opts.text,
+    })
+  }
+
   const parsed = parseInboxKey(opts.key)
   if (!parsed) return { ok: false, error: 'Conversación inválida' }
   const text = opts.text.trim().slice(0, 4000)
@@ -389,18 +524,7 @@ export async function sendInboxMessage(opts: {
 
   try {
     if (parsed.channel === 'whatsapp') {
-      const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
-      const secret = process.env.INTERNAL_API_SECRET
-      if (!secret) return { ok: false, error: 'INTERNAL_API_SECRET no configurado en el servidor' }
-      const res = await fetch(`${daemonUrl}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
-        body: JSON.stringify({ to: opts.contactHandle, text }),
-        signal: AbortSignal.timeout(5000),
-      })
-      const data = (await res.json().catch(() => ({}))) as { error?: string }
-      if (!res.ok || data.error) return { ok: false, error: data.error || `WhatsApp no pudo enviar (HTTP ${res.status})` }
-      return { ok: true }
+      return await sendViaDaemon(opts.contactHandle, text)
     }
 
     const integration = await getIntegration(opts.orgId)

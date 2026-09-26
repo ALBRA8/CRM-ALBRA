@@ -6,8 +6,12 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 
 /**
  * POST /api/automations/run — ejecuta los trabajos vencidos del scheduler
- * (runDueJobs) y devuelve { processed, results } con contadores que el
- * frontend consume: results.remindersSent / inactiveRecovered / loyaltyFollowUps.
+ * (runDueJobs) y devuelve contadores HONESTOS de esta invocación (Task 19-b):
+ *   - processed:      trabajos vencidos procesados + runs reanudados (scheduler)
+ *   - results:        { runsTriggered, succeeded, failed } — cada entrada de
+ *                     runWorkflowsForTrigger es un run real con su estado
+ *                     (success | skipped | waiting | failed); skipped/waiting
+ *                     cuentan en runsTriggered pero ni como éxito ni fallo.
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
@@ -15,27 +19,26 @@ export async function POST(req: NextRequest) {
     const auth = requirePermission(req, 'automations.run')
     const { processed, results } = await runDueJobs()
 
-    // Conteo de ejecuciones exitosas por categoría de automatización
-    let remindersSent = 0
-    let inactiveRecovered = 0
-    let loyaltyFollowUps = 0
-    for (const item of results as Array<{ automationId?: string; out?: Array<{ status?: string }> }>) {
-      const ok = Array.isArray(item.out) && item.out.every((r) => r.status === 'success')
-      if (!ok) continue
-      remindersSent++
-    }
+    // Contadores honestos: se cuentan los runs REALES ejecutados en esta
+    // invocación, con el estado que reporta el motor de workflows.
+    const runOutcomes = (results as Array<{ out?: Array<{ status?: string }> }>).flatMap(
+      (item) => (Array.isArray(item.out) ? item.out : [])
+    )
+    const runsTriggered = runOutcomes.length
+    const succeeded = runOutcomes.filter((r) => r.status === 'success').length
+    const failed = runOutcomes.filter((r) => r.status === 'failed').length
 
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,
       action: 'ran_automation',
       entity: 'automation',
-      details: { processed, remindersSent, inactiveRecovered, loyaltyFollowUps },
+      details: { processed, runsTriggered, succeeded, failed },
     })
 
     return json({
       processed,
-      results: { remindersSent, inactiveRecovered, loyaltyFollowUps },
+      results: { runsTriggered, succeeded, failed },
       runs: results,
     })
   })

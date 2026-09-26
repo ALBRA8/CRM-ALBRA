@@ -1,14 +1,16 @@
 import type { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import { handle, json, requireFields } from '@/lib/api-helpers'
-import { sendInboxMessage, parseInboxKey } from '@/lib/inbox'
+import { sendInboxMessage, parseInboxKey, parseWaNewKey } from '@/lib/inbox'
 
 /**
  * POST /api/inbox/send — envía un mensaje por el canal de la conversación.
  * Body: { key, contactHandle, clientId?, text }.
- *  - wa:<convId>  → daemon Baileys ({ to, text }, secreto server-to-server)
- *  - tg:<clientId>→ Telegram Bot API (chatId = contactHandle) + timeline
- *  - ig:<clientId>→ Instagram Graph API (recipientId = contactHandle) + timeline
+ *  - wa:<convId>       → daemon Baileys ({ to, text }, secreto server-to-server)
+ *  - wa-new:<teléfono> → daemon Baileys + find-or-create de la conversación
+ *                        (Task 19-b: cliente con teléfono y sin conversación)
+ *  - tg:<clientId>     → Telegram Bot API (chatId = contactHandle) + timeline
+ *  - ig:<clientId>     → Instagram Graph API (recipientId = contactHandle) + timeline
  * Graceful: canal sin configurar → 400 descriptivo (nunca 500).
  */
 export async function POST(req: NextRequest) {
@@ -21,14 +23,15 @@ export async function POST(req: NextRequest) {
       text?: string
     }
     requireFields(body as unknown as Record<string, unknown>, ['key', 'text'])
-    if (!parseInboxKey(String(body.key))) {
+    const key = String(body.key)
+    if (!parseInboxKey(key) && !parseWaNewKey(key)) {
       return json({ error: 'Conversación inválida' }, { status: 400 })
     }
 
     const result = await sendInboxMessage({
       orgId: auth.orgId,
       userId: auth.userId,
-      key: String(body.key),
+      key,
       contactHandle: String(body.contactHandle || ''),
       clientId: body.clientId || null,
       text: String(body.text || ''),
