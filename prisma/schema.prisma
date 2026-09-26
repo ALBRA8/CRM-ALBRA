@@ -499,6 +499,7 @@ model Settings {
   currency           String       @default("USD")
   timezone           String       @default("America/Bogota")
   autoAssignLeads    Boolean      @default(true) // Fase 2: round-robin automático de leads entrantes
+  dealAiEnabled      Boolean      @default(true) // Fase 4: IA de cierre (sugerencias en pipeline)
   llmProvider        String? // openai | groq | custom | zai
   llmBaseUrl         String?
   llmModel           String?

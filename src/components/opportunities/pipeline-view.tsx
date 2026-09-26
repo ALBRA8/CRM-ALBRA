@@ -10,11 +10,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { OpportunityFormDialog } from './opportunity-form-dialog'
 import { SavedViewsBar } from '@/components/clients/saved-views-bar'
 import { applyFilters, parseViewFilters, type SavedView, type SavedViewFilter } from '@/lib/filters'
-import { TrendingUp, DollarSign, GripVertical } from 'lucide-react'
+import { TrendingUp, DollarSign, GripVertical, Sparkles, Loader2 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
+import { DealAiDialog, type DealAiDialogData } from './deal-ai-dialog'
 
 interface PipelineStage {
   id: string
@@ -58,6 +59,9 @@ export function PipelineView() {
   const [showForm, setShowForm] = useState(false)
   const [draggedOppId, setDraggedOppId] = useState<string | null>(null)
   const [dragOverStageId, setDragOverStageId] = useState<string | null>(null)
+  // IA de cierre (Fase 4): carga por tarjeta + diálogo con la sugerencia
+  const [aiLoadingId, setAiLoadingId] = useState<string | null>(null)
+  const [aiDialogData, setAiDialogData] = useState<DealAiDialogData | null>(null)
 
   // Vistas guardadas (filtrado en cliente sobre oportunidades)
   const [viewFilters, setViewFilters] = useState<SavedViewFilter[]>([])
@@ -95,6 +99,26 @@ export function PipelineView() {
       loadPipeline()
     } catch {
       toast.error('Error al mover oportunidad')
+    }
+  }
+
+  // IA de cierre: pide la sugerencia para una tarjeta y abre el diálogo
+  const handleAiSuggest = async (opp: PipelineStage['opportunities'][number]) => {
+    if (aiLoadingId) return
+    setAiLoadingId(opp.id)
+    try {
+      const result = await api.getDealAiSuggestion(opp.id) as { suggestion: DealAiDialogData['suggestion'] }
+      setAiDialogData({
+        oppId: opp.id,
+        oppTitle: opp.title,
+        clientName: opp.client.name,
+        currentProbability: opp.probability,
+        suggestion: result.suggestion,
+      })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo obtener la sugerencia de IA')
+    } finally {
+      setAiLoadingId(null)
     }
   }
 
@@ -269,7 +293,20 @@ export function PipelineView() {
                             <p className="text-xs text-slate-500 mb-2">{opp.client.name}</p>
                             <div className="flex items-center justify-between">
                               <span className="text-sm font-semibold text-emerald-600">{formatCurrency(opp.estimatedValue)}</span>
-                              <span className="text-xs text-slate-400">{opp.probability}%</span>
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-slate-400">{opp.probability}%</span>
+                                <button
+                                  type="button"
+                                  title="Sugerencia IA de cierre"
+                                  aria-label="Sugerencia IA de cierre"
+                                  disabled={aiLoadingId === opp.id}
+                                  onClick={(e) => { e.stopPropagation(); handleAiSuggest(opp) }}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  className="p-1 rounded-md text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                                >
+                                  {aiLoadingId === opp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
                             </div>
                             {opp.nextAction && (
                               <p className="text-xs text-slate-400 mt-2 truncate">📌 {opp.nextAction}</p>
@@ -301,6 +338,14 @@ export function PipelineView() {
       <OpportunityFormDialog
         open={showForm}
         onClose={() => { setShowForm(false); loadPipeline() }}
+      />
+
+      {/* IA de cierre (Fase 4) */}
+      <DealAiDialog
+        open={!!aiDialogData}
+        data={aiDialogData}
+        onClose={() => setAiDialogData(null)}
+        onApplied={loadPipeline}
       />
     </div>
   )

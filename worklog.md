@@ -520,3 +520,22 @@ Stage Summary:
 - npm audit: 8 → 7 vulnerabilidades; las 2 falsas advisories de sharp/libvips/libheif eliminadas del reporte al sincronizar el lockfile (el árbol real ya estaba en 0.35.4 desde Task 17-a; ahora el reporte también refleja la verdad).
 - Restantes 7 (js-yaml/prismjs/uuid + padres): requieren majors breaking de @mdxeditor/editor o react-syntax-highlighter o downgrade de exceljs → quedan como decisión de producto (documentado en Task 17-a).
 - Sin push, sin cambios en src/ fuera de theme-toggle.tsx, sin tocar dependencias ni bun.lock ni node_modules.
+---
+Task ID: 18
+Agent: main (Super Z)
+Task: Continuación de pendientes con Stripe aplazado por el usuario: IA de cierre (Fase 4) — sugerencias de IA en el pipeline de oportunidades.
+
+Work Log:
+- Contexto: 18-a (subagente) cerró theme-toggle (useSyncExternalStore, lint repo 0 problemas) y sync de package-lock.json (audit 8→7; las 7 restantes requieren majors breaking de deps UI, fuera de alcance). Stripe aplazado explícitamente por el usuario.
+- Schema: Settings.dealAiEnabled Boolean @default(true) (patrón autoAssignLeads) + npx prisma db push (BD dev db/custom.db, cliente regenerado).
+- src/lib/deal-ai.ts: DEAL_SYSTEM_PROMPT en español con JSON estricto (probability/nextBestAction/suggestedMessage/reasoning); buildDealContext (serializa opp+etapa en %+cliente+temperature+cotizaciones+timeline 8 eventos + envelope notes); buildDealMessages (system+user, inyecta nicho y knowledge como system extra); parseDealSuggestion fail-closed (extractJson real, clamp 0-100, fracción 0.85→85, redondeo, strings recortados, HttpError 502 si no hay probabilidad válida o ni acción ni mensaje); suggestDealClose (settings→403 si disabled, opp por org→404, llmChat jsonMode temperature 0.3, error de proveedor→503 con mensaje claro de ai.ts).
+- Endpoint POST /api/opportunities/[id]/ai-suggest (requireAuth + handle + json, solo lectura: NO muta la opp; aplicar es vía PUT existente).
+- Settings route: GET expone dealAi.enabled; PUT (admin) acepta { dealAi: { enabled } } y lo devuelve en la respuesta.
+- api.ts: getDealAiSuggestion(id) (POST). UI: deal-ai-dialog.tsx nuevo (probabilidad sugerida vs actual con delta, acción, mensaje copiable, razonamiento; botones Aplicar → api.updateOpportunity({probability, nextAction}) + Copiar; toasts sonner, Loader2) y pipeline-view.tsx: botón ✨ (Sparkles) por tarjeta junto al %, spinner por-card, stopPropagation para no romper el drag & drop; diálogo montado al fondo con onApplied=loadPipeline.
+- Tests: unit deal-ai (13: contexto, mensajes, parser con fences/fracciones/clamp/string numérico/502 x3) + integración deal-ai (6: 401, 404 cross-tenant, 200 happy con llmChat mockeado vía vi.mock parcial de @/lib/ai (extractJson real) verificando jsonMode+orgId+contexto con cotización, 502, 503, 403 toggle). Semilla propia: stage-ai-a, opp-ai-a (org-a con quote+timeline), opp-ai-b (org-b).
+- Verificación: npm test 136/136 (16 archivos), npx tsc --noEmit 0 errores, eslint 0 problemas en los 8 archivos tocados, npm run build OK.
+- Fix durante tests: 1 aserción mía equivocada (buscaba el number de la cotización en el prompt; el contexto lleva status/total/moneda por diseño) — corregida la aserción, sin cambios en src/.
+
+Stage Summary:
+- IA de cierre COMPLETA y verificada: lib + endpoint + toggle por org + UI en pipeline kanban + 19 tests nuevos (136/136). Primera iteración de IA generativa que expone el LLM al pipeline (anteriores: chat /api/chat y sugerencias deterministas /api/suggestions).
+- Fase 4 restante: Stripe (aplaazado por el usuario, requiere cuenta y claves), cache offline del SW (opcional). En manos del usuario: token GitHub con scopes repo+workflow para push de github-main (desactualizada: sin Tasks 16-18), re-guardar credenciales SMTP/Telegram.

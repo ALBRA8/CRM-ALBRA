@@ -69,6 +69,10 @@ export async function GET(req: NextRequest) {
         // Fase 2: round-robin automático de leads entrantes
         autoAssign: settings?.autoAssignLeads ?? true,
       },
+      dealAi: {
+        // Fase 4: IA de cierre (sugerencias en pipeline)
+        enabled: settings?.dealAiEnabled ?? true,
+      },
       system: {
         usingZaiSdk: !apiKey,
         provider: apiKey ? settings?.llmProvider || 'custom' : 'SDK Z-AI',
@@ -88,6 +92,9 @@ interface SettingsBody {
   leadRouting?: {
     autoAssign?: boolean
   }
+  dealAi?: {
+    enabled?: boolean
+  }
 }
 
 export async function PUT(req: NextRequest) {
@@ -100,6 +107,9 @@ export async function PUT(req: NextRequest) {
     const data: Record<string, unknown> = {}
     if (body.leadRouting && typeof body.leadRouting.autoAssign === 'boolean') {
       data.autoAssignLeads = body.leadRouting.autoAssign
+    }
+    if (body.dealAi && typeof body.dealAi.enabled === 'boolean') {
+      data.dealAiEnabled = body.dealAi.enabled
     }
     if (body.llm) {
       const { apiKey, baseUrl, model, provider } = body.llm
@@ -131,7 +141,7 @@ export async function PUT(req: NextRequest) {
       details: { fields: Object.keys(data).map((f) => (f === 'llmApiKeyEnc' ? 'llmApiKey(encrypted)' : f)) },
     })
 
-    return json({ success: true, llm: { apiKeyConfigured: !!decryptSecret(settings.llmApiKeyEnc), baseUrl: settings.llmBaseUrl || '', model: settings.llmModel || '' }, leadRouting: { autoAssign: settings.autoAssignLeads } })
+    return json({ success: true, llm: { apiKeyConfigured: !!decryptSecret(settings.llmApiKeyEnc), baseUrl: settings.llmBaseUrl || '', model: settings.llmModel || '' }, leadRouting: { autoAssign: settings.autoAssignLeads }, dealAi: { enabled: settings.dealAiEnabled } })
   })
 }
 

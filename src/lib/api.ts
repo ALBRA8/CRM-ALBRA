@@ -102,6 +102,11 @@ class ApiClient {
     return this.request(`/opportunities/${id}`, { method: 'PUT', body: JSON.stringify(data) })
   }
 
+  // IA de cierre (Fase 4): sugerencia para una oportunidad del pipeline
+  async getDealAiSuggestion(id: string) {
+    return this.request(`/opportunities/${id}/ai-suggest`, { method: 'POST' })
+  }
+
   // Pipeline
   async getPipeline() {
     return this.request('/pipeline')
