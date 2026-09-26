@@ -2166,7 +2166,7 @@ export function SettingsPage() {
                       <Button
                         onClick={async () => {
                           try {
-                            const token = localStorage.getItem('crm_token')
+                            const token = api.getToken()
                             const res = await fetch('/api/backup', {
                               headers: token ? { Authorization: `Bearer ${token}` } : {},
                             })
@@ -2218,7 +2218,7 @@ export function SettingsPage() {
                             try {
                               const text = await file.text()
                               const backup = JSON.parse(text)
-                              const token = localStorage.getItem('crm_token')
+                              const token = api.getToken()
                               const res = await fetch('/api/backup', {
                                 method: 'POST',
                                 headers: {

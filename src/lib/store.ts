@@ -51,8 +51,27 @@ export const useAppStore = create<AppState>()(
       setSelectedQuoteId: (id) => set({ selectedQuoteId: id }),
       isAdmin: false,
       setIsAdmin: (v) => set({ isAdmin: v }),
-      logout: () => set({ user: null, token: null, view: 'landing', isAdmin: false }),
+      logout: () => {
+        // Borra también la cookie httpOnly en el servidor (fire-and-forget):
+        // si el fetch falla (offline), el estado local se limpia igual.
+        try {
+          void fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+        } catch {
+          // noop en SSR
+        }
+        set({ user: null, token: null, view: 'landing', isAdmin: false })
+      },
     }),
-    { name: 'crm-albra-store' }
+    {
+      name: 'crm-albra-store',
+      // El token NO se persiste (superficie XSS): la sesión tras F5 la
+      // mantiene la cookie httpOnly; el token en memoria solo vive en la pestaña.
+      partialize: (state) => {
+        const snapshot = state as unknown as Record<string, unknown>
+        const { token: _omit, ...rest } = snapshot
+        void _omit
+        return rest
+      },
+    }
   )
 )

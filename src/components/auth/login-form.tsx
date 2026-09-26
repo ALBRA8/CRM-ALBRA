@@ -28,7 +28,8 @@ export function LoginForm() {
 
     try {
       const data = await api.login({ email, password })
-      localStorage.setItem('crm_token', data.token)
+      // La sesión persiste vía cookie httpOnly (seteada por el servidor);
+      // el token solo queda en memoria del store/ApiClient.
       setToken(data.token)
       setUser(data.user as { id: string; name: string; email: string; company?: string | null; phone?: string | null; role: string; avatar?: string | null })
       api.setToken(data.token)

@@ -90,9 +90,16 @@ export interface AuthContext {
   isAdmin: boolean
 }
 
+/** Cookie de sesión httpOnly (mitigación XSS: el JWT no necesita vivir en localStorage). */
+export const SESSION_COOKIE = 'albra_session'
+
 export function getAuth(req: NextRequest): AuthContext | null {
   const header = req.headers.get('authorization') || ''
+  // Prioridad: 1) Bearer (pestaña activa, evita conflictos multi-cuenta),
+  // 2) cookie httpOnly (persistencia tras F5 sin token en localStorage),
+  // 3) ?token= (descargas directas CSV/PDF/backup).
   let token = header.startsWith('Bearer ') ? header.slice(7) : null
+  if (!token) token = req.cookies.get(SESSION_COOKIE)?.value ?? null
   if (!token) {
     // endpoints de descarga (csv/backup/pdf) admiten ?token=
     const url = new URL(req.url)

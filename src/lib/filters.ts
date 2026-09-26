@@ -2,10 +2,12 @@
 
 /**
  * Helpers de filtrado en cliente + cliente HTTP para Vistas Guardadas.
- * Replica las convenciones de src/lib/api.ts (Authorization Bearer con el
- * token de localStorage 'crm_token', errores como { error }).
+ * Replica las convenciones de src/lib/api.ts (Bearer con el token en memoria
+ * + cookie httpOnly como respaldo, errores como { error }).
  * Task 2-c — Feature B (Vistas guardadas estilo Twenty CRM).
  */
+
+import { api } from '@/lib/api'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -217,7 +219,7 @@ export function parseViewFilters(json: string | null | undefined): SavedViewFilt
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('crm_token')
+    const token = api.getToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
   }
   return headers

@@ -30,6 +30,8 @@ export const tokenB = (): string => tokenFor(FIX.userB) // member de org-b
 export interface RequestOpts {
   method?: string
   token?: string
+  /** Cookie cruda para probar el modo de auth httpOnly (sin header Bearer). */
+  cookie?: string
   body?: unknown
 }
 
@@ -37,6 +39,7 @@ export interface RequestOpts {
 export function req(pathWithQuery: string, opts: RequestOpts = {}): NextRequest {
   const headers = new Headers()
   if (opts.token) headers.set('authorization', `Bearer ${opts.token}`)
+  if (opts.cookie) headers.set('cookie', opts.cookie)
   if (opts.body !== undefined) headers.set('content-type', 'application/json')
   return new NextRequest(BASE_URL + pathWithQuery, {
     method: opts.method ?? 'GET',

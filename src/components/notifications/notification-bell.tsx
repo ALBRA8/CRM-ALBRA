@@ -114,7 +114,10 @@ export function NotificationBell() {
     try {
       await fetch(`/api/notifications/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${useAppStore.getState().token}` },
+        // Token en memoria si existe; si no (tras F5), la cookie httpOnly autentica.
+        headers: useAppStore.getState().token
+          ? { 'Authorization': `Bearer ${useAppStore.getState().token}` }
+          : {},
       })
       setNotifications(prev => prev.filter(n => n.id !== id))
       toast.success('Notificación eliminada')

@@ -3,7 +3,7 @@
 /**
  * Timeline unificado del cliente (estilo Twenty CRM) — Feature A, Task 2-c.
  * Consume GET /api/timeline?clientId=<id>&limit=50 con fetch directo
- * (misma convención de auth que src/lib/api.ts: Bearer localStorage 'crm_token').
+ * (misma convención de auth que src/lib/api.ts: Bearer en memoria + cookie httpOnly).
  * Incluye input rápido "Añadir nota" vía api.addClientHistory.
  */
 
@@ -140,7 +140,7 @@ export function ClientTimeline({ clientId }: ClientTimelineProps) {
       setLoading(true)
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (typeof window !== 'undefined') {
-        const token = localStorage.getItem('crm_token')
+        const token = api.getToken()
         if (token) headers['Authorization'] = `Bearer ${token}`
       }
       const res = await fetch(`/api/timeline?clientId=${encodeURIComponent(clientId)}&limit=50`, { headers })

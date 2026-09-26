@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { verifyPassword, signToken, HttpError } from '@/lib/auth'
-import { handle, json, readBody, requireFields, str } from '../../_lib/shared'
+import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
 /** POST /api/auth/login — verifica credenciales y devuelve { token, user }. */
@@ -24,9 +24,11 @@ export async function POST(req: NextRequest) {
     const token = signToken({ userId: user.id, orgId: user.organizationId, role: user.role, email: user.email })
     await auditAndTimeline({ orgId: user.organizationId, userId: user.id, action: 'login', entity: 'user', entityId: user.id, details: { name: user.name } })
 
-    return json({
+    // Cookie httpOnly además del token en el body (modo dual: la cookie
+    // persiste la sesión tras F5 sin exponer el JWT a JavaScript)
+    return jsonWithSession({
       token,
       user: { id: user.id, name: user.name, email: user.email, company: user.company, phone: user.phone, role: user.role, avatar: user.avatar },
-    })
+    }, token)
   })
 }

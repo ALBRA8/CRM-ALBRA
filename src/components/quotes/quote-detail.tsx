@@ -125,7 +125,7 @@ export function QuoteDetail() {
     if (!quote) return
     setDownloadingPdf(true)
     try {
-      const token = localStorage.getItem('crm_token')
+      const token = api.getToken()
       const res = await fetch(`/api/quotes/pdf?id=${quote.id}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })

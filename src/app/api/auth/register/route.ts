@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { randomBytes } from 'crypto'
 import { db } from '@/lib/db'
 import { hashPassword, signToken, slugify, HttpError } from '@/lib/auth'
-import { handle, json, readBody, requireFields, str } from '../../_lib/shared'
+import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { createStandardPipeline, createOrgSettings } from '../../_lib/demo-seed'
 
 /** POST /api/auth/register — crea Organization + User owner + semillas básicas. */
@@ -50,9 +50,9 @@ export async function POST(req: NextRequest) {
     await createOrgSettings(org.id)
 
     const token = signToken({ userId: user.id, orgId: org.id, role: user.role, email: user.email })
-    return json({
+    return jsonWithSession({
       token,
       user: { id: user.id, name: user.name, email: user.email, company: user.company, phone: user.phone, role: user.role, avatar: user.avatar },
-    })
+    }, token)
   })
 }

@@ -54,7 +54,7 @@ export function RegisterForm() {
         company: form.company || undefined,
         phone: form.phone || undefined,
       })
-      localStorage.setItem('crm_token', data.token)
+      // La sesión persiste vía cookie httpOnly (seteada por el servidor)
       setToken(data.token)
       setUser(data.user as { id: string; name: string; email: string; company?: string | null; phone?: string | null; role: string; avatar?: string | null })
       api.setToken(data.token)

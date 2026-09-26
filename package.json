@@ -12,7 +12,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "wa:daemon": "node src/whatsapp-daemon/daemon.mjs"
+    "wa:daemon": "node src/whatsapp-daemon/daemon.mjs",
+    "predev": "node scripts/ensure-env.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

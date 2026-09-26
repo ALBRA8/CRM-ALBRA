@@ -1,4 +1,6 @@
 import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
+import { SESSION_COOKIE } from '@/lib/auth'
 
 /**
  * Helpers compartidos para las rutas API del backend core (Task 2-a).
@@ -85,10 +87,29 @@ export function normalizeTxType(v: unknown, fallback = 'ingreso'): string {
 // ---------- Compat: helpers de respuesta y validación ----------
 // (añadidos durante la integración — reexportan la convención estándar del proyecto)
 
-import { NextResponse } from 'next/server'
-
 export function json(data: unknown, init?: ResponseInit) {
   return NextResponse.json(data, init)
+}
+
+/**
+ * Respuesta JSON que además fija la cookie de sesión httpOnly (cierre Fase 1
+ * del plan de endurecimiento): SameSite=Lax mitiga CSRF, Secure en producción
+ * y 7 días de vida = TTL del JWT (signToken). El Bearer en memoria sigue
+ * siendo válido (modo dual), pero tras F5 la cookie autentica sin exponer el
+ * token a JavaScript (mitiga robo de sesión por XSS).
+ */
+export function jsonWithSession(data: unknown, token: string): NextResponse {
+  const res = NextResponse.json(data)
+  res.cookies.set({
+    name: SESSION_COOKIE,
+    value: token,
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60,
+  })
+  return res
 }
 
 export async function handle(fn: () => Promise<Response>): Promise<Response> {

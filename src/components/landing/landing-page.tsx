@@ -42,7 +42,6 @@ function DemoStartButton() {
       const token = data.token
       setToken(token)
       api.setToken(token)
-      localStorage.setItem('crm_token', token)
       setUser(data.user)
       setView('dashboard')
     } catch (error) {

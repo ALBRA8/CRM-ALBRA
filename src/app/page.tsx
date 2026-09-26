@@ -32,30 +32,33 @@ function useAuthInit() {
     if (initialized.current) return
     initialized.current = true
 
-    const savedToken = localStorage.getItem('crm_token')
-    if (savedToken) {
-      setToken(savedToken)
-      api.setToken(savedToken)
-      api.getMe()
-        .then((data) => {
-          setUser(data.user as { id: string; name: string; email: string; company?: string | null; phone?: string | null; role: string; avatar?: string | null })
-          setView('dashboard')
-          setInitializing(false)
-        })
-        .catch(() => {
-          localStorage.removeItem('crm_token')
-          setToken(null)
-          setUser(null)
-          setView('landing')
-          setInitializing(false)
-        })
-    } else {
-      // Use Promise.resolve to avoid synchronous setState in effect
-      Promise.resolve().then(() => {
+    // Legado: versiones anteriores guardaban el JWT en localStorage
+    // ('crm_token', superficie XSS). Se migra: se elimina del storage y el
+    // token solo vive en memoria; la persistencia de sesión es la cookie
+    // httpOnly que setea el servidor en login/register/demo.
+    if (typeof window !== 'undefined') {
+      const legacyToken = localStorage.getItem('crm_token')
+      if (legacyToken) {
+        localStorage.removeItem('crm_token')
+        setToken(legacyToken)
+        api.setToken(legacyToken)
+      }
+    }
+
+    // Con token en memoria (legado o login reciente) se manda Bearer; si no,
+    // getMe autentica vía cookie httpOnly. Si ninguna vale → landing.
+    api.getMe()
+      .then((data) => {
+        setUser(data.user as { id: string; name: string; email: string; company?: string | null; phone?: string | null; role: string; avatar?: string | null })
+        setView('dashboard')
+        setInitializing(false)
+      })
+      .catch(() => {
+        setToken(null)
+        setUser(null)
         setView('landing')
         setInitializing(false)
       })
-    }
   }, [setToken, setUser, setView])
 
   useEffect(() => {
