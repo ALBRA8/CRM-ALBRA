@@ -435,3 +435,14 @@ Stage Summary:
 - Fase 2 COMPLETA: RBAC granular aplicado servidor+UI, round-robin de leads en 4 canales con toggle, SPA→App Router con deep-links reales y URLs sincronizadas.
 - LIMITACIÓN DE ENTORNO: el dev server vivo arrancó antes de prisma generate → su cliente Prisma en memoria no conoce los 3 campos nuevos (settings PUT con autoAssignLeads → 500; round-robin no-op silencioso con assignedToId null; leadCount sin pintar). Código correcto (tests/tsc/build verdes contra cliente fresco). Se resuelve SOLO al reiniciar la sesión (boot re-ejecuta prisma generate/db push); NO se reinició desde aquí porque ningún proceso sobrevive entre llamadas del sandbox (verificado empíricamente) y matar el server dejaría el preview muerto.
 - Verificación de persistencia real del toggle/round-robin pendiente de repetir tras el reinicio de sesión.
+---
+Task ID: 15 (post: estado del preview)
+Agent: main (Super Z)
+Work Log:
+- Tras el build de producción (npm run build, verificado OK dos veces), el dev server del sandbox MURIÓ (next dev + next-server desaparecen del ps; puerto 3000 sin listener). Causa probable: next build pisa el .next compartido con el dev en ejecución (o OOM: next-server estaba en ~1.9GB RSS + build worker). 
+- NO se puede revivir desde la sesión: verificado empíricamente que ningún proceso detached sobrevive entre llamadas del sandbox (setsid+nohup muere al cortar la llamada). El preview vuelve al REINICIAR LA SESIÓN (boot re-ejecuta .zscripts/dev.sh: bun install + db push + dev con cliente Prisma fresco).
+- El reinicio resuelve AMBAS cosas: preview arriba + cliente Prisma nuevo (campos Fase 2 operativos en vivo: toggle round-robin persistente, asignación automática, contadores).
+- Push a GitHub PENDIENTE: el sandbox no tiene credenciales ('could not read Username'); el commit huérfano github-main (922f5fc, sin .github, sin secretos, verificado) queda listo para `git push -f origin github-main:main` cuando el usuario provea token nuevo (idealmente con scope workflow para publicar ci.yml y abandonar la rama huérfana).
+
+Stage Summary:
+- Fase 2 completa y verificada (100/100 tests, tsc, build, E2E navegador). Preview requiere reinicio de sesión; GitHub requiere token nuevo del usuario.
