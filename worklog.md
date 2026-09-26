@@ -676,3 +676,24 @@ Stage Summary:
 - Nueva Oportunidad ahora tiene buscador real de clientes: nombre, teléfono, cédula/DNI o correo, con tolerancia a tildes y formato; escala a orgs grandes con fallback server-side. La API /clients también busca por cédula para toda la app (lista de clientes incluida).
 - Bug latente cerrado de paso: el formulario cargaba solo 100 clientes.
 - Otros selects de clientes en la app (si los hay) pueden migrar al mismo ClientCombobox cuando toque.
+
+---
+Task ID: 23
+Agent: main (Super Z)
+Task: Verificación integral de la Task 22 (combobox buscador de clientes) tras reinicio del sandbox.
+
+Work Log:
+- git status mostraba ~57 archivos "modificados": eran solo cambios de permisos (644→755), cero contenido. Neutralizado con `git config core.fileMode false`.
+- `npx tsc --noEmit` → 0 errores. `npm test` → 172/172 (21 archivos), incluye los nuevos unit (client-search) e integración (clients-search).
+- Daemon WhatsApp relanzado en :3002 (sandbox lo mata entre sesiones); responde /status con auth INTERNAL_API_SECRET (ojo: el valor de .env va entre comillas).
+- E2E con agent-browser: entrada por INICIAR DEMO → Pipeline → Nueva Oportunidad. Combobox verificado:
+  - búsqueda por teléfono "311" (solo dígitos) → Carlos Rodríguez
+  - por nombre sin tildes "maria gonza" → María González
+  - por correo "ferreteriaelpr" → Pedro Gómez
+  - estado vacío: "Sin resultados para ..." correcto
+  - selección + creación real de oportunidad "Venta de asesoría contable" con cliente Carlos Rodríguez confirmada en DB.
+- Captura: download/combobox-buscador-clientes.png
+
+Stage Summary:
+- Task 22 (buscador de clientes) verificada de punta a punta: Fase 4 queda 100% completa (Stripe aplazado por decisión del usuario).
+- Commits existentes: 369a533 (feature) + dcee6e6 (worklog). Nada nuevo que commitear.
