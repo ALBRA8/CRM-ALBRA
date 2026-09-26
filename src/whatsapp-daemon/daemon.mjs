@@ -56,6 +56,9 @@ let qrCodeText = null // raw QR string
 let connectedPhone = null
 let lastConnectionUpdate = null
 let linkedOrgId = null // organización dueña de esta sesión de WhatsApp (multi-tenant)
+let lastError = null // último error de conexión, visible en /status y en la UI
+let connectInFlight = false // evita bucles de conexión duplicados
+let connectRetries = 0 // reintento con backoff (se resetea al abrir sesión)
 
 // ============ Database Helper ============
 // better-sqlite3 directo para evitar overhead de Prisma en el daemon
@@ -210,24 +213,54 @@ async function transcribeViaApi(audioBuffer) {
   return (data.text || '').trim() || null
 }
 
+/**
+ * Reintento de conexión con backoff: 3s, 6s, 9s... hasta 30s.
+ * ANTES: si connectToWhatsApp() lanzaba (sin red / versión inaccesible / auth
+ * corrupta), la promesa quedaba como unhandledRejection y el status quedaba
+ * pegado en 'connecting' para siempre — el usuario veía "Generando QR..."
+ * eternamente y ningún QR llegaba nunca.
+ */
+function scheduleReconnect(reason) {
+  connectRetries++
+  const delay = Math.min(3000 * connectRetries, 30000)
+  if (reason) {
+    lastError = reason
+    console.warn(`[WA] ${reason}`)
+  }
+  console.log(`[WA] Reintento de conexión en ${delay / 1000}s (intento ${connectRetries})...`)
+  setTimeout(() => {
+    connectToWhatsApp().catch(err => console.error('[WA] Error en reintento:', err?.message || err))
+  }, delay)
+}
+
 // ============ WhatsApp Connection ============
 async function connectToWhatsApp() {
+  if (connectInFlight) return
+  connectInFlight = true
   connectionStatus = 'connecting'
   lastConnectionUpdate = new Date().toISOString()
 
-  const { version } = await fetchLatestBaileysVersion()
-  console.log(`[WA] Using Baileys version: ${version.join('.')}`)
-
+  try {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR) // eslint-disable-line react-hooks/rules-of-hooks
+
+  // Versión de WhatsApp Web: si no se puede consultar (sin salida a internet
+  // momentánea), Baileys sigue con su versión embebida en vez de morir aquí.
+  let version = null
+  try {
+    const fetched = await fetchLatestBaileysVersion()
+    version = fetched.version
+    console.log(`[WA] Using Baileys version: ${version.join('.')}`)
+  } catch (err) {
+    console.warn('[WA] No se pudo consultar la versión de WhatsApp Web; se usa la versión embebida de Baileys:', err?.message || err)
+  }
 
   // Logger silencioso (Baileys es muy verboso)
   const silentLogger = { level: 'silent', fatal: () => {}, error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {} }
   silentLogger.child = () => silentLogger
 
   sock = makeWASocket({
-    version,
+    ...(version ? { version } : {}),
     auth: state,
-    printQRInTerminal: true,
     logger: silentLogger,
     browser: ['CRM ALBRA', 'Chrome', '1.0.0'],
     connectTimeoutMs: 60000,
@@ -267,6 +300,8 @@ async function connectToWhatsApp() {
         qrCodeData = null
         qrCodeText = null
         connectedPhone = null
+        lastError = null
+        connectRetries = 0
         try {
           fs.rmSync(AUTH_DIR, { recursive: true, force: true })
         } catch {}
@@ -275,13 +310,14 @@ async function connectToWhatsApp() {
       }
 
       if (shouldReconnect) {
-        console.log('[WA] Reconnecting in 3 seconds...')
-        setTimeout(() => connectToWhatsApp(), 3000)
+        scheduleReconnect(`Conexión cerrada (código ${statusCode ?? 'desconocido'}). Reintentando automáticamente.`)
       }
     } else if (connection === 'open') {
       connectionStatus = 'connected'
       qrCodeData = null
       qrCodeText = null
+      lastError = null
+      connectRetries = 0
       console.log('[WA] Connected successfully!')
 
       try {
@@ -296,6 +332,8 @@ async function connectToWhatsApp() {
 
   sock.ev.on('creds.update', saveCreds)
 
+  // Registro de mensajes entrantes (dentro del try: si algo falla antes de
+  // llegar aquí, el catch cierra limpio y agenda reintento).
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
@@ -375,6 +413,16 @@ async function connectToWhatsApp() {
       }
     }
   })
+
+  connectRetries = 0
+  } catch (err) {
+    // Falta de red, auth corrupta, etc.: NUNCA dejar el status en 'connecting'.
+    connectionStatus = 'disconnected'
+    sock = null
+    scheduleReconnect(`No se pudo iniciar la conexión con WhatsApp: ${err?.message || err}`)
+  } finally {
+    connectInFlight = false
+  }
 }
 
 // ============ Agent Auto-Reply ============
@@ -474,7 +522,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && path === '/status') {
-      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate, orgLinked: !!linkedOrgId })
+      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate, orgLinked: !!linkedOrgId, lastError })
       return
     }
 
@@ -515,8 +563,13 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && path === '/disconnect') {
+      // logout() lanza si el socket no llegó a abrirse (waiting_qr/connecting):
+      // la limpieza SIEMPRE procede, venga o no el logout.
       if (sock) {
-        await sock.logout()
+        try { await sock.logout() } catch (err) {
+          console.warn('[WA] logout falló (se limpia igualmente):', err?.message || err)
+          try { sock.end() } catch {}
+        }
         sock = null
       }
       connectionStatus = 'disconnected'
@@ -524,6 +577,8 @@ const server = createServer(async (req, res) => {
       qrCodeText = null
       connectedPhone = null
       linkedOrgId = null
+      lastError = null
+      connectRetries = 0
       try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) } catch {}
       jsonResponse(res, { status: 'disconnected', message: 'WhatsApp desconectado' })
       return

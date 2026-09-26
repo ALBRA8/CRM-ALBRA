@@ -439,7 +439,7 @@ class ApiClient {
     return this.request('/settings')
   }
 
-  async updateSettings(data: { llm?: { apiKey?: string; baseUrl?: string; model?: string }; leadRouting?: { autoAssign?: boolean } }) {
+  async updateSettings(data: { llm?: { apiKey?: string; baseUrl?: string; model?: string }; leadRouting?: { autoAssign?: boolean }; dealAi?: { enabled?: boolean } }) {
     return this.request('/settings', { method: 'PUT', body: JSON.stringify(data) })
   }
 

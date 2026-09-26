@@ -115,12 +115,16 @@ interface SettingsData {
   leadRouting?: {
     autoAssign: boolean
   }
+  dealAi?: {
+    enabled: boolean
+  }
 }
 
 interface WaStatus {
   status: string // disconnected, connecting, waiting_qr, connected
   phone: string | null
   lastUpdate: string | null
+  lastError?: string | null
 }
 
 interface WaQrData {
@@ -178,11 +182,21 @@ export function SettingsPage() {
   const [autoAssignLeads, setAutoAssignLeads] = useState(true)
   const [savingLeadRouting, setSavingLeadRouting] = useState(false)
 
+  // Fase 4: IA de cierre (sugerencias en el pipeline)
+  const [dealAiEnabled, setDealAiEnabled] = useState(true)
+  const [savingDealAi, setSavingDealAi] = useState(false)
+
   // WhatsApp state
   const [waStatus, setWaStatus] = useState<WaStatus>({ status: 'disconnected', phone: null, lastUpdate: null })
   const [waQr, setWaQr] = useState<WaQrData>({ status: 'disconnected', qr: null })
   const [waLoading, setWaLoading] = useState(false)
   const [waPolling, setWaPolling] = useState(false)
+  // Intento de conexión en curso: mantiene el polling aunque el status sea
+  // 'disconnected' (daemon arrancando tarde, QR generándose, etc.). ANTES el
+  // polling solo corría con waiting_qr/connecting y si el daemon no respondía
+  // al primer intento la UI se quedaba quieta para siempre: "no genera el QR".
+  const [waConnectAttempted, setWaConnectAttempted] = useState(false)
+  const [waLastError, setWaLastError] = useState<string | null>(null)
 
   // Nicho / Negocio state
   const [nichoBrand, setNichoBrand] = useState('')
@@ -244,10 +258,16 @@ export function SettingsPage() {
     loadTeam()
   }, [])
 
-  // Auto-poll QR when waiting
+  // Auto-poll QR mientras haya algo que esperar: waiting_qr/connecting, o un
+  // intento de conexión activo aunque siga 'disconnected' (el daemon puede
+  // tardar en generar el QR o estar reintentando con backoff).
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
-    if (waStatus.status === 'waiting_qr' || waStatus.status === 'connecting') {
+    const shouldPoll =
+      waStatus.status === 'waiting_qr' ||
+      waStatus.status === 'connecting' ||
+      (waConnectAttempted && waStatus.status !== 'connected')
+    if (shouldPoll) {
       interval = setInterval(() => {
         loadWaQr()
         loadWaStatus()
@@ -257,7 +277,7 @@ export function SettingsPage() {
       setWaPolling(false)
     }
     return () => { if (interval) clearInterval(interval) }
-  }, [waStatus.status])
+  }, [waStatus.status, waConnectAttempted])
 
   const loadSettings = async () => {
     try {
@@ -267,6 +287,7 @@ export function SettingsPage() {
       setBaseUrl(data.llm.baseUrl)
       setModel(data.llm.model)
       setAutoAssignLeads(data.leadRouting?.autoAssign ?? true)
+      setDealAiEnabled(data.dealAi?.enabled ?? true)
 
       const provider = PROVIDERS.find(p => p.baseUrl === data.llm.baseUrl)
       setSelectedProvider(provider?.id ?? 'custom')
@@ -284,6 +305,17 @@ export function SettingsPage() {
       const res = await fetch(`${DAEMON_PROXY}?path=/status`, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)
       const data = await res.json() as WaStatus
       setWaStatus(data)
+      setWaLastError(data.lastError ?? null)
+      if (data.status === 'connected') {
+        setWaConnectAttempted(false)
+      }
+      // El daemon puede volver a waiting_qr por sí solo (sesión restaurada del
+      // disco, QR expirado y reintentado con backoff). Sin intento del usuario
+      // el polling no corre, así que al detectar el estado hacemos UN fetch del
+      // QR para mostrarlo sin exigir otro click.
+      if (data.status === 'waiting_qr') {
+        loadWaQr()
+      }
     } catch {
       setWaStatus({ status: 'disconnected', phone: null, lastUpdate: null })
     }
@@ -307,11 +339,23 @@ export function SettingsPage() {
     setWaLoading(true)
     try {
       const token = api.getToken()
-      await fetch(DAEMON_PROXY, {
+      const res = await fetch(DAEMON_PROXY, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ path: '/connect' }),
       })
+      // ANTES se ignoraba la respuesta: si el daemon estaba apagado, el proxy
+      // devuelve { success: false, note: 'Daemon de WhatsApp no disponible' } y
+      // la UI mostraba igualmente "Generando código QR..." (mentira) y ningún
+      // QR llegaba nunca. Ahora el error es explícito y accionable.
+      const data = await res.json().catch(() => null) as ({ success?: boolean; note?: string; error?: string; status?: string } | null)
+      if (!res.ok || (data && (data.success === false || data.note || data.error))) {
+        const reason = data?.note || data?.error || `Error ${res.status}`
+        toast.error(`No se pudo iniciar la conexión: ${reason}`)
+        return
+      }
+      setWaConnectAttempted(true)
+      setWaLastError(null)
       // Wait a moment then start polling
       await new Promise(r => setTimeout(r, 2000))
       await loadWaStatus()
@@ -335,6 +379,8 @@ export function SettingsPage() {
       })
       setWaStatus({ status: 'disconnected', phone: null, lastUpdate: null })
       setWaQr({ status: 'disconnected', qr: null })
+      setWaConnectAttempted(false)
+      setWaLastError(null)
       toast.success('WhatsApp desconectado')
     } catch {
       toast.error('Error al desconectar')
@@ -649,6 +695,26 @@ export function SettingsPage() {
       toast.error('No se pudo guardar la preferencia')
     } finally {
       setSavingLeadRouting(false)
+    }
+  }
+
+  /** Fase 4: activa/desactiva las sugerencias de IA de cierre en el pipeline. */
+  const handleToggleDealAi = async (value: boolean) => {
+    const previous = dealAiEnabled
+    setDealAiEnabled(value)
+    setSavingDealAi(true)
+    try {
+      await api.updateSettings({ dealAi: { enabled: value } })
+      toast.success(value ? 'IA de cierre activada' : 'IA de cierre desactivada', {
+        description: value
+          ? 'El botón IA del pipeline sugerirá probabilidad, acción y mensaje de cierre.'
+          : 'Las sugerencias de IA en el pipeline quedarán desactivadas para la organización.',
+      })
+    } catch {
+      setDealAiEnabled(previous)
+      toast.error('No se pudo guardar la preferencia')
+    } finally {
+      setSavingDealAi(false)
     }
   }
 
@@ -1102,6 +1168,9 @@ export function SettingsPage() {
                         <div className="py-10">
                           <Loader2 className="w-8 h-8 animate-spin text-emerald-600 mx-auto mb-3" />
                           <p className="text-sm text-slate-500">Generando código QR...</p>
+                          {waLastError && (
+                            <p className="text-xs text-amber-600 mt-3 max-w-xs mx-auto">{waLastError}</p>
+                          )}
                         </div>
                       )}
                       <div className="flex gap-2 justify-center">
@@ -1245,6 +1314,42 @@ export function SettingsPage() {
                     onCheckedChange={handleToggleAutoAssign}
                     disabled={savingLeadRouting}
                     aria-label="Activar distribución automática de leads"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Fase 4: IA de cierre (sugerencias en pipeline) */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.04 }}
+          >
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-4 flex-1">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-violet-100">
+                      <Sparkles className="w-6 h-6 text-violet-600" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-slate-900">IA de cierre</h3>
+                        <Badge variant="outline" className="border-violet-200 text-violet-700 bg-violet-50 text-[10px]">Pipeline</Badge>
+                      </div>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Habilita el botón IA en cada oportunidad del pipeline: analiza conversaciones,
+                        cotizaciones y actividad para sugerir probabilidad de cierre, siguiente mejor acción
+                        y un mensaje listo para enviar por WhatsApp, Telegram o Instagram.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={dealAiEnabled}
+                    onCheckedChange={handleToggleDealAi}
+                    disabled={savingDealAi}
+                    aria-label="Activar IA de cierre"
                   />
                 </div>
               </CardContent>
