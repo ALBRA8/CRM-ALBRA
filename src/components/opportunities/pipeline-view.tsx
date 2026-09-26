@@ -302,9 +302,10 @@ export function PipelineView() {
                                   disabled={aiLoadingId === opp.id}
                                   onClick={(e) => { e.stopPropagation(); handleAiSuggest(opp) }}
                                   onMouseDown={(e) => e.stopPropagation()}
-                                  className="p-1 rounded-md text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-wait"
                                 >
-                                  {aiLoadingId === opp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                  {aiLoadingId === opp.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                  IA
                                 </button>
                               </div>
                             </div>

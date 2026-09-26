@@ -539,3 +539,19 @@ Work Log:
 Stage Summary:
 - IA de cierre COMPLETA y verificada: lib + endpoint + toggle por org + UI en pipeline kanban + 19 tests nuevos (136/136). Primera iteración de IA generativa que expone el LLM al pipeline (anteriores: chat /api/chat y sugerencias deterministas /api/suggestions).
 - Fase 4 restante: Stripe (aplaazado por el usuario, requiere cuenta y claves), cache offline del SW (opcional). En manos del usuario: token GitHub con scopes repo+workflow para push de github-main (desactualizada: sin Tasks 16-18), re-guardar credenciales SMTP/Telegram.
+---
+Task ID: 18-post
+Agent: main (Super Z)
+Task: Verificación en vivo de la IA de cierre en el preview + fix de dos defectos detectados en browser E2E.
+
+Work Log:
+- Síntoma reportado por el usuario: "no veo el ícono ✨ en el pipeline". Diagnóstico con agent-browser (login demo → /pipeline): los botones SÍ estaban en el DOM (hot-reload sirvió el código nuevo), pero (1) el ícono era demasiado discreto (text-slate-300, 14px, junto al %) y (2) el primer click real devolvió POST /ai-suggest 500.
+- Causa raíz del 500 (dev.log, [api] PrismaClientValidationError): el dev server había arrancado (06:23) ANTES de que prisma db push regenerara el cliente con Settings.dealAiEnabled (06:48); el cliente Prisma en memoria no conoce el campo nuevo y Turbopack no recarga node_modules. Fix: reinicio del dev server (setsid nohup bun run dev). Lección: tras cualquier db push que añada campos, reiniciar el dev server.
+- Segundo defecto (descubribilidad): el botón icon-only se restyleó a píldora visible: border-emerald-200 bg-emerald-50 texto "IA" con Sparkles, junto al % de la tarjeta.
+- E2E confirmado con screenshots (download/pipeline-con-ia.png, ia-cierre-dialogo.png, pipeline-aplicado.png): píldora ✨IA visible en las 2 tarjetas demo; click → POST 200 → diálogo con 65% sugerido (↑ actual 20%), siguiente mejor acción, mensaje sugerido en español y razonamiento (fallback z-ai SDK, sin API key); "Aplicar sugerencia" → toast 'Sugerencia aplicada' → tarjeta actualizada a 65% con nueva acción 📌.
+- Nota sandbox: el dev server manual puede morir entre llamadas (murió 1 vez durante la verificación; relanzado). El preview estable para el usuario se logra reiniciando la sesión.
+- Verificación post-fix: eslint 0 (archivo), tsc 0 errores, npm test 136/136.
+
+Stage Summary:
+- IA de cierre verificada END-TO-END en vivo con LLM real (fallback SDK): sugerencia → diálogo → aplicar → tarjeta actualizada. Commits: b91716d (feature) + este fix de restyle.
+- Pendiente operativo documentado: si se añaden campos al schema Prisma, reiniciar el dev server tras el db push.
