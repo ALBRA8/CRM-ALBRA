@@ -1,0 +1,99 @@
+# ============================================================
+# CRM ALBRA — Despliegue con Docker Compose
+#
+#   app       → Next.js standalone (puerto público 3000)
+#   wa-daemon → daemon de WhatsApp/Baileys (puerto 3002 SOLO interno;
+#               la app lo consume vía /api/whatsapp/daemon-proxy con JWT)
+#
+# Volúmenes (persisten entre reinicios):
+#   db-data → /app/db  (base de datos SQLite: custom.db + WAL)
+#   wa-auth → /app/src/whatsapp-daemon/.wa-auth (sesión de WhatsApp)
+#
+# PRIMERA CONEXIÓN DE WHATSAPP (una sola vez):
+#   1) docker compose up -d --build
+#   2) Abre http://localhost:3000 → Configuración → WhatsApp → Conectar
+#   3) Escanea el QR desde el teléfono (WhatsApp → Dispositivos vinculados)
+#   4) La sesión queda guardada en el volumen wa-auth: al reiniciar NO hay
+#      que volver a escanear (solo si cierras sesión desde el teléfono o
+#      borras el volumen).
+#
+# SEGURIDAD:
+#   - .env se lee en el HOST (env_file) y NUNCA entra en la imagen.
+#   - INTERNAL_API_SECRET (>= 24 caracteres) se comparte entre ambos
+#     servicios desde el mismo .env: es la auth mutua app ↔ daemon.
+#   - No publiques el 3002: no tiene auth de red, solo la cabecera
+#     interna; la app ya lo expone de forma segura por el proxy JWT.
+# ============================================================
+
+name: crm-albra
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: crm-albra:latest
+    container_name: crm-albra-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # Rutas internas del despliegue: estas dos GANAN sobre lo que diga
+      # .env (environment > env_file en Compose).
+      #  · DATABASE_URL absoluto → el volumen /app/db (evita la resolución
+      #    relativa de SQLite, que depende del cwd del proceso).
+      #  · El daemon se alcanza por su nombre de servicio dentro de la
+      #    red de compose (el http://localhost:3002 de .env es para dev).
+      DATABASE_URL: file:/app/db/custom.db
+      WHATSAPP_DAEMON_URL: http://wa-daemon:3002
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      # Descomenta para NO aplicar el esquema en cada arranque:
+      # SKIP_DB_PUSH: "1"
+    volumes:
+      - db-data:/app/db
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  wa-daemon:
+    # Misma imagen que `app` (el entrypoint cambia de rol con `command`).
+    image: crm-albra:latest
+    container_name: crm-albra-wa-daemon
+    restart: unless-stopped
+    # Rol "daemon" del entrypoint: espera el esquema de la BD y arranca
+    # src/whatsapp-daemon/daemon.mjs (puerto 3002).
+    command: ["daemon"]
+    env_file:
+      - .env
+    environment:
+      # Misma BD que `app` (compartida por el volumen db-data)
+      DATABASE_URL: file:/app/db/custom.db
+      WHATSAPP_DAEMON_PORT: "3002"
+      # INTERNAL_API_SECRET llega desde .env vía env_file y DEBE ser el
+      # mismo valor que usa `app` (auth mutua). Sin él el daemon no arranca.
+    volumes:
+      - db-data:/app/db
+      - wa-auth:/app/src/whatsapp-daemon/.wa-auth
+    depends_on:
+      app:
+        # Arranca solo cuando `app` está sano: garantiza que `prisma db push`
+        # ya aplicó el esquema antes de que el daemon abra la BD.
+        condition: service_healthy
+    healthcheck:
+      # /status responde 401 sin secreto — un 401 también prueba que el
+      # daemon está vivo (solo contamos como caído un 5xx o sin respuesta).
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3002/status',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  db-data:
+  wa-auth:

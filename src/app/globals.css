@@ -1,0 +1,202 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.208 0.042 265.755);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.208 0.042 265.755);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.208 0.042 265.755);
+  --primary: oklch(0.596 0.145 163.225);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.596 0.145 163.225);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.596 0.145 163.225);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.596 0.145 163.225);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.696 0.17 162.48);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.696 0.17 162.48);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ============================================================
+   TEMA OSCURO — overrides de utilidades con colores crudos.
+   Los componentes de negocio usan bg-white/slate-* fijos; aquí
+   se remapean bajo `.dark` sin tocar el modo claro ni los
+   acentos (text-white sobre emerald se conserva).
+   ============================================================ */
+.dark {
+  color-scheme: dark;
+}
+
+/* --- Superficies --- */
+.dark .bg-white { background-color: #131c2e; }
+.dark .bg-white\/95 { background-color: rgba(19, 28, 46, 0.95); }
+.dark .bg-white\/80 { background-color: rgba(19, 28, 46, 0.82); }
+.dark .bg-white\/70 { background-color: rgba(19, 28, 46, 0.72); }
+.dark .bg-white\/60 { background-color: rgba(19, 28, 46, 0.62); }
+.dark .bg-gray-50, .dark .bg-slate-50 { background-color: #0d1524; }
+.dark .bg-gray-100, .dark .bg-slate-100 { background-color: #18233a; }
+.dark .bg-gray-200, .dark .bg-slate-200 { background-color: #223049; }
+.dark .hover\:bg-gray-50:hover, .dark .hover\:bg-slate-50:hover { background-color: #141f33; }
+.dark .hover\:bg-gray-100:hover, .dark .hover\:bg-slate-100:hover { background-color: #1d2a43; }
+.dark .hover\:bg-gray-200:hover, .dark .hover\:bg-slate-200:hover { background-color: #263450; }
+
+/* --- Textos --- */
+.dark .text-slate-800, .dark .text-slate-900, .dark .text-gray-800, .dark .text-gray-900 { color: #e8edf5; }
+.dark .text-slate-700, .dark .text-gray-700 { color: #c4cfdd; }
+.dark .text-slate-600, .dark .text-gray-600 { color: #aab8ca; }
+.dark .text-slate-500, .dark .text-gray-500 { color: #96a5ba; }
+.dark .text-slate-400, .dark .text-gray-400 { color: #8291a8; }
+
+/* --- Bordes y divisores --- */
+.dark .border-gray-100, .dark .border-slate-100 { border-color: #1b2740; }
+.dark .border-gray-200, .dark .border-slate-200 { border-color: #24314b; }
+.dark .border-gray-300, .dark .border-slate-300 { border-color: #2e3d59; }
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]), .dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #1b2740; }
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]), .dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: #24314b; }
+.dark .ring-gray-200, .dark .ring-slate-200 { --tw-ring-color: #24314b; }
+
+/* --- Estados semánticos: fondos suaves → translúcidos del matiz --- */
+.dark .bg-emerald-50, .dark .bg-green-50 { background-color: color-mix(in oklab, var(--color-emerald-500) 13%, transparent); }
+.dark .bg-emerald-100, .dark .bg-green-100 { background-color: color-mix(in oklab, var(--color-emerald-500) 20%, transparent); }
+.dark .bg-red-50 { background-color: color-mix(in oklab, var(--color-red-500) 13%, transparent); }
+.dark .bg-red-100 { background-color: color-mix(in oklab, var(--color-red-500) 20%, transparent); }
+.dark .bg-amber-50 { background-color: color-mix(in oklab, var(--color-amber-500) 13%, transparent); }
+.dark .bg-amber-100 { background-color: color-mix(in oklab, var(--color-amber-500) 20%, transparent); }
+.dark .bg-blue-50 { background-color: color-mix(in oklab, var(--color-blue-500) 13%, transparent); }
+.dark .bg-blue-100 { background-color: color-mix(in oklab, var(--color-blue-500) 20%, transparent); }
+.dark .bg-sky-50 { background-color: color-mix(in oklab, var(--color-sky-500) 13%, transparent); }
+.dark .bg-sky-100 { background-color: color-mix(in oklab, var(--color-sky-500) 20%, transparent); }
+.dark .bg-violet-50 { background-color: color-mix(in oklab, var(--color-violet-500) 13%, transparent); }
+.dark .bg-purple-50 { background-color: color-mix(in oklab, var(--color-purple-500) 13%, transparent); }
+.dark .bg-orange-50 { background-color: color-mix(in oklab, var(--color-orange-500) 13%, transparent); }
+.dark .bg-teal-50 { background-color: color-mix(in oklab, var(--color-teal-500) 13%, transparent); }
+.dark .bg-rose-50 { background-color: color-mix(in oklab, var(--color-rose-500) 13%, transparent); }
+.dark .bg-pink-50 { background-color: color-mix(in oklab, var(--color-pink-500) 13%, transparent); }
+.dark .bg-indigo-50 { background-color: color-mix(in oklab, var(--color-indigo-500) 13%, transparent); }
+.dark .bg-cyan-50 { background-color: color-mix(in oklab, var(--color-cyan-500) 13%, transparent); }
+.dark .bg-yellow-50 { background-color: color-mix(in oklab, var(--color-yellow-500) 13%, transparent); }
+
+/* --- Estados semánticos: textos 600/700/800 → matiz 400 (legible) --- */
+.dark .text-emerald-600, .dark .text-emerald-700, .dark .text-emerald-800,
+.dark .text-green-600, .dark .text-green-700, .dark .text-green-800 { color: var(--color-emerald-400); }
+.dark .text-red-600, .dark .text-red-700, .dark .text-red-800 { color: var(--color-red-400); }
+.dark .text-amber-600, .dark .text-amber-700, .dark .text-amber-800,
+.dark .text-yellow-600, .dark .text-yellow-700, .dark .text-yellow-800 { color: var(--color-amber-400); }
+.dark .text-blue-600, .dark .text-blue-700, .dark .text-blue-800 { color: var(--color-blue-400); }
+.dark .text-sky-600, .dark .text-sky-700, .dark .text-sky-800 { color: var(--color-sky-400); }
+.dark .text-violet-600, .dark .text-violet-700, .dark .text-violet-800 { color: var(--color-violet-400); }
+.dark .text-purple-600, .dark .text-purple-700, .dark .text-purple-800 { color: var(--color-purple-400); }
+.dark .text-orange-600, .dark .text-orange-700, .dark .text-orange-800 { color: var(--color-orange-400); }
+.dark .text-teal-600, .dark .text-teal-700, .dark .text-teal-800 { color: var(--color-teal-400); }
+.dark .text-rose-600, .dark .text-rose-700, .dark .text-rose-800 { color: var(--color-rose-400); }
+.dark .text-pink-600, .dark .text-pink-700, .dark .text-pink-800 { color: var(--color-pink-400); }
+.dark .text-indigo-600, .dark .text-indigo-700, .dark .text-indigo-800 { color: var(--color-indigo-400); }
+
+/* Scrollbars coherentes en oscuro */
+.dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+.dark ::-webkit-scrollbar-thumb { background: #2a3a58; border-radius: 8px; }
+.dark ::-webkit-scrollbar-track { background: transparent; }

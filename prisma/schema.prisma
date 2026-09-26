@@ -1,0 +1,612 @@
+// ============================================================
+// CRM ALBRA — Prisma Schema (multi-tenant, audit-hardened)
+// Every business model is scoped by organizationId (tenant isolation).
+// SQLite for the preview environment; provider swap to PostgreSQL is
+// a one-line change (audit recommendation #3) — no JSON columns used,
+// JSON payloads stored as String fields.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Tenancy & Auth ----------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  plan      String   @default("pilot") // pilot (única fase real; sin promesas de pago)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users                 User[]
+  clients               Client[]
+  pipelineStages        PipelineStage[]
+  opportunities         Opportunity[]
+  reservations          Reservation[]
+  quotes                Quote[]
+  quoteItems            QuoteItem[]
+  knowledge             Knowledge[]
+  transactions          Transaction[]
+  services              Service[]
+  productCategories     ProductCategory[]
+  automations           Automation[]
+  automationRuns        AutomationRun[]
+  templates             Template[]
+  customFields          CustomField[]
+  customFieldValues     CustomFieldValue[]
+  notifications         Notification[]
+  activityLogs          ActivityLog[]
+  timelineEvents        TimelineEvent[]
+  savedViews            SavedView[]
+  agentMemories         AgentMemory[]
+  agentSuggestions      AgentSuggestion[]
+  whatsappConversations WhatsAppConversation[]
+  whatsappMessages      WhatsAppMessage[]
+  settings              Settings?
+  nichoConfig           NichoConfig?
+  integration           Integration?
+}
+
+model User {
+  id             String       @id @default(cuid())
+  email          String       @unique
+  name           String
+  passwordHash   String
+  company        String?
+  phone          String?
+  role           String       @default("member") // owner | admin | member
+  isActive       Boolean      @default(true)
+  avatar         String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  savedViews     SavedView[]
+  resetToken     String?
+  resetTokenExp  DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+// ---------- CRM Core ----------
+
+model Client {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  email          String?
+  phone          String?
+  cedula         String?
+  address        String?
+  notes          String?
+  status         String       @default("prospect") // prospect | active | inactive
+  source         String? // landing | whatsapp | referral | manual | instagram | telegram
+  lastContactAt  DateTime?
+  assignedToId   String?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  histories             ClientHistory[]
+  preferences           ClientPreferences?
+  opportunities         Opportunity[]
+  reservations          Reservation[]
+  quotes                Quote[]
+  transactions          Transaction[]
+  memories              AgentMemory[]
+  suggestions           AgentSuggestion[]
+  whatsappConversations WhatsAppConversation[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, lastContactAt])
+}
+
+model ClientHistory {
+  id             String   @id @default(cuid())
+  organizationId String
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type           String // call | note | email | meeting | whatsapp | system
+  title          String
+  description    String?
+  userId         String?
+  createdAt      DateTime @default(now())
+
+  @@index([clientId, createdAt])
+}
+
+model ClientPreferences {
+  id               String  @id @default(cuid())
+  organizationId   String
+  clientId         String  @unique
+  client           Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  preferredChannel String? // whatsapp | email | phone | instagram | telegram
+  preferredTime    String?
+  interests        String? // JSON array
+  notes            String?
+}
+
+model PipelineStage {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  order          Int
+  color          String       @default("#059669")
+  probability    Float        @default(0.5)
+  isWon          Boolean      @default(false)
+  isLost         Boolean      @default(false)
+
+  opportunities Opportunity[]
+
+  @@index([organizationId, order])
+}
+
+model Opportunity {
+  id                String         @id @default(cuid())
+  organizationId    String
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title             String
+  clientId          String?
+  client            Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  stageId           String?
+  stage             PipelineStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  amount            Float          @default(0)
+  currency          String         @default("USD")
+  probability       Float?
+  expectedCloseDate DateTime?
+  status            String         @default("open") // open | won | lost
+  closedAt          DateTime?
+  notes             String?
+  source            String?
+  assignedToId      String?
+  createdById       String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  quotes Quote[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, clientId])
+}
+
+model Reservation {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId       String?
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  title          String
+  description    String?
+  startsAt       DateTime
+  endsAt         DateTime?
+  status         String       @default("scheduled") // scheduled | completed | cancelled
+  location       String?
+  userId         String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, startsAt])
+}
+
+model Quote {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  number         String
+  clientId       String?
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  opportunityId  String?
+  opportunity    Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  legacyItems    String? // (deprecado) JSON pre-migración a tabla QuoteItem
+  items          QuoteItem[]
+  subtotal       Float        @default(0)
+  tax            Float        @default(0)
+  total          Float        @default(0)
+  currency       String       @default("USD")
+  status         String       @default("draft") // draft | sent | accepted | rejected | expired
+  validUntil     DateTime?
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, status])
+}
+
+// Líneas de detalle de una cotización (portado del repo base, ahora relacional)
+model QuoteItem {
+  id             String        @id @default(cuid())
+  quoteId        String
+  quote          Quote         @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  sku            String?
+  description    String
+  quantity       Int           @default(1)
+  unitPrice      Float         @default(0)
+  subtotal       Float         @default(0)
+  position       Int           @default(0)
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+
+  @@index([quoteId])
+}
+
+model Transaction {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type           String // income | expense
+  category       String?
+  description    String?
+  amount         Float
+  currency       String       @default("USD")
+  date           DateTime     @default(now())
+  clientId       String?
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  quoteId        String?
+  method         String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, date])
+}
+
+// ---------- Catálogo ----------
+
+model Service {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  category       String?
+  price          Float        @default(0)
+  duration       Int?
+  unit           String       @default("unidad")
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model ProductCategory {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+}
+
+// ---------- Automatizaciones / Workflows (inspirado en Twenty) ----------
+
+model Automation {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  category       String       @default("custom") // seguimiento | confirmacion | promocion | custom
+  description    String?
+  // Motor de workflows: trigger -> [conditions] -> actions[]
+  triggerType    String       @default("manual") // manual | client_created | opportunity_stage_changed | message_received | reservation_created | quote_status_changed | schedule
+  triggerConfig  String? // JSON: { stageId?, schedule?, channel? }
+  conditions     String? // JSON array: [{ field, operator, value }]
+  actions        String? // JSON array: [{ type, config }]
+  isActive       Boolean      @default(false)
+  runCount       Int          @default(0)
+  lastRunAt      DateTime?
+  nextRunAt      DateTime?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  runs AutomationRun[]
+
+  @@index([organizationId, isActive])
+}
+
+model AutomationRun {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  automationId   String
+  automation     Automation   @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  status         String       @default("running") // running | success | failed | waiting
+  input          String? // JSON: payload del trigger (contexto para reanudar)
+  output         String? // JSON: outputs acumulados de las acciones ejecutadas
+  error          String?
+  stepStates     String? // JSON: [{ type, status, error?, ms? }] estado por acción (estilo Twenty stepInfos)
+  currentStep    Int          @default(0) // índice de la siguiente acción al reanudar (DELAY estilo Twenty)
+  resumeAt       DateTime? // cuándo reanudar un run en espera (acción "Esperar")
+  startedAt      DateTime     @default(now())
+  finishedAt     DateTime?
+
+  @@index([automationId, startedAt])
+  @@index([status, resumeAt])
+}
+
+// ---------- IA ----------
+
+model AgentMemory {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId       String?
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  key            String?
+  content        String
+  source         String       @default("manual") // manual | agent | conversation
+  importance     Int          @default(1)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, clientId])
+}
+
+model AgentSuggestion {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId       String?
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type           String // follow_up | reengage | opportunity | at_risk
+  title          String
+  description    String?
+  priority       String       @default("medium") // high | medium | low
+  status         String       @default("new") // new | accepted | dismissed
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, status])
+}
+
+// ---------- Comunicación / Plantillas ----------
+
+model Template {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  category       String       @default("seguimiento") // seguimiento | confirmacion | promocion
+  channel        String       @default("generic") // whatsapp | telegram | instagram | email | generic
+  subject        String?
+  body           String // soporta {{variables}}
+  variables      String? // JSON array de nombres de variables
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, channel])
+}
+
+// ---------- Campos personalizados ----------
+
+model CustomField {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entity         String // client | opportunity | quote | reservation
+  name           String
+  label          String
+  type           String       @default("text") // text | number | date | select | multiselect | boolean | url | phone
+  options        String? // JSON array para select
+  isRequired     Boolean      @default(false)
+  order          Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  values CustomFieldValue[]
+
+  @@index([organizationId, entity])
+}
+
+model CustomFieldValue {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fieldId        String
+  field          CustomField  @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  entityType     String
+  entityId       String
+  value          String?
+
+  @@unique([fieldId, entityId])
+  @@index([entityType, entityId])
+}
+
+// ---------- Notificaciones / Actividad / Timeline ----------
+
+model Notification {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?
+  type           String       @default("system") // system | automation | agent | integration
+  title          String
+  body           String?
+  data           String? // JSON
+  isRead         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, isRead])
+}
+
+model ActivityLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?
+  action         String // created | updated | deleted | login | exported | ran_automation ...
+  entity         String // client | opportunity | quote | ...
+  entityId       String?
+  details        String? // JSON
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model TimelineEvent {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId       String?
+  opportunityId  String?
+  quoteId        String?
+  reservationId  String?
+  type           String // note | call | meeting | whatsapp | telegram | instagram | email | quote | stage_change | system | transaction
+  title          String
+  description    String?
+  metadata       String? // JSON
+  source         String       @default("manual") // manual | agent | integration | automation
+  userId         String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, clientId, createdAt])
+  @@index([organizationId, opportunityId, createdAt])
+}
+
+// ---------- Vistas guardadas (inspirado en Twenty) ----------
+
+model SavedView {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  entity         String // clients | opportunities | quotes
+  filters        String? // JSON array: [{ field, operator, value }]
+  sort           String? // JSON: { field, direction }
+  isShared       Boolean      @default(false)
+  isDefault      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, entity])
+}
+
+// ---------- Configuración por organización ----------
+
+model Settings {
+  id                 String       @id @default(cuid())
+  organizationId     String       @unique
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  currency           String       @default("USD")
+  timezone           String       @default("America/Bogota")
+  llmProvider        String? // openai | groq | custom | zai
+  llmBaseUrl         String?
+  llmModel           String?
+  llmApiKeyEnc       String? // AES-256-GCM cifrado en reposo (recomendación auditoría #4)
+  vapidPublicKey     String?
+  vapidPrivateKeyEnc String?
+  smtpHost           String?
+  smtpPort           Int?
+  smtpUser           String?
+  smtpPassEnc        String?
+  smtpFrom           String?
+  updatedAt          DateTime     @updatedAt
+}
+
+model NichoConfig {
+  id               String       @id @default(cuid())
+  organizationId   String       @unique
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  brandingName     String       @default("CRM ALBRA")
+  rubro            String       @default("Servicios Profesionales")
+  personality      String       @default("Profesional, empático y orientado a resultados")
+  tone             String?
+  services         String? // JSON array
+  faqs             String? // JSON array
+  workingHours     String?
+  autoReplyEnabled Boolean      @default(true)
+  handoffKeywords  String? // JSON array — palabras que transfieren a humano
+  raw              String? // JSON libre
+  updatedAt        DateTime     @updatedAt
+}
+
+model Integration {
+  id                    String       @id @default(cuid())
+  organizationId        String       @unique
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Tokens SIEMPRE cifrados con AES-256-GCM antes de guardar (auditoría #4)
+  telegramBotTokenEnc   String?
+  telegramSecret        String?
+  instagramTokenEnc     String?
+  instagramAccountId    String?
+  googleRefreshTokenEnc String?
+  googleClientJsonEnc   String?
+  metaAppSecretEnc      String?
+  whatsappPhoneId       String?
+  whatsappCloudTokenEnc String?
+  enableWhatsApp        Boolean      @default(false)
+  enableTelegram        Boolean      @default(false)
+  enableInstagram       Boolean      @default(false)
+  enableGoogle          Boolean      @default(false)
+  updatedAt             DateTime     @updatedAt
+}
+
+// ============ WhatsApp (daemon Baileys, puerto 3002) ============
+// Conversaciones/mensajes reales gestionados por src/whatsapp-daemon/daemon.mjs.
+// Multi-tenant: cada conversación pertenece a la organización del número conectado.
+
+model WhatsAppConversation {
+  id              String            @id @default(cuid())
+  organizationId  String
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId        String?
+  client          Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  contactPhone    String
+  contactName     String?
+  lastMessage     String?
+  lastMessageAt   DateTime?
+  lastMessageFrom String?
+  unreadCount     Int               @default(0)
+  isAutoReply     Boolean           @default(true)
+  status          String            @default("active") // active | closed
+  transferredTo   String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  messages        WhatsAppMessage[]
+
+  @@unique([organizationId, contactPhone])
+  @@index([organizationId, lastMessageAt])
+}
+
+model WhatsAppMessage {
+  id             String               @id @default(cuid())
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  waMessageId    String?
+  direction      String // inbound | outbound
+  fromNumber     String
+  toNumber       String
+  text           String?
+  messageType    String               @default("text")
+  senderType     String // contact | agent | user
+  isRead         Boolean              @default(false)
+  createdAt      DateTime             @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+// ---------- Base de conocimiento del Agente IA ----------
+
+model Knowledge {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  content        String
+  category       String       @default("general") // general | catalogo | terminos | faq | politicas
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, isActive])
+}

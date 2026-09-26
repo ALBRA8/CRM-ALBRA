@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://twenty.com",
+    "name": "Twenty Releases — What's New in the Open Source CRM",
+    "snippet": "Create calendar events directly from a record's timeline , New emails and calendar events now appear on record pages without a manual refresh. Workflows can ...",
+    "host_name": "twenty.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://docs.twenty.com",
+    "name": "Workflow Triggers - Twenty Documentation",
+    "snippet": "Calendar Events; Messages ( Emails ); Tasks, Notes , and many other system objects. This opens up powerful automations like notifying team members when calendar ...",
+    "host_name": "docs.twenty.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com",
+    "name": "Releases · twentyhq/twenty",
+    "snippet": "New features feat(server): validate workflow versions through exceptions, Granola notes to workflows and AI. Anchor email and calendar timeline activities at ...",
+    "host_name": "github.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://support.monday.com",
+    "name": "Emails & Activities: manage your activities - Support",
+    "snippet": "May 8, 2026 — Your timeline will be organized chronologically. Any email or note will be sorted under the month when the email was sent or the note was added ...",
+    "host_name": "support.monday.com",
+    "rank": 3,
+    "date": "May 8, 2026",
+    "favicon": ""
+  }
+]
