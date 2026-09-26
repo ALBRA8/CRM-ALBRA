@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { auditAndTimeline } from '@/lib/api-helpers'
@@ -12,7 +12,8 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    // Fase 2 RBAC: el backup contiene TODOS los datos de la org → solo owner/admin
+    const auth = requirePermission(req, 'export.data')
     const orgId = auth.orgId
     const [org, clients, services, templates, opportunities, reservations, quotes, transactions, automations, timelineEvents, savedViews, memories] =
       await Promise.all([
@@ -61,7 +62,8 @@ const n = (v: unknown, fallback = 0): number => (Number.isFinite(Number(v)) ? Nu
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    // Fase 2 RBAC: restaurar datos masivamente es owner/admin
+    const auth = requirePermission(req, 'export.data')
     const body = (await req.json().catch(() => ({}))) as BackupBody
     const restored = { clients: 0, services: 0, templates: 0 }
     const skipped = { clients: 0, services: 0, templates: 0 }

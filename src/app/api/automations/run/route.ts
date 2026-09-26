@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { runDueJobs } from '@/lib/scheduler'
 import { auditAndTimeline } from '@/lib/api-helpers'
@@ -11,7 +11,8 @@ import { auditAndTimeline } from '@/lib/api-helpers'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    // Fase 2 RBAC: disparar el scheduler manualmente es operación administrativa
+    const auth = requirePermission(req, 'automations.run')
     const { processed, results } = await runDueJobs()
 
     // Conteo de ejecuciones exitosas por categoría de automatización

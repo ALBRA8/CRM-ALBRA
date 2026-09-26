@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -111,6 +112,9 @@ interface SettingsData {
   }
   app: AppSettings
   system: SystemInfo
+  leadRouting?: {
+    autoAssign: boolean
+  }
 }
 
 interface WaStatus {
@@ -169,6 +173,10 @@ export function SettingsPage() {
   const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1')
   const [model, setModel] = useState('gpt-4o-mini')
   const [customModel, setCustomModel] = useState('')
+
+  // Fase 2: round-robin de leads
+  const [autoAssignLeads, setAutoAssignLeads] = useState(true)
+  const [savingLeadRouting, setSavingLeadRouting] = useState(false)
 
   // WhatsApp state
   const [waStatus, setWaStatus] = useState<WaStatus>({ status: 'disconnected', phone: null, lastUpdate: null })
@@ -258,6 +266,7 @@ export function SettingsPage() {
       setSettings(data)
       setBaseUrl(data.llm.baseUrl)
       setModel(data.llm.model)
+      setAutoAssignLeads(data.leadRouting?.autoAssign ?? true)
 
       const provider = PROVIDERS.find(p => p.baseUrl === data.llm.baseUrl)
       setSelectedProvider(provider?.id ?? 'custom')
@@ -620,6 +629,26 @@ export function SettingsPage() {
       if (provider.models.length > 0) {
         setModel(provider.models[0])
       }
+    }
+  }
+
+  /** Fase 2: activa/desactiva el reparto round-robin de leads entrantes. */
+  const handleToggleAutoAssign = async (value: boolean) => {
+    const previous = autoAssignLeads
+    setAutoAssignLeads(value)
+    setSavingLeadRouting(true)
+    try {
+      await api.updateSettings({ leadRouting: { autoAssign: value } })
+      toast.success(value ? 'Round-robin activado' : 'Round-robin desactivado', {
+        description: value
+          ? 'Los leads entrantes se repartirán automáticamente entre el equipo activo.'
+          : 'Los leads entrantes quedarán sin responsable asignado.',
+      })
+    } catch {
+      setAutoAssignLeads(previous)
+      toast.error('No se pudo guardar la preferencia')
+    } finally {
+      setSavingLeadRouting(false)
     }
   }
 
@@ -1185,6 +1214,42 @@ export function SettingsPage() {
         <TabsContent value="negocio" className="space-y-6 mt-4">
           {/* Currency Selector */}
           <CurrencySelector />
+
+          {/* Fase 2: Distribución automática de leads (round-robin) */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-4 flex-1">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-emerald-100">
+                      <Users className="w-6 h-6 text-emerald-600" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-slate-900">Distribución automática de leads</h3>
+                        <Badge variant="outline" className="border-emerald-200 text-emerald-700 bg-emerald-50 text-[10px]">Round-Robin</Badge>
+                      </div>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Reparte cada lead entrante (WhatsApp, Telegram, Instagram, chat AI, importación o alta manual) entre los
+                        usuarios activos de la organización, empezando por el que menos leads acumula. La asignación manual
+                        siempre tiene prioridad sobre la automática.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={autoAssignLeads}
+                    onCheckedChange={handleToggleAutoAssign}
+                    disabled={savingLeadRouting}
+                    aria-label="Activar distribución automática de leads"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
 
           {/* Branding Card */}
           <motion.div

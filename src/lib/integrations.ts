@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual, randomBytes } from 'crypto'
 import { db } from './db'
+import { assignLeadRoundRobin } from './lead-routing'
 import { decryptSecret, encryptSecret } from './crypto'
 import type { Integration } from '@prisma/client'
 
@@ -125,9 +126,11 @@ export async function findOrCreateChannelClient(opts: {
       phone: platformKey,
       status: 'prospect',
       source,
+      // Fase 2: leads de WhatsApp/Telegram/Instagram/landing entran al round-robin
+      assignedToId: await assignLeadRoundRobin(orgId),
       lastContactAt: new Date(),
     },
-    select: { id: true, name: true, phone: true },
+    select: { id: true, name: true, phone: true, assignedToId: true },
   })
   // El workflow engine reacciona a nuevos leads de canales
   try {

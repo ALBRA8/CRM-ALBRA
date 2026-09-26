@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { NextRequest } from 'next/server'
+import { can } from './rbac'
 
 /**
  * Autenticación JWT sin dependencias externas (HMAC-SHA256 firmado con APP_SECRET)
@@ -136,6 +137,19 @@ export function requireAuth(req: NextRequest): AuthContext {
 export function requireAdmin(req: NextRequest): AuthContext {
   const auth = requireAuth(req)
   if (!auth.isAdmin) throw new HttpError(403, 'Se requieren permisos de administrador')
+  return auth
+}
+
+/**
+ * Requiere una capacidad RBAC concreta (Fase 2). Autoridad final del servidor:
+ * la UI puede ocultar botones, pero aquí se decide de verdad. Soporta
+ * comodines ('settings.*' concede 'settings.write').
+ */
+export function requirePermission(req: NextRequest, capability: string): AuthContext {
+  const auth = requireAuth(req)
+  if (!can(auth.role, capability)) {
+    throw new HttpError(403, `Sin permiso para esta acción (${capability})`)
+  }
   return auth
 }
 

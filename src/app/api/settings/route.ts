@@ -65,6 +65,10 @@ export async function GET(req: NextRequest) {
         name: org?.name || 'CRM ALBRA',
         url: new URL(req.url).origin,
       },
+      leadRouting: {
+        // Fase 2: round-robin automático de leads entrantes
+        autoAssign: settings?.autoAssignLeads ?? true,
+      },
       system: {
         usingZaiSdk: !apiKey,
         provider: apiKey ? settings?.llmProvider || 'custom' : 'SDK Z-AI',
@@ -81,6 +85,9 @@ interface SettingsBody {
     model?: string | null
     provider?: string | null
   }
+  leadRouting?: {
+    autoAssign?: boolean
+  }
 }
 
 export async function PUT(req: NextRequest) {
@@ -91,6 +98,9 @@ export async function PUT(req: NextRequest) {
     await loadOrCreate(auth.orgId)
 
     const data: Record<string, unknown> = {}
+    if (body.leadRouting && typeof body.leadRouting.autoAssign === 'boolean') {
+      data.autoAssignLeads = body.leadRouting.autoAssign
+    }
     if (body.llm) {
       const { apiKey, baseUrl, model, provider } = body.llm
       if (apiKey !== undefined && apiKey !== null && apiKey.trim() !== '') {
@@ -121,7 +131,7 @@ export async function PUT(req: NextRequest) {
       details: { fields: Object.keys(data).map((f) => (f === 'llmApiKeyEnc' ? 'llmApiKey(encrypted)' : f)) },
     })
 
-    return json({ success: true, llm: { apiKeyConfigured: !!decryptSecret(settings.llmApiKeyEnc), baseUrl: settings.llmBaseUrl || '', model: settings.llmModel || '' } })
+    return json({ success: true, llm: { apiKeyConfigured: !!decryptSecret(settings.llmApiKeyEnc), baseUrl: settings.llmBaseUrl || '', model: settings.llmModel || '' }, leadRouting: { autoAssign: settings.autoAssignLeads } })
   })
 }
 

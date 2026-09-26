@@ -65,6 +65,8 @@ model User {
   role           String       @default("member") // owner | admin | member
   isActive       Boolean      @default(true)
   avatar         String?
+  leadCount      Int          @default(0)    // Fase 2: contador para round-robin de leads
+  lastLeadAt     DateTime?                   // Fase 2: último lead asignado (desempate del round-robin)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   savedViews     SavedView[]
@@ -496,6 +498,7 @@ model Settings {
   organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   currency           String       @default("USD")
   timezone           String       @default("America/Bogota")
+  autoAssignLeads    Boolean      @default(true) // Fase 2: round-robin automático de leads entrantes
   llmProvider        String? // openai | groq | custom | zai
   llmBaseUrl         String?
   llmModel           String?

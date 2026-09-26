@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { parseCsv, csvToObjects } from '@/lib/csv'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { normalizePhone } from '@/lib/integrations'
+import { assignLeadRoundRobin } from '@/lib/lead-routing'
 
 /**
  * POST /api/import/csv — multipart/form-data: file + type=clients|services (requireAuth).
@@ -89,6 +90,8 @@ export async function POST(req: NextRequest) {
               cedula: pick(row, 'cedula', 'cédula', 'documento') || null,
               address: pick(row, 'address', 'direccion', 'dirección') || null,
               notes: pick(row, 'notes', 'notas') || null,
+              // Fase 2: importación masiva reparte leads en round-robin
+              assignedToId: await assignLeadRoundRobin(auth.orgId),
               createdById: auth.userId,
             },
           })

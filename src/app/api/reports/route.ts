@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 
@@ -26,7 +26,8 @@ function monthKey(date: Date): string {
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    // Fase 2 RBAC: métricas de ingresos del negocio → owner/admin
+    const auth = requirePermission(req, 'reports.read')
     const rawPeriod = new URL(req.url).searchParams.get('period') || '30d'
     const days = rawPeriod in PERIOD_DAYS ? PERIOD_DAYS[rawPeriod] : 30
     const from = days ? new Date(Date.now() - days * 86_400_000) : new Date(0)

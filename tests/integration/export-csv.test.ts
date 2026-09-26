@@ -1,12 +1,33 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeAll } from 'vitest'
 import { GET as exportCsvGET } from '@/app/api/export/csv/route'
+import { db } from '@/lib/db'
+import { signToken } from '@/lib/auth'
 import { FIX, req, tokenA, tokenB } from '../helpers'
 
 /**
  * Export CSV (/api/export/csv, handler real) — caso 'transactions' restaurado
  * en la auditoría (importante #1): 200 con cabeceras correctas y BOM UTF-8,
  * aislado por organización y SIN escribir archivos en disco (solo respuesta).
+ *
+ * Fase 2 RBAC: exportar datos es owner/admin (export.data). Los tests de org B
+ * usan un owner local; el member de org B recibe 403 (test explícito abajo).
  */
+
+let tokenOwnerB = ''
+
+beforeAll(async () => {
+  await db.user.create({
+    data: {
+      id: 'user-b-owner',
+      email: 'owner-b@test.albra',
+      name: 'Owner Beta',
+      passwordHash: 'scrypt:00000000000000000000000000000000:' + '0'.repeat(128),
+      role: 'owner',
+      organizationId: 'org-b',
+    },
+  })
+  tokenOwnerB = signToken({ userId: 'user-b-owner', orgId: 'org-b', role: 'owner', email: 'owner-b@test.albra' })
+})
 
 describe('GET /api/export/csv?type=transactions', () => {
   it('401 sin token', async () => {
@@ -45,11 +66,16 @@ describe('GET /api/export/csv?type=transactions', () => {
   })
 
   it('aislamiento multi-tenant: el CSV de org B no contiene datos de org A', async () => {
-    const res = await exportCsvGET(req('/api/export/csv?type=transactions', { token: tokenB() }))
+    const res = await exportCsvGET(req('/api/export/csv?type=transactions', { token: tokenOwnerB }))
     const csv = await res.text()
     expect(csv).toContain(FIX.txOrgB.description)
     expect(csv).not.toContain(FIX.clientA1.name)
     expect(csv).not.toContain('Suscripción tooling')
+  })
+
+  it('Fase 2 RBAC: un member de org B no puede exportar (403 export.data)', async () => {
+    const res = await exportCsvGET(req('/api/export/csv?type=transactions', { token: tokenB() }))
+    expect(res.status).toBe(403)
   })
 
   it('400 para un type no soportado', async () => {

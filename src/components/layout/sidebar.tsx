@@ -1,6 +1,7 @@
 'use client'
 
 import { useAppStore } from '@/lib/store'
+import { can } from '@/lib/rbac'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
@@ -38,25 +39,30 @@ import {
 } from '@/components/ui/tooltip'
 import { motion, AnimatePresence } from 'framer-motion'
 
+// Fase 2 RBAC: `perm` = capacidad mínima requerida para ver el ítem.
+// El servidor SIEMPRE re-valida (requirePermission); aquí es solo UX.
 const navItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'clients', label: 'Clientes', icon: Users },
-  { id: 'opportunities', label: 'Oportunidades', icon: TrendingUp },
-  { id: 'products', label: 'Productos', icon: Package },
-  { id: 'calendar', label: 'Calendario', icon: Calendar },
-  { id: 'quotes', label: 'Cotizaciones', icon: FileText },
-  { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
-  { id: 'automations', label: 'Automatizaciones', icon: Zap },
-  { id: 'chat', label: 'Chat AI', icon: MessageSquare },
-  { id: 'finances', label: 'Finanzas', icon: DollarSign },
-  { id: 'reports', label: 'Reportes', icon: BarChart3 },
-  { id: 'team', label: 'Equipo', icon: Shield },
-  { id: 'activity', label: 'Actividad', icon: Clock },
-  { id: 'settings', label: 'Configuración', icon: Settings },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'clients.read' },
+  { id: 'clients', label: 'Clientes', icon: Users, perm: 'clients.read' },
+  { id: 'opportunities', label: 'Oportunidades', icon: TrendingUp, perm: 'opportunities.read' },
+  { id: 'products', label: 'Productos', icon: Package, perm: 'services.read' },
+  { id: 'calendar', label: 'Calendario', icon: Calendar, perm: 'reservations.read' },
+  { id: 'quotes', label: 'Cotizaciones', icon: FileText, perm: 'quotes.read' },
+  { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, perm: 'whatsapp.read' },
+  { id: 'automations', label: 'Automatizaciones', icon: Zap, perm: 'automations.read' },
+  { id: 'chat', label: 'Chat AI', icon: MessageSquare, perm: 'ai.use' },
+  { id: 'finances', label: 'Finanzas', icon: DollarSign, perm: 'transactions.read' },
+  { id: 'reports', label: 'Reportes', icon: BarChart3, perm: 'reports.read' },
+  { id: 'team', label: 'Equipo', icon: Shield, perm: 'team.manage' },
+  { id: 'activity', label: 'Actividad', icon: Clock, perm: 'activity.read' },
+  { id: 'settings', label: 'Configuración', icon: Settings, perm: 'settings.read' },
 ]
 
 export function Sidebar() {
   const { view, setView, user, sidebarCollapsed, toggleSidebar, logout } = useAppStore()
+
+  // El usuario solo ve los módulos que su rol puede ejercer
+  const visibleNavItems = navItems.filter((item) => can(user?.role, item.perm))
 
   const initials = user?.name
     ?.split(' ')
@@ -95,7 +101,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 py-2 px-1.5 space-y-0.5 overflow-y-auto">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive = view === item.id
           const Icon = item.icon
 
@@ -272,7 +278,7 @@ export function MobileSidebar({ open, onClose }: { open: boolean; onClose: () =>
 
             {/* Navigation */}
             <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
-              {navItems.map((item) => {
+              {navItems.filter((item) => can(user?.role, item.perm)).map((item) => {
                 const isActive = view === item.id
                 const Icon = item.icon
                 return (

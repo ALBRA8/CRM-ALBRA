@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import { handle, json, requireFields, auditAndTimeline } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
+import { assignLeadRoundRobin } from '@/lib/lead-routing'
 import { llmChat, extractJson } from '@/lib/ai'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { buildNichoContext } from '@/lib/integrations'
@@ -54,6 +55,8 @@ async function executeAgentAction(
           email: str(params.email).trim() || null,
           status: 'prospect',
           source: 'agent',
+          // Fase 2: leads captados por el agente IA también entran al round-robin
+          assignedToId: await assignLeadRoundRobin(orgId),
           createdById: userId,
           lastContactAt: new Date(),
         },

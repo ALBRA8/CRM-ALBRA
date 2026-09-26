@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { getAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { buildCsv } from '@/lib/csv'
@@ -12,8 +12,8 @@ import { auditAndTimeline } from '@/lib/api-helpers'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = getAuth(req)
-    if (!auth) return json({ error: 'Token de autorización requerido' }, { status: 401 })
+    // Fase 2 RBAC: exportar datos completos es owner/admin (soporta ?token= para descargas)
+    const auth = requirePermission(req, 'export.data')
     const type = new URL(req.url).searchParams.get('type') || 'clients'
     const orgId = auth.orgId
 

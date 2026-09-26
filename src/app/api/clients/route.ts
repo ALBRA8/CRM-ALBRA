@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth'
 import { auditAndTimeline, parseIntParam, paginationMeta } from '@/lib/api-helpers'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
+import { assignLeadRoundRobin } from '@/lib/lead-routing'
 import { handle, json, readBody, requireFields, str, dateOrNull, qparam } from '../_lib/shared'
 import { loadClientAttrs, saveClientAttrs, serializeClient } from '../_lib/clients'
 
@@ -73,6 +74,9 @@ export async function POST(req: NextRequest) {
     const body = await readBody(req)
     requireFields(body, ['name', 'phone'])
 
+    // Fase 2: si el creador no eligió responsable, el lead entra al round-robin
+    const assignedToId = str(body.assignedToId) ?? (await assignLeadRoundRobin(auth.orgId))
+
     const created = await db.client.create({
       data: {
         organizationId: auth.orgId,
@@ -85,7 +89,7 @@ export async function POST(req: NextRequest) {
         status: str(body.status) ?? 'prospect',
         source: str(body.source) ?? 'manual',
         lastContactAt: dateOrNull(body.lastContactAt) ?? new Date(),
-        assignedToId: str(body.assignedToId),
+        assignedToId,
         createdById: auth.userId,
       },
     })
