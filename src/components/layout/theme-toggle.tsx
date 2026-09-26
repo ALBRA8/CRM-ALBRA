@@ -1,9 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { useTheme } from 'next-themes'
 import { Moon, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+
+// Suscriptor nulo: "mounted" no observa una fuente externa que cambie,
+// sino la diferencia servidor (false) vs cliente (true) durante la hidratación.
+const emptySubscribe = () => () => {}
 
 /**
  * Toggle minimalista de tema claro/oscuro para el header.
@@ -12,10 +16,11 @@ import { Button } from '@/components/ui/button'
  */
 export function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
 
-  // Evita mismatch de hidratación: renderiza un placeholder hasta montar
-  useEffect(() => setMounted(true), [])
+  // Evita mismatch de hidratación: renderiza un placeholder hasta montar.
+  // getServerSnapshot=false (SSR + primera pasada de hidratación), getSnapshot=true
+  // en cliente → React re-renderiza tras montar, sin setState dentro de effects.
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false)
 
   if (!mounted) {
     return <div className="w-8 h-8" aria-hidden />

@@ -500,3 +500,23 @@ Stage Summary:
 - Fase 4 arrancada: bandeja omnicanal COMPLETA (3 canales, lectura+respuesta) y PWA/push COMPLETOS (manifest+SW+push saliente en handoffs).
 - Pendiente Fase 4 para próximas iteraciones: Stripe (suscripciones/pagos — requiere cuenta y claves), IA de cierre (sugerencias en pipeline), cache offline del SW.
 - Preexistente aceptado: 1 warning react-hooks en theme-toggle (solo visible en lint completo del repo, que excede el timeout del sandbox).
+
+---
+Task ID: 18-a
+Agent: general-purpose (subagente menores 2)
+Task: Fix menor restante de ESLint en theme-toggle.tsx (react-hooks/set-state-in-effect) + sincronizar package-lock.json stale (sharp 0.34.5→0.35.4) para eliminar las 2 falsas advisories de sharp del npm audit.
+
+Work Log:
+- TAREA 1: theme-toggle.tsx reescrito con patrón hydration-safe vía useSyncExternalStore: useState(false)+useEffect eliminados; fuera del componente `const emptySubscribe = () => () => {}`; dentro `const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false)` (getServerSnapshot=false en SSR/hidratación, getSnapshot=true en cliente → React re-renderiza tras montar sin setState en effects). Imports limpios (solo useSyncExternalStore de react). Sin eslint-disable; placeholder `<div className="w-8 h-8" aria-hidden />` y todo el aspecto/comportamiento del botón intactos.
+- VERIFICACIÓN TAREA 1: `npx eslint src/components/layout/theme-toggle.tsx` → 0 problems (exit 0). Era el único error de lint del repo. No existen tests de componente para theme-toggle (glob sin resultados).
+- TAREA 2: npm audit ANTES (lockfile stale): 8 vulnerabilities (6 moderate, 2 high), con sharp + 2 advisories (libvips CVE-2026-33327/33328/35590/35591 + libheif GHSA-g89c-p67h-r497/GHSA-2jg2-4ch7-h545).
+- TAREA 2 fix: `npm install --package-lock-only --ignore-scripts --legacy-peer-deps` (exit 0; solo reescribe lockfile). package-lock.json ahora fija sharp 0.35.4 + subárbol @img/* 0.35.4, coherente con package.json/bun.lock/node_modules.
+- npm audit DESPUÉS: 7 vulnerabilities (6 moderate, 1 high) — la entrada sharp (sus 2 advisories) DESAPARECió. Restantes (esperadas, fuera de alcance por requerir majors breaking de UI deps): js-yaml(high) vía @mdxeditor/editor, prismjs vía react-syntax-highlighter, uuid vía exceljs + padres @mdxeditor/editor, react-syntax-highlighter, refractor, exceljs.
+- Integridad: `git diff --stat package.json bun.lock` VACÍO; node_modules/sharp sigue en 0.35.4 (no tocado); solo archivos modificados = package-lock.json + theme-toggle.tsx.
+- Verificación final conjunta: npm test → 117/117 (14 archivos, exit 0); npx tsc --noEmit → 0 errores (exit 0); npm run build → OK (exit 0, rutas /inbox + /manifest.webmanifest presentes, standalone generado).
+
+Stage Summary:
+- Repo con 0 errores de ESLint por primera vez (Task 15: 6 → Task 17-a: 1 → ahora: 0). theme-toggle usa el patrón canónico hydration-safe (useSyncExternalStore), mismo render visible.
+- npm audit: 8 → 7 vulnerabilidades; las 2 falsas advisories de sharp/libvips/libheif eliminadas del reporte al sincronizar el lockfile (el árbol real ya estaba en 0.35.4 desde Task 17-a; ahora el reporte también refleja la verdad).
+- Restantes 7 (js-yaml/prismjs/uuid + padres): requieren majors breaking de @mdxeditor/editor o react-syntax-highlighter o downgrade de exceljs → quedan como decisión de producto (documentado en Task 17-a).
+- Sin push, sin cambios en src/ fuera de theme-toggle.tsx, sin tocar dependencias ni bun.lock ni node_modules.
