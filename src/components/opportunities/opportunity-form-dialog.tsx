@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { ClientCombobox, type ClientOption } from '@/components/ui/client-combobox'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -23,7 +24,7 @@ interface OpportunityFormDialogProps {
 }
 
 export function OpportunityFormDialog({ open, onClose }: OpportunityFormDialogProps) {
-  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([])
+  const [clients, setClients] = useState<ClientOption[]>([])
   const [stages, setStages] = useState<Array<{ id: string; name: string; order: number }>>([])
   const [form, setForm] = useState({
     clientId: '',
@@ -44,11 +45,23 @@ export function OpportunityFormDialog({ open, onClose }: OpportunityFormDialogPr
 
   const loadOptions = async () => {
     try {
+      // 200 = máximo del endpoint. Si la org tiene más clientes, el combobox
+      // completa con búsqueda server-side (remoteSearch) por nombre/teléfono/
+      // cédula/correo — antes solo se cargaban 100 y el resto era imposible
+      // de seleccionar.
       const [clientsData, pipelineData] = await Promise.all([
-        api.getClients({ limit: '100' }),
+        api.getClients({ limit: '200' }),
         api.getPipeline(),
       ])
-      setClients((clientsData.clients as Array<{ id: string; name: string }>) ?? [])
+      setClients(
+        ((clientsData.clients ?? []) as Array<Record<string, unknown>>).map((c) => ({
+          id: String(c.id),
+          name: String(c.name ?? ''),
+          phone: (c.phone as string | null) ?? null,
+          email: (c.email as string | null) ?? null,
+          cedula: (c.cedula as string | null) ?? null,
+        }))
+      )
       const pipelineStages = (pipelineData as { stages: Array<{ id: string; name: string; order: number }> }).stages
       setStages(pipelineStages)
       if (pipelineStages.length > 0 && !form.stageId) {
@@ -57,6 +70,18 @@ export function OpportunityFormDialog({ open, onClose }: OpportunityFormDialogPr
     } catch {
       // silently fail
     }
+  }
+
+  /** Búsqueda server-side para orgs con más de 200 clientes. */
+  const searchClientsRemote = async (query: string): Promise<ClientOption[]> => {
+    const data = await api.getClients({ search: query, limit: '50' })
+    return ((data.clients ?? []) as Array<Record<string, unknown>>).map((c) => ({
+      id: String(c.id),
+      name: String(c.name ?? ''),
+      phone: (c.phone as string | null) ?? null,
+      email: (c.email as string | null) ?? null,
+      cedula: (c.cedula as string | null) ?? null,
+    }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -97,16 +122,14 @@ export function OpportunityFormDialog({ open, onClose }: OpportunityFormDialogPr
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label>Cliente *</Label>
-            <Select value={form.clientId} onValueChange={(v) => setForm((p) => ({ ...p, clientId: v }))}>
-              <SelectTrigger>
-                <SelectValue placeholder="Seleccionar cliente" />
-              </SelectTrigger>
-              <SelectContent>
-                {clients.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Combobox con búsqueda por nombre/teléfono/cédula/correo: con
+                muchos clientes el desplegable plano era inutilizable. */}
+            <ClientCombobox
+              clients={clients}
+              value={form.clientId}
+              onChange={(clientId) => setForm((p) => ({ ...p, clientId }))}
+              remoteSearch={searchClientsRemote}
+            />
           </div>
 
           <div className="space-y-2">

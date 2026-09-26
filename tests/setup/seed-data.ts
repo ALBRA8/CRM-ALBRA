@@ -28,7 +28,7 @@ export const FIX = {
     organizationId: 'org-b',
   },
 
-  clientA1: { id: 'client-a1', organizationId: 'org-a', name: 'Cliente Alpha', email: 'alpha@test.albra', status: 'active' },
+  clientA1: { id: 'client-a1', organizationId: 'org-a', name: 'Cliente Alpha', email: 'alpha@test.albra', phone: '+57 300 111 0000', cedula: 'CC-1023456789', status: 'active' },
   clientA2: { id: 'client-a2', organizationId: 'org-a', name: 'Cliente Gamma', email: 'gamma@test.albra', status: 'prospect' },
   clientB1: { id: 'client-b1', organizationId: 'org-b', name: 'Cliente Beta Org B', email: 'beta@test.albra', status: 'active' },
 

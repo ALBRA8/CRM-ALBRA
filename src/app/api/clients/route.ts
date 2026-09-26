@@ -24,7 +24,14 @@ export async function GET(req: NextRequest) {
 
     const where: Prisma.ClientWhereInput = { organizationId: auth.orgId }
     if (q) {
-      where.OR = [{ name: { contains: q } }, { email: { contains: q } }, { phone: { contains: q } }]
+      // Búsqueda unificada (nombre, correo, teléfono y cédula/DNI): la usa la
+      // lista de clientes y el combobox del formulario de oportunidades.
+      where.OR = [
+        { name: { contains: q } },
+        { email: { contains: q } },
+        { phone: { contains: q } },
+        { cedula: { contains: q } },
+      ]
     }
     if (status) where.status = status
     if (source) where.source = source
