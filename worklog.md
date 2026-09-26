@@ -372,3 +372,21 @@ Work Log:
 Stage Summary:
 - El CRM queda con red de seguridad de tests (74) y paquete de despliegue Docker listo para VPS.
 - Pendiente del usuario: revocar/regenerar el token GitHub expuesto en el chat; primer despliegue real con docker compose up -d --build.
+---
+Task ID: 13
+Agent: main (Super Z)
+Task: Procesar 3ª auditoría (informe pegado en chat): verificar 15 hallazgos contra código real y corregir los confirmados.
+
+Work Log:
+- META-HALLAZGO: la auditoría se corrió sobre la VERSIÓN VIEJA (3 archivos citados NO existen: src/lib/agent/handlers.ts, whatsapp-config-dialog.tsx, api/cron/process-automations; "sin Organization" es del repo single-tenant antiguo).
+- FALSOS/YA-ARREGLADOS verificados con evidencia: H-01 (Organization + 77 organizationId; team filtra por org del token), H-03 (requireAuth en daemon-proxy), H-04 (X-Hub-Signature-256 estricta), H-05 (Telegram 401 sin header + safeEquals), H-07 (disconnectWhatsApp existe en api.ts), H-08 (landing ya "Beta privada" sin precios falsos), H-09 (footer abre Legal Dialog funcional), H-10 (0 resultados 'crm-albra-internal-2024'), H-11 (tokens *Enc cifrados AES-GCM).
+- H-02 REAL → CORREGIDO: eliminado ignoreBuildErrors de next.config.ts; excluidos examples/skills/mini-services del tsconfig (código ajeno a la app con errores preexistentes); tsc --noEmit TOTAL = 0 errores; npm run build con chequeo estricto = OK.
+- H-12 REAL (solo faltaba CI) → CREADO .github/workflows/ci.yml: bun install --frozen-lockfile + prisma generate + tsc --noEmit + vitest (74) + next build, con dummies de env SOLO para tests. Los tests ya existían (Task 12-a).
+- H-15 REAL → CORREGIDO: generado package-lock.json (commit para determinismo Docker) + npm audit fix → 26 vulns (2 críticas, 15 altas) → 8 (6 moderadas, 2 altas, 0 críticas); restantes heredadas de sharp/libvips (requieren upgrade mayor, documentadas). package.json sin cambios (fixes in-range); bun.lock sincronizado. Dockerfile: COPY de ambos lockfiles + npm ci --legacy-peer-deps.
+- H-06/H-13/H-14 (SQLite/disco, scheduler en memoria, floats): REALES por diseño — mitigados para el despliegue objetivo (VPS con volúmenes Docker); PostgreSQL/colas durables/centavos quedan en roadmap (ya estaban documentados en Task 11).
+- Verificación: 74/74 tests, build standalone OK, tsc estricto OK.
+
+Stage Summary:
+- De 15 hallazgos: 9 falsos/ya-arreglados, 3 corregidos ahora (H-02, H-12-CI, H-15), 3 de roadmap conocido (H-06/H-13/H-14).
+- Puntuación real del proyecto actual muy superior al 4.4/10 del informe (que evaluó la versión anterior).
+- Preview caído: el sandbox se recreó hoy y el dev server de la plataforma murió con el .env perdido; .env regenerado con secretos nuevos (login OK verificado); el preview se recupera al reiniciar la sesión. NOTA: tokens de integraciones cifrados con la clave anterior (SMTP/Telegram de orgs) deben re-guardarse en Configuración.

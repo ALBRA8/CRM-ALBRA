@@ -1,0 +1,45 @@
+# CI — CRM ALBRA (cierre H-12 de la auditoría)
+# Pipeline mínimo: instala dependencias con el lockfile de bun,
+# verifica tipos de TypeScript y corre la batería de tests Vitest.
+# El build de producción se valida en cada push (next build ya NO
+# silencia errores de tipos: ver next.config.ts).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests + tipos
+    runs-on: ubuntu-latest
+    env:
+      # Dummy SOLO para tests (nunca son secretos reales: los tests usan
+      # una BD efímera db/test-vitest.db y mockean los canales de envío)
+      APP_SECRET: ci-dummy-secret-test-only-0123456789abcdef
+      APP_ENCRYPTION_KEY: ci-dummy-key-test-only-0123456789abcdef
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Instalar dependencias (lockfile congelado)
+        run: bun install --frozen-lockfile
+
+      - name: Generar cliente Prisma
+        run: bunx prisma generate
+
+      - name: Verificación de tipos (tsc estricto en src/)
+        run: bunx tsc --noEmit
+
+      - name: Batería de tests Vitest
+        run: bun run test
+
+      - name: Build de producción (standalone)
+        run: bun run build

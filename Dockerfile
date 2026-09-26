@@ -36,15 +36,15 @@ WORKDIR /app
 
 # Solo el manifiesto primero → cache de Docker: cambios de código no
 # re-instalan dependencias.
-COPY package.json ./
+COPY package.json package-lock.json* bun.lock* ./
 
-# Este repo hoy versiona bun.lock (no package-lock.json). Si el equipo
-# genera y commitea package-lock.json, npm ci lo usa (instalación
-# reproducible); mientras tanto, npm install resuelve desde package.json.
+# Instalación reproducible: con package-lock.json commiteado, npm ci fija
+# versiones exactas. --legacy-peer-deps por el conflicto peer preexistente
+# (next-auth ↔ nodemailer); sin lock, npm install resuelve desde package.json.
 RUN if [ -f package-lock.json ]; then \
-      npm ci --no-audit --no-fund; \
+      npm ci --legacy-peer-deps --no-audit --no-fund; \
     else \
-      npm install --no-audit --no-fund; \
+      npm install --legacy-peer-deps --no-audit --no-fund; \
     fi
 
 # ------------------------------------------------------------

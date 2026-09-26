@@ -38,6 +38,9 @@
   ],
   "exclude": [
     "node_modules",
-    "repo-compare"
+    "repo-compare",
+    "examples",
+    "skills",
+    "mini-services"
   ]
 }
