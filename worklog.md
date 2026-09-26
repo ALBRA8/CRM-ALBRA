@@ -658,3 +658,21 @@ Stage Summary:
 - FASE 4 COMPLETA AL 100% (menos Stripe, aplazado explícitamente): bandeja omnicanal, IA de cierre + envío directo 3 canales, voz ASR, PWA push + CACHE OFFLINE, y el QR de WhatsApp arreglado de raíz (daemon resiliente + UI honesta con diagnóstico visible). Commit bf1cf0a.
 - El QR ahora se genera y muestra en pantalla; los fallos de conexión se explican al usuario en vez de ocultarse; el daemon se auto-recupera con backoff.
 - En manos del usuario: escanear el QR con su teléfono (Dispositivos vinculados); token GitHub para push; claves Stripe si algún día se retoma.
+---
+Task ID: 22
+Agent: main (Super Z)
+Task: Nueva Oportunidad — buscador de clientes por nombre, teléfono, cédula/DNI o correo (el desplegable plano era inutilizable con muchos clientes).
+
+Work Log:
+- Diagnóstico: el Select plano cargaba solo limit=100 clientes (el resto era imposible de seleccionar) y la API ?search= no cubría cedula. El modelo Client ya tiene name/email/phone/cedula.
+- src/app/api/clients/route.ts: where.OR de búsqueda añade { cedula: { contains: q } }.
+- src/components/ui/client-combobox.tsx (nuevo, reutilizable, sin acoplarse a la API): patrón shadcn Popover+Command con shouldFilter=false; búsqueda LOCAL instantánea con clientMatchesQuery (normalizeSearchText: minúsculas/sin tildes/colapsa espacios; teléfono y cédula también por dígitos >=3 con/sin formato) + SERVIDOR opcional via prop remoteSearch (debounce 300ms, >=2 chars, merge sin duplicados, fallo de red degradado a local); ítems con nombre + línea secundaria (teléfono · cédula · correo); reset del buscador en onOpenChange (evento, no efecto — react-hooks/set-state-in-effect); ancho Popover w-(--radix-popover-trigger-width) (sintaxis Tailwind v4).
+- opportunity-form-dialog.tsx: Select → ClientCombobox; carga 200 (máximo del endpoint) mapeando phone/email/cedula; searchClientsRemote usa api.getClients({search, limit:50}) — con >200 clientes el combobox sigue encontrando a cualquiera.
+- Tests (16 nuevos): unit client-search (normalizeSearchText 2, matches 6, secondaryLine 2 + smoke) + integration clients-search (cédula con/sin prefijo, teléfono '+57 300 111 0000', email/nombre, sin resultados). Semilla: clientA1 con phone '+57 300 111 0000' y cedula 'CC-1023456789' (createMany la inserta tal cual).
+- E2E browser: combobox abre con input enfocado; 'maria' → 1 ítem (María González + tel/correo); '555 0101' sin formato → encuentra; selección queda en el trigger ('María González'); network confirma GET /api/clients?search=… 200 (debounced). Screenshot download/combobox-cliente-busqueda.png.
+- Verificación: npm test 172/172 (21 archivos), tsc 0, eslint 0 (3 archivos), npm run build OK; dev server + daemon restaurados tras el build (200 / waiting_qr).
+
+Stage Summary:
+- Nueva Oportunidad ahora tiene buscador real de clientes: nombre, teléfono, cédula/DNI o correo, con tolerancia a tildes y formato; escala a orgs grandes con fallback server-side. La API /clients también busca por cédula para toda la app (lista de clientes incluida).
+- Bug latente cerrado de paso: el formulario cargaba solo 100 clientes.
+- Otros selects de clientes en la app (si los hay) pueden migrar al mismo ClientCombobox cuando toque.
