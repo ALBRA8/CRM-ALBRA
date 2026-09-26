@@ -390,3 +390,13 @@ Stage Summary:
 - De 15 hallazgos: 9 falsos/ya-arreglados, 3 corregidos ahora (H-02, H-12-CI, H-15), 3 de roadmap conocido (H-06/H-13/H-14).
 - Puntuación real del proyecto actual muy superior al 4.4/10 del informe (que evaluó la versión anterior).
 - Preview caído: el sandbox se recreó hoy y el dev server de la plataforma murió con el .env perdido; .env regenerado con secretos nuevos (login OK verificado); el preview se recupera al reiniciar la sesión. NOTA: tokens de integraciones cifrados con la clave anterior (SMTP/Telegram de orgs) deben re-guardarse en Configuración.
+---
+Task ID: 13 (post: sincronización GitHub)
+Agent: main (Super Z)
+Work Log:
+- Push a GitHub RECHAZADO por scope: el PAT no tiene permiso 'workflow' para publicar .github/workflows/ci.yml.
+- Solución temporal: rama huérfana reconstruida SIN .github (commit eaa93eb, 272 archivos, verificado sin .env/custom.db/.wa-auth) y force push OK → GitHub main = eaa93eb.
+- El ci.yml vive en main local (5a2b0f4) y se publicará con el próximo token que tenga scope workflow.
+
+Stage Summary:
+- GitHub actualizado a v2.2 (tests + Docker + tipos estrictos + deps auditadas). CI pendiente de publicar por scope del token. URGENTE para el usuario: revocar el token actual (sigue activo) y crear uno nuevo con scopes repo + workflow.
