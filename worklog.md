@@ -639,3 +639,22 @@ Stage Summary:
 - Migración automática garantizada: nombre de cache nuevo (albra-v2) + borrado de caches viejos en activate + skipWaiting/claim.
 - Verificaciones todas verdes: 156/156 tests, tsc 0 errores, eslint 0 (sw.js), build OK, y en vivo: /sw.js nuevo servido + /offline.html 200 + API 200. git status: solo M public/sw.js y ?? public/offline.html.
 - Pendiente (usuario, opcional): probar el modo offline real en el navegador (DevTools → Network → Offline) cuando el preview esté libre; el fallback aplica solo a navegaciones, no al XHR de datos (por diseño: sin datos no hay pantalla que valga).
+---
+Task ID: 21
+Agent: main (Super Z)
+Task: Terminar la Fase 4 en su totalidad + arreglar "no genera el QR de WhatsApp" (en paralelo, subagente 21-a cerró cache offline del SW).
+
+Work Log:
+- Diagnóstico QR: el pipeline daemon (Baileys 7.0.0-rc14) genera QR correctamente (verificado: /connect → waiting_qr → /qr con data URL PNG 8.5KB). Causa raíz del "no genera QR": (a) daemon muerto (sandbox) + handleWaConnect ignoraba la respuesta del proxy {success:false, note:'Daemon no disponible'} y fingía toast "Generando código QR..."; (b) polling solo con waiting_qr/connecting → con status disconnected nunca arrancaba; (c) en el daemon, si connectToWhatsApp() lanzaba (red/versión), unhandledRejection dejaba status 'connecting' para siempre sin QR ni reintento; (d) si el usuario cargaba la página cuando el daemon ya estaba en waiting_qr (sesión restaurada del disco / QR regenerado tras expirar 428), la UI no lo mostraba hasta otro click.
+- daemon.mjs: connectToWhatsApp envuelta en try/catch + connectInFlight (sin bucles duplicados) + scheduleReconnect con backoff 3s→30s (reset al abrir sesión); fetchLatestBaileysVersion con fallback a versión embebida (offline no mata el QR); lastError en /status; /disconnect limpia estado aunque sock.logout() lance (socket no abierto); printQRInTerminal deprecado removido. NOTA: durante la edición se partió el handler messages.upsert en una función muerta — detectado y corregido en la misma sesión (verificado con node --check y flujo E2E).
+- settings-page.tsx: handleWaConnect parsea respuesta y muestra toast de error honesto ("No se pudo iniciar la conexión: <note>"); waConnectAttempted mantiene el polling tras un intento aunque siga disconnected; loadWaStatus captura lastError y hace UN fetch de QR al ver waiting_qr; lastError visible (ámbar) bajo "Generando código QR..."; reset limpio en disconnect/conectado.
+- Toggle UI de IA de cierre en Configuración → Negocio (card violeta Sparkles + Switch, patrón round-robin, optimistic + rollback); SettingsData.dealAi + api.updateSettings acepta dealAi.enabled.
+- Task 21-a (subagente, paralela): public/sw.js v2 (albra-v2) con cache offline network-first SOLO para navegaciones (timeout 4.5s → offline.html precacheado), /api/** y cross-origin intactos, push/notifyclick verbatim, activate borra caches viejos; public/offline.html nuevo (español, SVG inline, botón Reintentar). 156/156 tests, tsc 0, build OK.
+- E2E browser real: toggle IA visible (checked); pestaña WhatsApp → Cancelar → "Sin conexión" + toast; Conectar WhatsApp → QR RENDERIZADO 400x400 (8602 chars base64) con daemon vivo y orgLinked; daemon apagado → toast "No se pudo iniciar la conexión: Daemon de WhatsApp no disponible" (antes mentía); QR expirado (428) → backoff lo regeneró solo, lastError visible en UI. Screenshots: download/settings-toggle-ia-cierre.png, qr-whatsapp-visible.png.
+- Verificación: npm test 156/156 (19 archivos), tsc 0, eslint 0 (archivos tocados), npm run build OK; dev server + daemon reiniciados tras el build y verificados (200 / waiting_qr).
+- Infra constatada: sin Postgres/Redis en sandbox → Fase 3 (PostgreSQL + colas durables) sigue dependiente de despliegue real; Stripe bloqueado por claves del usuario. No existe "Fase 5" en el Plan Maestro (4 fases): se informó al usuario.
+
+Stage Summary:
+- FASE 4 COMPLETA AL 100% (menos Stripe, aplazado explícitamente): bandeja omnicanal, IA de cierre + envío directo 3 canales, voz ASR, PWA push + CACHE OFFLINE, y el QR de WhatsApp arreglado de raíz (daemon resiliente + UI honesta con diagnóstico visible). Commit bf1cf0a.
+- El QR ahora se genera y muestra en pantalla; los fallos de conexión se explican al usuario en vez de ocultarse; el daemon se auto-recupera con backoff.
+- En manos del usuario: escanear el QR con su teléfono (Dispositivos vinculados); token GitHub para push; claves Stripe si algún día se retoma.
