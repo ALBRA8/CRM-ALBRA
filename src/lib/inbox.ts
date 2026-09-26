@@ -226,6 +226,77 @@ export async function listInbox(orgId: string, limit = 100): Promise<InboxConver
     .slice(0, limit)
 }
 
+// ---------- canales disponibles por cliente (IA de cierre) ----------
+
+export interface ClientChannelOption {
+  key: string
+  channel: InboxChannel
+  channelLabel: InboxConversation['channelLabel']
+  /** Handle real para ENVIAR: teléfono WA / chatId TG / recipientId IG. */
+  contactHandle: string
+}
+
+/**
+ * Canales con conversación activa para UN cliente (los consume el diálogo de
+ * IA de cierre para ofrecer "Enviar por …"). Misma resolución de handles que el
+ * listado de la bandeja: wa:<convId> desde la tabla del daemon; tg:/ig:<clientId>
+ * con el handle más reciente del timeline. Nunca lanza: un canal que falle
+ * simplemente no se ofrece.
+ */
+export async function listClientChannels(orgId: string, clientId: string): Promise<ClientChannelOption[]> {
+  const options: ClientChannelOption[] = []
+  try {
+    const conv = await db.whatsAppConversation.findFirst({
+      where: { organizationId: orgId, clientId, status: 'active' },
+      orderBy: { lastMessageAt: 'desc' },
+      select: { id: true, contactPhone: true },
+    })
+    if (conv) {
+      options.push({
+        key: makeInboxKey('whatsapp', conv.id),
+        channel: 'whatsapp',
+        channelLabel: 'WhatsApp',
+        contactHandle: conv.contactPhone,
+      })
+    }
+  } catch (err) {
+    console.error('[inbox] canal whatsapp (cliente) no disponible', err)
+  }
+  try {
+    const events = await db.timelineEvent.findMany({
+      where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram'] } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { type: true, metadata: true },
+    })
+    const tg = events.find((e) => e.type === 'telegram' && safeMetadata(e.metadata).chatId)
+    if (tg) {
+      options.push({
+        key: makeInboxKey('telegram', clientId),
+        channel: 'telegram',
+        channelLabel: 'Telegram',
+        contactHandle: String(safeMetadata(tg.metadata).chatId),
+      })
+    }
+    const ig = events.find((e) => {
+      const m = safeMetadata(e.metadata)
+      return e.type === 'instagram' && !!(m.senderId || m.recipientId)
+    })
+    if (ig) {
+      const m = safeMetadata(ig.metadata)
+      options.push({
+        key: makeInboxKey('instagram', clientId),
+        channel: 'instagram',
+        channelLabel: 'Instagram',
+        contactHandle: String(m.senderId || m.recipientId),
+      })
+    }
+  } catch (err) {
+    console.error('[inbox] canales timeline (cliente) no disponibles', err)
+  }
+  return options
+}
+
 // ---------- hilo de mensajes ----------
 
 export async function getInboxMessages(orgId: string, key: string): Promise<InboxMessage[]> {

@@ -9,9 +9,9 @@ import { FIX, jsonBody, req, routeParams, tokenA, tokenB } from '../helpers'
  * contra BD efímera, con el proveedor LLM mockeado (mismo espíritu que el mock
  * global de workflow-engine: ningún test habla con un LLM real).
  *
- * Escenarios: 401 sin sesión · 200 happy path (JSON válido del LLM) ·
- * 404 cross-tenant · 502 respuesta inválida · 503 sin proveedor ·
- * 403 con el toggle dealAiEnabled desactivado.
+ * Escenarios: 401 sin sesión · 200 happy path (JSON válido del LLM + canales
+ * disponibles del cliente) · 404 cross-tenant · 502 respuesta inválida ·
+ * 503 sin proveedor · 403 con el toggle dealAiEnabled desactivado.
  */
 
 // Mock parcial: extractJson real (parser fail-closed), llmChat controlado por test.
@@ -70,6 +70,30 @@ beforeAll(async () => {
       source: 'integration',
     },
   })
+  // Canales del cliente para la respuesta channels[] del endpoint:
+  // conversación activa de WhatsApp (daemon) + hilo Telegram con chatId.
+  await db.whatsAppConversation.create({
+    data: {
+      organizationId: FIX.orgA.id,
+      clientId: FIX.clientA1.id,
+      contactPhone: '+573001110000',
+      contactName: 'Cliente Alpha WA',
+      lastMessage: '¿Me pasas la propuesta?',
+      lastMessageAt: new Date('2026-01-12T10:00:00Z'),
+      lastMessageFrom: 'in',
+    },
+  })
+  await db.timelineEvent.create({
+    data: {
+      organizationId: FIX.orgA.id,
+      clientId: FIX.clientA1.id,
+      type: 'telegram',
+      title: 'tg in',
+      description: 'Pregunta por Telegram',
+      metadata: JSON.stringify({ chatId: '555099', direction: 'in' }),
+      source: 'integration',
+    },
+  })
 
   // Oportunidad de org-b (para verificar aislamiento cross-tenant)
   await db.opportunity.create({
@@ -111,6 +135,13 @@ describe('POST /api/opportunities/:id/ai-suggest — generación con LLM mockead
     const userMsg = messages.find((m) => m.role === 'user')
     expect(String(userMsg?.content)).toContain('Implementación CRM Alfa')
     expect(String(userMsg?.content)).toContain('sent · USD 5000') // cotización incluida en el contexto
+    // Canales del cliente con conversación activa (para "Enviar por …")
+    const channels = body.channels as Array<{ key: string; channel: string; channelLabel: string; contactHandle: string }>
+    expect(channels.map((c) => c.channelLabel).sort()).toEqual(['Telegram', 'WhatsApp'])
+    expect(channels.find((c) => c.channel === 'whatsapp')?.key).toMatch(/^wa:/)
+    expect(channels.find((c) => c.channel === 'whatsapp')?.contactHandle).toBe('+573001110000')
+    expect(channels.find((c) => c.channel === 'telegram')?.key).toBe(`tg:${FIX.clientA1.id}`)
+    expect(channels.find((c) => c.channel === 'telegram')?.contactHandle).toBe('555099')
   })
 
   it('respuesta basura del LLM → 502 descriptivo (nunca 500 críptico)', async () => {

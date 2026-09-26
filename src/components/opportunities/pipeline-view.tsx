@@ -107,13 +107,18 @@ export function PipelineView() {
     if (aiLoadingId) return
     setAiLoadingId(opp.id)
     try {
-      const result = await api.getDealAiSuggestion(opp.id) as { suggestion: DealAiDialogData['suggestion'] }
+      const result = await api.getDealAiSuggestion(opp.id) as {
+        suggestion: DealAiDialogData['suggestion']
+        channels: DealAiDialogData['channels']
+      }
       setAiDialogData({
         oppId: opp.id,
         oppTitle: opp.title,
+        clientId: opp.client.id,
         clientName: opp.client.name,
         currentProbability: opp.probability,
         suggestion: result.suggestion,
+        channels: result.channels ?? [],
       })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'No se pudo obtener la sugerencia de IA')

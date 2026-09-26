@@ -555,3 +555,21 @@ Work Log:
 Stage Summary:
 - IA de cierre verificada END-TO-END en vivo con LLM real (fallback SDK): sugerencia → diálogo → aplicar → tarjeta actualizada. Commits: b91716d (feature) + este fix de restyle.
 - Pendiente operativo documentado: si se añaden campos al schema Prisma, reiniciar el dev server tras el db push.
+---
+Task ID: 19
+Agent: main (Super Z)
+Task: Envío directo del mensaje sugerido por la IA de cierre vía canales (WhatsApp/Telegram/Instagram) desde el diálogo.
+
+Work Log:
+- Petición del usuario aprobada: "que el mensaje sugerido se pueda enviar directo por WhatsApp/Telegram desde el diálogo".
+- src/lib/inbox.ts: listClientChannels(orgId, clientId) — canales con conversación activa de UN cliente, misma resolución de handles que la bandeja (wa:<convId> desde tabla del daemon; tg:/ig:<clientId> con chatId/senderId más reciente del timeline). Nunca lanza: canal que falla no se ofrece.
+- Endpoint POST /api/opportunities/[id]/ai-suggest: ahora devuelve { suggestion, channels } (clientId de la opp con findFirst acotado + listClientChannels).
+- deal-ai-dialog.tsx: interfaces DealAiChannel + clientId/channels en DealAiDialogData; botones "Enviar por <canal>" (Send icon, verde outline) bajo el mensaje; handleSend → api.sendInboxMessage({ key, contactHandle, clientId, text }) (mismo endpoint /api/inbox/send que la Bandeja: daemon WA / Bot API TG / Graph API IG, timeline source=manual); sendingKey por canal; errores → toast con el mensaje descriptivo del servidor.
+- pipeline-view.tsx: pasa clientId (opp.client.id) y channels de la respuesta al diálogo.
+- Tests (integration deal-ai): sembrada conversación WA activa (+573001110000) + timeline Telegram (chatId 555099) para clientA1; happy path assertion: channels = [WhatsApp(wa:..., +573001110000), Telegram(tg:<id>, 555099)].
+- Verificación: npm test 136/136, tsc 0 errores, eslint 0, npm run build OK (27s).
+- E2E browser (demo login): tarjeta de María González (opp con conversación WA) → diálogo muestra "Enviar por WhatsApp"; click con daemon caído → toast "No se pudo enviar el mensaje. Intenta de nuevo." (400 descriptivo, sin crash, diálogo persiste). Camino feliz WA ya cubierto por tests de integración de la Bandeja (mismo endpoint). Screenshots: download/ia-envio-whatsapp.png.
+
+Stage Summary:
+- IA de cierre ahora cierra el círculo comercial: sugiere → aplica → ENVÍA el mensaje por el canal real del cliente (un solo camino de envío: inbox/send, trazabilidad idéntica a la Bandeja).
+- Pendiente operativo: para envío WA real hace falta el daemon corriendo (wa:daemon); TG/IG requieren tokens configurados en Configuración.
