@@ -714,3 +714,19 @@ Stage Summary:
 - Llave NVIDIA validada en vivo (200). Regla: campo "apiKey" = solo la llave nvapi-...; el prefijo "Bearer " lo agrega el cliente OpenAI/OpenClaw automáticamente.
 - kimi-k3 hoy cuelga (>90s sin respuesta), kimi-k2.6 no enrutable para esta cuenta; deepseek-v4.1-flash verificado funcionando.
 - Corregir en config OpenClaw: kimi-k2.5 → no existe ya; ejemplo llama-3.2-3b EOL.
+
+---
+Task ID: 25
+Agent: main (Super Z)
+Task: Seleccionar cerebro estable y multimodal (texto+visión) para el CRM en el endpoint gratuito de NVIDIA; probar estabilidad de glm-5.3-flash.
+
+Work Log:
+- Usuario rotó la llave NVIDIA (nvapi-THrlN-...). Nueva llave validada: GET /models → 200, 81 modelos.
+- Escrito scripts/test_cerebros_nvidia.py (persistido, re-ejecutable): PNG roja 64x64 generada sin dependencias (zlib/struct) como data URI + pregunta "¿de qué color?"; mide latencia y fallos, N runs por modelo.
+- Ronda 1 (bug de selección: tomó glm-5.3 grande en vez de -flash): glm-5.3 (753B) 0/3 texto, 0/2 visión (hangs); deepseek-v4.1-flash 3/3 texto (7-13s) + 2/2 visión correcta "Rojo"; muse-glimmer-30b visión OK 1.6s pero texto consumió max_tokens=64 en reasoning; kimi-k3 control 0/1 hang.
+- Ronda 2 (glm-5.3-flash + muse con max_tokens=1024): glm-5.3-flash 3/3 texto (9-23s) + 2/2 visión (11.5-20s) respuestas correctas (391, Rojo); deepseek 3/3 + 2/2 (visión 6.6-8.6s); muse-glimmer-30b 2/2 texto 0.8-1.1s + 1/1 visión 1.8s correctas (¡ultra rápido!); kimi-k3 0/1 y glm-5.3 grande 0/1 (60s) — confirmados inestables en tier gratuito.
+- Conclusiones entregadas: regla práctica "flash/active pequeño = estable; gigantes frontiera en tier gratis = lotería". Los 3 estables aceptan image_url base64 data URI (CRM puede mandar imágenes sin URLs públicas). ASR parakeet-tdt-0.6b es solo "Downloadable" (sin endpoint hospedado) → voz en VPS sigue pendiente de proveedor.
+
+Stage Summary:
+- Cerebro recomendado para el CRM: z-ai/glm-5.3-flash (multimodal estable, familia GLM); backup: deepseek-ai/deepseek-v4.1-flash; utilidades rápidas: meta/muse-glimmer-30b. Enchufe del CRM (Configuración → Agente IA): baseUrl https://integrate.api.nvidia.com/v1 + llave nvapi-... + modelo. Enchufe hot-swappable sin código.
+- Script de batería re-ejecutable en scripts/test_cerebros_nvidia.py (pasa llave por constante — rotarla tras pruebas).
