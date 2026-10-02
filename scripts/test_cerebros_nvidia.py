@@ -5,9 +5,12 @@ Batería de estabilidad de "cerebros" NVIDIA NIM para el CRM ALBRA.
 Prueba: texto (N runs) + visión (imagen PNG roja como data URI) por modelo.
 Mide latencia, fallos y muestra veredicto. Todo contra el endpoint gratuito.
 """
-import json, time, urllib.request, urllib.error, zlib, struct, sys
+import json, time, urllib.request, urllib.error, zlib, struct, sys, os
 
-KEY = "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"
+# SEGURIDAD: la llave NUNCA va en el código (leer del entorno).
+KEY = os.environ.get("NVIDIA_KEY", "")
+if not KEY:
+    sys.exit("Define NVIDIA_KEY en el entorno (export NVIDIA_KEY=nvapi-...)")
 BASE = "https://integrate.api.nvidia.com/v1"
 TEXT_TIMEOUT = 30
 VISION_TIMEOUT = 45
