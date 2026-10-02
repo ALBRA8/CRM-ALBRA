@@ -751,3 +751,20 @@ Stage Summary:
 - FASE 5 COMPLETA: el arnés tiene hipocampo. El agente recuerda conversaciones por similitud semántica por cliente, consolida hechos duraderos, y aprende del estilo del vendedor con cada corrección. Modo degradado sin embeddings (recencia) garantiza que nunca rompe el flujo.
 - Para activar modo vectorial en el preview/VPS: Configuración → Agente IA → pegar baseUrl+key del proveedor + modelo de embeddings (nvidia/nemotron-3-embed-1b en NVIDIA).
 - Commit en rama local; pendiente push (token GitHub del usuario).
+
+---
+Task ID: 27
+Agent: main (Super Z)
+Task: Responder "¿ya tenemos eso?" — verificar/activar la memoria vectorial del CRM y comparar funcionalmente contra el memory.db real de OpenClaw (subido por el usuario).
+
+Work Log:
+- Inspeccionado upload/memory.db de OpenClaw SOLO a nivel de esquema (scripts/inspect_memory_schema.py, mode=ro, sin usar el contenido): tabla `memory` = log apéndice (id, role, content, timestamp, tool_calls, tool_call_id, name; 581 filas) SIN vectores, SIN FTS, SIN índice semántico dentro de la BD. Tablas extra de estado de agente: goals, cron_jobs, pending_actions, world_state, oauth_tokens, bg_processes, configuracion (llm_provider=nvidia).
+- Verificado CRM: la Fase 5 (Task 26) ya dejó src/lib/memory.ts completo (ConversationEmbedding + AgentMemory + AgentCorrection, recall coseno top-K + ancla recencia, consolidación con dedup 0.92, lecciones de estilo few-shot, degradación elegante) y wire en channel-agent/deal-ai/chat/inbox. Pero DORMIDA en el preview: Settings sin llave/baseUrl/embedModel → modo recencia.
+- Escrito scripts/activate_vector_memory.ts (diagnóstico + activación + prueba en vivo por el camino real del CRM: embedTexts→NVIDIA). Activado org ALBRA Demo: llmBaseUrl https://integrate.api.nvidia.com/v1, llmModel z-ai/glm-5.3-flash, llmEmbedModel nvidia/nemotron-3-embed-1b, llave cifrada AES-256-GCM vía encryptSecret.
+- Prueba en vivo: embeddings 2048 dims OK; coseno consulta↔similar 0.594 vs consulta↔ajena 0.129 → contraste semántico correcto.
+- Estado de datos: 0 fragmentos (empieza a llenar desde ahora), 1 lección de estilo registrada.
+
+Stage Summary:
+- RESPUESTA: SÍ ya lo tenemos (Fase 5), estaba dormido; ahora ACTIVO en el preview. En la función de memoria, el CRM hace MÁS que el memory.db inspeccionado (ese es solo log episódico sin búsqueda; la búsqueda semántica de OpenClaw vive en otra capa).
+- Brecha funcional real del memory.db: pending_actions (aprobación humana de acciones del agente), goals, cron_jobs → candidatos a Fase 6 mapeados a CRM (agente propone acción → vendedor aprueba; seguimientos programados).
+- Pendiente: rotar llave NVIDIA (expuesta en chat) y actualizarla en Configuración → Agente IA tras rotarla.
