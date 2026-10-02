@@ -60,6 +60,7 @@ import {
   Download,
   Upload,
   Instagram,
+  Search,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
@@ -90,6 +91,7 @@ interface LlmSettings {
   apiKeyPreview: string
   baseUrl: string
   model: string
+  embedModel: string
 }
 
 interface AppSettings {
@@ -118,6 +120,23 @@ interface SettingsData {
   dealAi?: {
     enabled: boolean
   }
+}
+
+interface MemoryStats {
+  fragments: number
+  withVectors: number
+  facts: number
+  corrections: number
+  pendingConsolidation: number
+  vectorMode: boolean
+}
+
+interface MemoryResult {
+  kind: 'conversation' | 'fact'
+  text: string
+  channel: string
+  createdAt: string
+  score: number | null
 }
 
 interface WaStatus {
@@ -165,6 +184,152 @@ const PROVIDERS = [
   },
 ]
 
+/**
+ * Fase 5: tarjeta de la memoria vectorial del agente (stats, playground de
+ * búsqueda semántica y consolidación manual de hechos duraderos).
+ */
+function AgentMemoryCard() {
+  const [stats, setStats] = useState<MemoryStats | null>(null)
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<MemoryResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [consolidating, setConsolidating] = useState(false)
+  const [searched, setSearched] = useState(false)
+
+  const loadStats = useCallback(async () => {
+    try {
+      const data = await api.getMemoryVector() as { stats: MemoryStats }
+      setStats(data.stats)
+    } catch {
+      // silencioso: la tarjeta muestra ceros si la API aún no tiene datos
+    }
+  }, [])
+
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
+
+  const handleSearch = async () => {
+    if (!query.trim()) return
+    setSearching(true)
+    try {
+      const data = await api.getMemoryVector({ q: query.trim() }) as { results?: MemoryResult[] }
+      setResults(data.results ?? [])
+      setSearched(true)
+    } catch {
+      toast.error('No se pudo buscar en la memoria')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const handleConsolidate = async () => {
+    setConsolidating(true)
+    try {
+      const data = await api.consolidateMemory() as { newFacts?: number }
+      toast.success(
+        (data.newFacts ?? 0) > 0
+          ? `Memoria consolidada: ${data.newFacts} hecho(s) nuevo(s) guardado(s)`
+          : 'No había fragmentos suficientes para consolidar (se necesitan 4 o más)'
+      )
+      await loadStats()
+    } catch {
+      toast.error('No se pudo consolidar la memoria')
+    } finally {
+      setConsolidating(false)
+    }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.12 }}>
+      <Card className="border-0 shadow-sm">
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-sky-50 rounded-lg flex items-center justify-center">
+              <Database className="w-5 h-5 text-sky-600" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Memoria del agente</CardTitle>
+              <CardDescription>
+                Recuerda conversaciones y hechos de cada cliente con búsqueda semántica
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {/* Stats */}
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" className="text-xs">{stats?.fragments ?? 0} fragmentos</Badge>
+            <Badge variant="outline" className="text-xs">{stats?.withVectors ?? 0} con vectores</Badge>
+            <Badge variant="outline" className="text-xs">{stats?.facts ?? 0} hechos</Badge>
+            <Badge variant="outline" className="text-xs">{stats?.corrections ?? 0} lecciones de estilo</Badge>
+            <Badge variant="outline" className="text-xs">{stats?.pendingConsolidation ?? 0} sin consolidar</Badge>
+            <Badge className={`text-xs ${stats?.vectorMode ? 'bg-emerald-600' : 'bg-slate-400'}`}>
+              {stats?.vectorMode ? 'Modo vectorial activo' : 'Modo recencia (sin embeddings)'}
+            </Badge>
+          </div>
+          {!stats?.vectorMode && (
+            <p className="text-xs text-slate-400">
+              Para activar el modo vectorial configura el modelo de embeddings (ej.{' '}
+              <span className="font-mono">nvidia/nemotron-3-embed-1b</span>) junto a tu proveedor de IA.
+            </p>
+          )}
+
+          <Separator />
+
+          {/* Playground de búsqueda semántica */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium flex items-center gap-2">
+              <Search className="w-4 h-4 text-slate-500" />
+              ¿Qué recuerda el agente?
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
+                placeholder="Ej: ¿cuándo mencionó entregas los sábados?"
+                className="text-sm"
+              />
+              <Button variant="outline" size="sm" onClick={handleSearch} disabled={searching || !query.trim()} className="flex-shrink-0">
+                {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              </Button>
+            </div>
+            {searched && results.length === 0 && (
+              <p className="text-xs text-slate-400">Sin recuerdos para esa búsqueda todavía.</p>
+            )}
+            {results.length > 0 && (
+              <div className="space-y-1.5">
+                {results.map((r, i) => (
+                  <div key={i} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <Badge variant="secondary" className="text-[10px] h-4">{r.kind === 'fact' ? 'hecho' : r.channel}</Badge>
+                      <span className="text-[10px] text-slate-400">{r.createdAt.slice(0, 10)}</span>
+                      {r.score !== null && <span className="text-[10px] text-emerald-600 ml-auto">{Math.round(r.score * 100)}%</span>}
+                    </div>
+                    <p className="text-xs text-slate-700 line-clamp-2">{r.text}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Consolidación manual */}
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-slate-400">
+              Convierte las conversaciones recientes en hechos duraderos que el agente siempre recuerda.
+            </p>
+            <Button variant="outline" size="sm" onClick={handleConsolidate} disabled={consolidating} className="flex-shrink-0">
+              {consolidating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1.5" />}
+              Consolidar memoria
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  )
+}
+
 export function SettingsPage() {
   const [settings, setSettings] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -177,6 +342,8 @@ export function SettingsPage() {
   const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1')
   const [model, setModel] = useState('gpt-4o-mini')
   const [customModel, setCustomModel] = useState('')
+  // Fase 5: modelo de embeddings de la memoria vectorial
+  const [embedModel, setEmbedModel] = useState('')
 
   // Fase 2: round-robin de leads
   const [autoAssignLeads, setAutoAssignLeads] = useState(true)
@@ -286,6 +453,7 @@ export function SettingsPage() {
       setSettings(data)
       setBaseUrl(data.llm.baseUrl)
       setModel(data.llm.model)
+      setEmbedModel(data.llm.embedModel || '')
       setAutoAssignLeads(data.leadRouting?.autoAssign ?? true)
       setDealAiEnabled(data.dealAi?.enabled ?? true)
 
@@ -728,6 +896,7 @@ export function SettingsPage() {
           apiKey: apiKey || undefined,
           baseUrl,
           model: finalModel,
+          embedModel,
         },
       })
 
@@ -1012,6 +1181,24 @@ export function SettingsPage() {
                   )}
                 </div>
 
+                {/* Modelo de embeddings (memoria vectorial, Fase 5) */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Database className="w-4 h-4 text-slate-500" />
+                    Modelo de embeddings (memoria vectorial)
+                  </Label>
+                  <Input
+                    type="text"
+                    value={embedModel}
+                    onChange={(e) => setEmbedModel(e.target.value)}
+                    placeholder="nvidia/nemotron-3-embed-1b (vacío = memoria por recencia)"
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-slate-400">
+                    Usa el mismo proveedor de arriba. Debe ser un modelo de embeddings de ese proveedor (no un modelo de chat).
+                  </p>
+                </div>
+
                 {/* Save Button */}
                 <div className="flex items-center justify-between pt-2">
                   <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -1039,6 +1226,9 @@ export function SettingsPage() {
               </CardContent>
             </Card>
           </motion.div>
+
+          {/* Memoria vectorial del agente (Fase 5) */}
+          <AgentMemoryCard />
 
           {/* Base de Conocimiento del Agente */}
           <KnowledgeCard />

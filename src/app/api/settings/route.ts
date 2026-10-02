@@ -55,6 +55,8 @@ export async function GET(req: NextRequest) {
         baseUrl: settings?.llmBaseUrl || '',
         model: settings?.llmModel || '',
         provider: settings?.llmProvider || null,
+        // Fase 5: modelo de embeddings de la memoria vectorial (vacío → modo recencia)
+        embedModel: settings?.llmEmbedModel || '',
       },
       email: {
         configured: smtpConfigured,
@@ -88,6 +90,7 @@ interface SettingsBody {
     baseUrl?: string | null
     model?: string | null
     provider?: string | null
+    embedModel?: string | null
   }
   leadRouting?: {
     autoAssign?: boolean
@@ -112,7 +115,7 @@ export async function PUT(req: NextRequest) {
       data.dealAiEnabled = body.dealAi.enabled
     }
     if (body.llm) {
-      const { apiKey, baseUrl, model, provider } = body.llm
+      const { apiKey, baseUrl, model, provider, embedModel } = body.llm
       if (apiKey !== undefined && apiKey !== null && apiKey.trim() !== '') {
         data.llmApiKeyEnc = encryptSecret(apiKey.trim())
         // Si el usuario no especifica provider, infiérelo del baseUrl
@@ -120,6 +123,8 @@ export async function PUT(req: NextRequest) {
       }
       if (baseUrl !== undefined) data.llmBaseUrl = baseUrl ? String(baseUrl).trim() : null
       if (model !== undefined) data.llmModel = model ? String(model).trim() : null
+      // Fase 5: modelo de embeddings; vacío → memoria vectorial en modo recencia
+      if (embedModel !== undefined) data.llmEmbedModel = embedModel ? String(embedModel).trim() : null
       if (provider !== undefined) {
         if (provider === null || provider === '') data.llmProvider = null
         else if (['openai', 'groq', 'together', 'custom', 'zai'].includes(provider)) data.llmProvider = provider

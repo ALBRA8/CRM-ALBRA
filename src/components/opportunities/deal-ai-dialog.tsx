@@ -5,15 +5,18 @@ import { api } from '@/lib/api'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, Sparkles, Copy, Check, ArrowUpRight, ArrowDownRight, Minus, Send, Info } from 'lucide-react'
+import { Textarea } from '@/components/ui/textarea'
+import { Loader2, Sparkles, Copy, Check, ArrowUpRight, ArrowDownRight, Minus, Send, Info, PenLine } from 'lucide-react'
 import { toast } from 'sonner'
 
 /**
  * Diálogo de IA de cierre (Fase 4): muestra la sugerencia generada para una
  * oportunidad (probabilidad, siguiente acción, mensaje y razonamiento) y
- * permite aplicarla (PUT /api/opportunities/:id), copiar el mensaje o enviarlo
- * directo por los canales con conversación activa (POST /api/inbox/send —
- * misma trazabilidad que la Bandeja: daemon WA / Bot API TG / Graph API IG).
+ * permite aplicarla (PUT /api/opportunities/:id), copiar el mensaje, EDITARLO
+ * (auto-mejora Fase 5: la edición se guarda como lección de estilo para el
+ * agente vía POST /api/agent/corrections) o enviarlo directo por los canales
+ * con conversación activa (POST /api/inbox/send — misma trazabilidad que la
+ * Bandeja: daemon WA / Bot API TG / Graph API IG).
  */
 
 export interface DealAiSuggestion {
@@ -49,18 +52,44 @@ interface DealAiDialogProps {
   onApplied: () => void
 }
 
-export function DealAiDialog({ open, data, onClose, onApplied }: DealAiDialogProps) {
-  const [applying, setApplying] = useState(false)
+/**
+ * Bloque editable del mensaje sugerido (Fase 5 auto-mejora).
+ * Componente interno con estado propio: se remonta por `key` cuando cambia la
+ * sugerencia, así el textarea siempre arranca con el texto nuevo sin efectos.
+ * Si el vendedor edita el mensaje antes de enviarlo, el par original→final se
+ * guarda como lección de estilo (fire-and-forget; nunca bloquea el envío).
+ */
+function MessageSendBlock({
+  initial,
+  clientId,
+  channels,
+  disabled,
+  onAfterSend,
+}: {
+  initial: string
+  clientId: string | null
+  channels: DealAiChannel[]
+  disabled: boolean
+  onAfterSend: () => void
+}) {
+  const [message, setMessage] = useState(initial)
   const [copied, setCopied] = useState(false)
   const [sendingKey, setSendingKey] = useState<string | null>(null)
+  const edited = message.trim() !== initial.trim()
 
-  if (!data) return null
-  const { suggestion } = data
-  const delta = suggestion.probability - data.currentProbability
+  const learnCorrection = () => {
+    if (!edited) return
+    // Fire-and-forget: la lección de estilo no puede retrasar ni tumbar el envío.
+    void fetch('/api/agent/corrections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ original: initial, final: message.trim(), clientId }),
+    }).catch(() => {})
+  }
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(suggestion.suggestedMessage)
+      await navigator.clipboard.writeText(message)
       setCopied(true)
       toast.success('Mensaje copiado al portapapeles')
       setTimeout(() => setCopied(false), 2000)
@@ -69,25 +98,75 @@ export function DealAiDialog({ open, data, onClose, onApplied }: DealAiDialogPro
     }
   }
 
-  // Envío directo del mensaje sugerido por un canal con conversación activa.
-  // Reutiliza POST /api/inbox/send (mismo camino que la Bandeja omnicanal).
   const handleSend = async (channel: DealAiChannel) => {
-    if (sendingKey) return
+    if (sendingKey || !message.trim()) return
     setSendingKey(channel.key)
     try {
       await api.sendInboxMessage({
         key: channel.key,
         contactHandle: channel.contactHandle,
-        clientId: data.clientId,
-        text: suggestion.suggestedMessage,
+        clientId,
+        text: message.trim(),
       })
-      toast.success(`Mensaje enviado por ${channel.channelLabel}`)
+      learnCorrection()
+      toast.success(edited ? `Mensaje ajustado y enviado por ${channel.channelLabel} (el agente aprendió tu estilo)` : `Mensaje enviado por ${channel.channelLabel}`)
+      onAfterSend()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : `No se pudo enviar por ${channel.channelLabel}`)
     } finally {
       setSendingKey(null)
     }
   }
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1 flex items-center gap-1">
+        Mensaje sugerido
+        {edited && (
+          <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 normal-case tracking-normal">
+            <PenLine className="w-3 h-3" /> editado — el agente aprende tu estilo
+          </span>
+        )}
+      </p>
+      <Textarea
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        rows={4}
+        className="text-sm bg-slate-50 resize-none"
+        aria-label="Mensaje sugerido por la IA, editable"
+      />
+      {channels.length > 0 ? (
+        <div className="flex flex-wrap gap-2 mt-2">
+          {channels.map((c) => (
+            <Button
+              key={c.key}
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+              onClick={() => handleSend(c)}
+              disabled={!!sendingKey || disabled || !message.trim()}
+            >
+              {sendingKey === c.key ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Send className="w-3.5 h-3.5 mr-1.5" />}
+              Enviar por {c.channelLabel}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <p className="flex items-start gap-1.5 text-xs text-slate-400 mt-2">
+          <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          Este cliente no tiene canales activos conectados. Copia el mensaje y envíalo manualmente.
+        </p>
+      )}
+    </div>
+  )
+}
+
+export function DealAiDialog({ open, data, onClose, onApplied }: DealAiDialogProps) {
+  const [applying, setApplying] = useState(false)
+
+  if (!data) return null
+  const { suggestion } = data
+  const delta = suggestion.probability - data.currentProbability
 
   const handleApply = async () => {
     setApplying(true)
@@ -139,34 +218,14 @@ export function DealAiDialog({ open, data, onClose, onApplied }: DealAiDialogPro
           )}
 
           {suggestion.suggestedMessage && (
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Mensaje sugerido</p>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 whitespace-pre-wrap">
-                {suggestion.suggestedMessage}
-              </div>
-              {data.channels.length > 0 ? (
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {data.channels.map((c) => (
-                    <Button
-                      key={c.key}
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                      onClick={() => handleSend(c)}
-                      disabled={!!sendingKey || applying}
-                    >
-                      {sendingKey === c.key ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Send className="w-3.5 h-3.5 mr-1.5" />}
-                      Enviar por {c.channelLabel}
-                    </Button>
-                  ))}
-                </div>
-              ) : (
-                <p className="flex items-start gap-1.5 text-xs text-slate-400 mt-2">
-                  <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  Este cliente no tiene canales activos conectados. Copia el mensaje y envíalo manualmente.
-                </p>
-              )}
-            </div>
+            <MessageSendBlock
+              key={`${data.oppId}-${suggestion.suggestedMessage.slice(0, 40)}`}
+              initial={suggestion.suggestedMessage}
+              clientId={data.clientId}
+              channels={data.channels}
+              disabled={applying}
+              onAfterSend={() => {}}
+            />
           )}
 
           {suggestion.reasoning && (
@@ -175,12 +234,6 @@ export function DealAiDialog({ open, data, onClose, onApplied }: DealAiDialogPro
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          {suggestion.suggestedMessage && (
-            <Button variant="outline" size="sm" onClick={handleCopy} disabled={applying}>
-              {copied ? <Check className="w-4 h-4 mr-1.5 text-emerald-600" /> : <Copy className="w-4 h-4 mr-1.5" />}
-              {copied ? 'Copiado' : 'Copiar mensaje'}
-            </Button>
-          )}
           <Button
             onClick={handleApply}
             disabled={applying}

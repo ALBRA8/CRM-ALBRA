@@ -439,8 +439,22 @@ class ApiClient {
     return this.request('/settings')
   }
 
-  async updateSettings(data: { llm?: { apiKey?: string; baseUrl?: string; model?: string }; leadRouting?: { autoAssign?: boolean }; dealAi?: { enabled?: boolean } }) {
+  async updateSettings(data: { llm?: { apiKey?: string; baseUrl?: string; model?: string; embedModel?: string }; leadRouting?: { autoAssign?: boolean }; dealAi?: { enabled?: boolean } }) {
     return this.request('/settings', { method: 'PUT', body: JSON.stringify(data) })
+  }
+
+  // Fase 5: memoria vectorial del agente
+  async getMemoryVector(params: { q?: string; clientId?: string; k?: number } = {}) {
+    const usp = new URLSearchParams()
+    if (params.q) usp.set('q', params.q)
+    if (params.clientId) usp.set('clientId', params.clientId)
+    if (params.k) usp.set('k', String(params.k))
+    const qs = usp.toString()
+    return this.request(`/memory/vector${qs ? `?${qs}` : ''}`)
+  }
+
+  async consolidateMemory(clientId?: string) {
+    return this.request('/memory/vector', { method: 'POST', body: JSON.stringify(clientId ? { clientId } : {}) })
   }
 
   async clearSettingsApiKey() {

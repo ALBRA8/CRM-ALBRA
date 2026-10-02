@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { sendInboxMessage, parseInboxKey, parseWaNewKey } from '@/lib/inbox'
+import { rememberMessage, maybeConsolidate } from '@/lib/memory'
 
 /**
  * POST /api/inbox/send — envía un mensaje por el canal de la conversación.
@@ -37,6 +38,11 @@ export async function POST(req: NextRequest) {
       text: String(body.text || ''),
     })
     if (!result.ok) return json({ error: result.error }, { status: 400 })
+    // Memoria vectorial (Fase 5): el mensaje saliente del vendedor también
+    // alimenta el recuerdo del cliente. Fire-and-forget: nunca bloquea el envío.
+    const channel = key.startsWith('wa') ? 'whatsapp' : key.startsWith('tg') ? 'telegram' : 'instagram'
+    void rememberMessage({ orgId: auth.orgId, clientId: body.clientId || null, channel, role: 'outgoing', text: String(body.text || '') })
+    maybeConsolidate(auth.orgId, body.clientId || null)
     return json({ success: true, sent: true })
   })
 }

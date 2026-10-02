@@ -3,6 +3,7 @@ import { HttpError } from './auth'
 import { llmChat, extractJson } from './ai'
 import { buildNichoContext } from './integrations'
 import { buildKnowledgeContext } from './knowledge'
+import { recallContext, recallStyleLessons } from './memory'
 import { parseOppMeta } from '../app/api/_lib/opportunities'
 import { loadClientAttrs } from '../app/api/_lib/clients'
 
@@ -194,7 +195,7 @@ export async function suggestDealClose(orgId: string, opportunityId: string): Pr
   })
   if (!opp) throw new HttpError(404, 'Oportunidad no encontrada')
 
-  const [attrsMap, quotes, timeline, nichoContext, knowledgeContext] = await Promise.all([
+  const [attrsMap, quotes, timeline, nichoContext, knowledgeContext, memoryBlock, styleBlock] = await Promise.all([
     opp.client ? loadClientAttrs(orgId, [opp.client.id]) : Promise.resolve(new Map()),
     db.quote.findMany({
       where: { opportunityId: opp.id },
@@ -210,15 +211,30 @@ export async function suggestDealClose(orgId: string, opportunityId: string): Pr
     }),
     buildNichoContext(orgId),
     buildKnowledgeContext(orgId),
+    // Memoria vectorial del cliente + lecciones de estilo (Fase 5). Degradación
+    // elegante: si no hay memoria/embeddings devuelven '' y el prompt no cambia.
+    recallContext({
+      orgId,
+      clientId: opp.client?.id ?? null,
+      query: `${opp.title} ${opp.client?.name ?? ''} ${opp.notes ?? ''}`.trim(),
+    }),
+    recallStyleLessons({
+      orgId,
+      clientId: opp.client?.id ?? null,
+      query: `${opp.title} ${opp.notes ?? ''}`.trim(),
+    }),
   ])
 
   const temperature = attrsMap.get(opp.client?.id ?? '')?.temperature ?? null
   const ctx = buildDealContext(opp, { temperature, quotes, timeline })
 
   const messages = buildDealMessages(ctx)
-  // El nicho y el conocimiento del negocio dan tono y hechos al mensaje sugerido.
+  // El nicho, el conocimiento, la memoria del cliente y el estilo del vendedor
+  // dan tono y hechos al mensaje sugerido.
   if (nichoContext) messages.push({ role: 'system', content: nichoContext })
   if (knowledgeContext) messages.push({ role: 'system', content: knowledgeContext })
+  if (memoryBlock) messages.push({ role: 'system', content: memoryBlock })
+  if (styleBlock) messages.push({ role: 'system', content: styleBlock })
 
   let raw: string
   try {

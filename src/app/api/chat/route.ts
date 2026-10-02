@@ -7,6 +7,7 @@ import { llmChat, extractJson } from '@/lib/ai'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { buildNichoContext } from '@/lib/integrations'
 import { buildKnowledgeContext } from '@/lib/knowledge'
+import { recallContext } from '@/lib/memory'
 
 /**
  * POST /api/chat — AGENTE COMERCIAL con herramientas (tool-calling por JSON).
@@ -340,9 +341,16 @@ export async function POST(req: NextRequest) {
       if (!client) return json({ error: 'Cliente no encontrado' }, { status: 404 })
     }
 
-    const orgContext = await buildOrgContext(auth.orgId, selectedClientId)
+    // Memoria vectorial (Fase 5): con un cliente seleccionado, inyecta los
+    // fragmentos de conversaciones anteriores más relevantes para la pregunta.
+    const [orgContext, memoryBlock] = await Promise.all([
+      buildOrgContext(auth.orgId, selectedClientId),
+      selectedClientId
+        ? recallContext({ orgId: auth.orgId, clientId: selectedClientId, query: message })
+        : Promise.resolve(''),
+    ])
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-      { role: 'system', content: `${SYSTEM_PROMPT}\n\n${orgContext}` },
+      { role: 'system', content: `${SYSTEM_PROMPT}\n\n${orgContext}${memoryBlock}` },
       { role: 'user', content: message },
     ]
 

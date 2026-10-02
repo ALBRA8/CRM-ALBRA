@@ -48,6 +48,8 @@ model Organization {
   savedViews            SavedView[]
   agentMemories         AgentMemory[]
   agentSuggestions      AgentSuggestion[]
+  agentCorrections      AgentCorrection[]
+  conversationEmbeddings ConversationEmbedding[]
   whatsappConversations WhatsAppConversation[]
   whatsappMessages      WhatsAppMessage[]
   settings              Settings?
@@ -106,6 +108,8 @@ model Client {
   transactions          Transaction[]
   memories              AgentMemory[]
   suggestions           AgentSuggestion[]
+  agentCorrections      AgentCorrection[]
+  conversationEmbeddings ConversationEmbedding[]
   whatsappConversations WhatsAppConversation[]
 
   @@index([organizationId])
@@ -344,8 +348,48 @@ model AgentMemory {
   client         Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   key            String?
   content        String
-  source         String       @default("manual") // manual | agent | conversation
+  source         String       @default("manual") // manual | agent | conversation | correction
   importance     Int          @default(1)
+  embedding      String? // JSON array de floats (vector del content); null → solo texto
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, clientId])
+}
+
+// Memoria vectorial de conversaciones (Fase 5): fragmentos de mensajes entrantes
+// y salientes con su embedding para recall semántico por cliente. El embedding
+// es opcional: sin proveedor de embeddings la memoria sigue funcionando por
+// recencia (degradación elegante, nunca bloquea el camino del mensaje).
+model ConversationEmbedding {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId       String?
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  channel        String       @default("whatsapp") // whatsapp | telegram | instagram | chat | sistema
+  role           String       @default("incoming") // incoming | outgoing
+  text           String
+  embedding      String? // JSON array de floats (2048 dims en nemotron-3-embed-1b)
+  consolidated   Boolean      @default(false) // ya resumido en hechos por la consolidación
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, clientId, createdAt])
+  @@index([organizationId, consolidated])
+}
+
+// Auto-mejora del agente (patrón self-improving): cuando el vendedor edita un
+// mensaje sugerido por la IA antes de enviarlo, se guarda el par original→final
+// como lección de estilo. Se inyecta como few-shot en prompts futuros.
+model AgentCorrection {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientId       String?
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  original       String
+  final          String
+  channel        String? // whatsapp | email | instagram | telegram
+  embedding      String? // JSON del vector del original (para recall semántico)
   createdAt      DateTime     @default(now())
 
   @@index([organizationId, clientId])
@@ -504,6 +548,7 @@ model Settings {
   llmBaseUrl         String?
   llmModel           String?
   llmApiKeyEnc       String? // AES-256-GCM cifrado en reposo (recomendación auditoría #4)
+  llmEmbedModel      String? // modelo de embeddings del proveedor (ej. nvidia/nemotron-3-embed-1b); null → memoria sin vectores (fallback recencia)
   vapidPublicKey     String?
   vapidPrivateKeyEnc String?
   smtpHost           String?
