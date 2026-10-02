@@ -730,3 +730,24 @@ Work Log:
 Stage Summary:
 - Cerebro recomendado para el CRM: z-ai/glm-5.3-flash (multimodal estable, familia GLM); backup: deepseek-ai/deepseek-v4.1-flash; utilidades rápidas: meta/muse-glimmer-30b. Enchufe del CRM (Configuración → Agente IA): baseUrl https://integrate.api.nvidia.com/v1 + llave nvapi-... + modelo. Enchufe hot-swappable sin código.
 - Script de batería re-ejecutable en scripts/test_cerebros_nvidia.py (pasa llave por constante — rotarla tras pruebas).
+
+---
+Task ID: 26
+Agent: main (Super Z)
+Task: Fase 5 — memoria vectorial para clientes/conversaciones + agente auto-mejorable (inspirado en skill clawhub self-improving-agent).
+
+Work Log:
+- Investigación: skill de ClawHub = patrón "log de errores/correcciones → promover a memoria" para OpenClaw (archivos .learnings/*.md). Mapeo al CRM: correcciones en DB + inyección few-shot, no archivos.
+- Verificado en vivo POST /v1/embeddings con llave del usuario: nvidia/nemotron-3-embed-1b → 200, 2048 dims, coseno 0.13 entre temas distintos.
+- Schema: ConversationEmbedding (clientId, channel, role, text, embedding JSON, consolidated), AgentCorrection (original/final/embedding), Settings.llmEmbedModel, AgentMemory.embedding. db push OK.
+- src/lib/memory.ts: embedTexts (input_type query/passage + retry sin input_type), rememberMessage, recallContext (coseno top-K + ancla recencia; fallback recencia), recallStyleLessons, rememberCorrection, consolidateMemory (LLM jsonMode → hechos AgentMemory con dedup coseno ≥ 0.92), maybeConsolidate (umbral 8). Todo fire-and-forget/degradación elegante.
+- Wire: channel-agent.ts (memoria+lecciones al prompt; recuerda incoming/outgoing tras responder), deal-ai.ts (recallContext+recallStyleLessons al suggest), chat/route.ts (recall del cliente seleccionado), inbox/send (outgoing + consolidate).
+- UI: deal-ai-dialog.tsx con textarea editable (MessageSendBlock con key, lint-safe) + captura de corrección fire-and-forget + badge "el agente aprende tu estilo"; settings-page con AgentMemoryCard (stats/playground/consolidar) + input llmEmbedModel; api.ts getMemoryVector/consolidateMemory; settings GET/PUT embedModel.
+- APIs: POST /api/agent/corrections (401/404/201), GET/POST /api/memory/vector (stats + búsqueda semántica con scores / consolidar).
+- Tests: 10 unit (cosine/parseVector/formatRecallBlock/formatStyleLessons) + 15 integración (org-b vectorial con fetch mockeado, org-c degradado, consolidación con llmChat mockeado, rutas con aislamiento multi-tenant). Corrección de diseño: recallContext con clientId null → '' (memoria por cliente); test ajustado con client-c1.
+- Verificación: suite 197/197, tsc 0, eslint 0, build OK. Dev server + daemon (ruta correcta: src/whatsapp-daemon/daemon.mjs) reiniciados. En vivo: /api/memory/vector stats OK, corrección 201, búsqueda degradada OK, settings expone embedModel. E2E browser (subagente): 9/9 ✓ — tarjeta visible con stats, buscador con estado vacío, textarea editable en diálogo IA. Screenshots: download/e2e-memoria-agente.png, download/e2e-deal-ai-textarea.png.
+
+Stage Summary:
+- FASE 5 COMPLETA: el arnés tiene hipocampo. El agente recuerda conversaciones por similitud semántica por cliente, consolida hechos duraderos, y aprende del estilo del vendedor con cada corrección. Modo degradado sin embeddings (recencia) garantiza que nunca rompe el flujo.
+- Para activar modo vectorial en el preview/VPS: Configuración → Agente IA → pegar baseUrl+key del proveedor + modelo de embeddings (nvidia/nemotron-3-embed-1b en NVIDIA).
+- Commit en rama local; pendiente push (token GitHub del usuario).
