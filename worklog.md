@@ -697,3 +697,20 @@ Work Log:
 Stage Summary:
 - Task 22 (buscador de clientes) verificada de punta a punta: Fase 4 queda 100% completa (Stripe aplazado por decisión del usuario).
 - Commits existentes: 369a533 (feature) + dcee6e6 (worklog). Nada nuevo que commitear.
+
+---
+Task ID: 24
+Agent: main (Super Z)
+Task: Prueba de configuración de API — validar llave NVIDIA NIM del usuario para OpenClaw (pregunta: pegar con o sin "Bearer").
+
+Work Log:
+- Leído upload/📋 CONFIGURACIÓN DE CEREBROS EN OPENCLAW.txt: OpenClaw usa campo "apiKey" bajo models.providers con api "openai-completions" (formato OpenAI).
+- GET /v1/models con la llave → HTTP 200, 81 modelos. LLAVE VÁLIDA.
+- Catálogo Kimi disponible: moonshotai/kimi-k2.6 y moonshotai/kimi-k3 (el k2.5 del TXT ya no está en catálogo).
+- Pruebas POST /chat/completions: kimi-k3 → hang >90s (0 bytes, cola/backend saturado); kimi-k2.6 y gemma-3-4b-it → 404 "Function not found for account" (backend no enrutable para esta cuenta); meta/llama-3.2-3b y llama-3.3-70b → 410 EOL (retirados 2026-08-26, ¡el ejemplo "ultra-económico" del TXT está muerto!); deepseek-ai/deepseek-v4.1-flash → HTTP 200 OK en 39s con reasoning_content (modelo de razonamiento; con max_tokens=10 agota tokens en reasoning y content=null, normal).
+- Veredicto entregado al usuario: pegar SIN "Bearer" (OpenClaw construye el header él solo); alternativa funcionando hoy: deepseek-v4.1-flash.
+
+Stage Summary:
+- Llave NVIDIA validada en vivo (200). Regla: campo "apiKey" = solo la llave nvapi-...; el prefijo "Bearer " lo agrega el cliente OpenAI/OpenClaw automáticamente.
+- kimi-k3 hoy cuelga (>90s sin respuesta), kimi-k2.6 no enrutable para esta cuenta; deepseek-v4.1-flash verificado funcionando.
+- Corregir en config OpenClaw: kimi-k2.5 → no existe ya; ejemplo llama-3.2-3b EOL.
