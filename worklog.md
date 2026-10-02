@@ -768,3 +768,19 @@ Stage Summary:
 - RESPUESTA: SÍ ya lo tenemos (Fase 5), estaba dormido; ahora ACTIVO en el preview. En la función de memoria, el CRM hace MÁS que el memory.db inspeccionado (ese es solo log episódico sin búsqueda; la búsqueda semántica de OpenClaw vive en otra capa).
 - Brecha funcional real del memory.db: pending_actions (aprobación humana de acciones del agente), goals, cron_jobs → candidatos a Fase 6 mapeados a CRM (agente propone acción → vendedor aprueba; seguimientos programados).
 - Pendiente: rotar llave NVIDIA (expuesta en chat) y actualizarla en Configuración → Agente IA tras rotarla.
+
+---
+Task ID: 28
+Agent: main (Super Z)
+Task: Push completo del repo a GitHub ("¿ya subiste todo al repo? sino ya es hora de hacerlo").
+
+Work Log:
+- Estado real detectado: local main = proyecto actual (49 commits sin subir, incluye Fase 5 memoria vectorial, 197 tests, PWA, bandeja). Remoto origin/main = ddf2227 force-actualizado por el usuario hoy: snapshot v2.3 VIEJO (79 tests, "sesión httpOnly + Docker") + nueva rama backup-version-anterior = ff8b184 (initial commit 24-sep).
+- Diff de árboles: remoto tiene 270 archivos comunes y SOLO 3 únicos (extract-quote-items.js, restore-quote-items.js, seed-knowledge-demo.js) → recuperados vía git checkout origin/main. Local tiene 66 archivos que el remoto no conoce (todo el avance nuevo).
+- SEGURIDAD: scripts/test_cerebros_nvidia.py contenía la llave NVIDIA completa y YA estaba en historial local. Saneado: KEY = os.environ.get("NVIDIA_KEY") con exit si falta. Escaneo del árbol: worklog.md solo tiene el prefijo truncado "nvapi-THrlN-..." (12 chars, no es secreto); .env.example limpio. La llave seguirá en el HISTORIAL local antiguo → rotarla la neutraliza.
+- Commit: "sync GitHub: sanea llave NVIDIA (env var) + recupera 3 scripts del snapshot remoto v2.3".
+- Push intentado → FALLA: no hay credenciales en el entorno ("could not read Username"); el PAT de la sesión pasada se usó una vez y se recomendó revocarlo. BLOQUEADO por token del usuario.
+- PLAN con token (scopes repo + workflow porque .github/workflows/ci.yml existe): 1) preservar snapshot del usuario en rama snapshot-v2.3 (ddf2227), 2) force-push main → GitHub = versión actual, 3) verificar ls-remote, 4) recordatorio rotación llave.
+
+Stage Summary:
+- PENDIENTE DEL USUARIO: PAT de GitHub (classic, scopes repo + workflow) en https://github.com/settings/tokens. Al pegarlo: push completo en <1 min. Estados seguros: nada se pierde (snapshot preservado en snapshot-v2.3, initial en backup-version-anterior).
