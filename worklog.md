@@ -784,3 +784,5 @@ Work Log:
 
 Stage Summary:
 - PENDIENTE DEL USUARIO: PAT de GitHub (classic, scopes repo + workflow) en https://github.com/settings/tokens. Al pegarlo: push completo en <1 min. Estados seguros: nada se pierde (snapshot preservado en snapshot-v2.3, initial en backup-version-anterior).
+- COMPLETADO: token recibido con scopes repo+workflow (verificado vía x-oauth-scopes). Push exitoso: snapshot-v2.3 (ddf2227 preservado) + force push main ddf2227→70638cc. Verificado ls-remote: GitHub main = local HEAD (70638cc), 51 commits, ci.yml publicado. backup-version-anterior intacta (ff8b184).
+- RECORDATORIOS al usuario: (1) revocar el PAT pegado en chat tras confirmar (github.com/settings/tokens) y generar uno nuevo con expiración cuando se necesite; (2) rotar llave NVIDIA nvapi-THrlN (quedó en historial local antiguo de main).
