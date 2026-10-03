@@ -343,8 +343,16 @@ async function connectToWhatsApp() {
         const from = msg.key.remoteJid
         if (from === 'status@broadcast' || from.includes('@g.us')) continue
 
+        // FIX auditoría pre-venta #1: mensajes que el DUEÑO envía desde el
+        // teléfono vinculado (msg.key.fromMe). Antes se procesaban como si
+        // fueran del cliente y el bot se auto-respondía frente al cliente
+        // real. Ahora se registran como 'outbound' del vendedor (senderType
+        // 'user', igual que la bandeja) para que queden en el historial que
+        // ve la IA, pero NUNCA disparan auto-respuesta.
+        const isOwner = !!msg.key.fromMe
+
         const contactPhone = from.split('@')[0]
-        const contactName = msg.pushName || contactPhone
+        const contactName = isOwner ? contactPhone : (msg.pushName || contactPhone)
         const waMessageId = msg.key.id
 
         const orgId = getOrgId()
@@ -391,20 +399,30 @@ async function connectToWhatsApp() {
           }
         }
 
-        console.log(`[WA] Message from ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
+        console.log(`[WA] ${isOwner ? 'Mensaje del dueño hacia' : 'Message from'} ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
 
         const conv = getOrCreateConversation(orgId, contactPhone, contactName)
         if (!conv) continue
 
-        saveMessage(conv.id, orgId, 'inbound', contactPhone, connectedPhone || '', textContent, 'contact', waMessageId, messageType)
+        saveMessage(
+          conv.id, orgId,
+          isOwner ? 'outbound' : 'inbound',
+          isOwner ? (connectedPhone || '') : contactPhone,
+          contactPhone,
+          textContent,
+          isOwner ? 'user' : 'contact',
+          waMessageId,
+          messageType
+        )
 
-        // Actualiza último contacto del cliente
-        if (conv.clientId && db) {
+        // Actualiza último contacto del cliente (solo con mensajes del cliente)
+        if (!isOwner && conv.clientId && db) {
           db.prepare("UPDATE Client SET lastContactAt = datetime('now'), updatedAt = datetime('now') WHERE id = ?").run(conv.clientId)
         }
 
-        // Auto-respuesta con IA si está habilitada (voz: solo si se transcribió)
-        if (conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed)) {
+        // Auto-respuesta con IA si está habilitada (voz: solo si se transcribió).
+        // JAMÁS para mensajes del dueño (fromMe): el bot no se responde a sí mismo.
+        if (!isOwner && conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed)) {
           console.log(`[WA] Auto-reply enabled for ${contactPhone}, calling agent...`)
           triggerAgentReply(orgId, conv, textContent, contactPhone)
         }

@@ -2560,8 +2560,11 @@ export function SettingsPage() {
                     <div className="flex-1">
                       <h3 className="font-semibold text-amber-900">Restaurar Datos</h3>
                       <p className="text-sm text-amber-700 mt-1">
-                        Importa un archivo de backup previo. Los datos existentes se mantendrán y los del backup se agregarán o actualizarán. Esta acción no se puede deshacer.
+                        Importa un archivo de backup previo. Se restauran clientes, servicios, plantillas, oportunidades, reservas, cotizaciones (con sus ítems) y transacciones, vinculadas al cliente por su teléfono. Los datos existentes se mantienen; no se puede deshacer.
                       </p>
+                      <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                        <span className="font-semibold">Importante:</span> la restauración JSON es un respaldo parcial (las etapas del kanban y la sesión de WhatsApp no viajan en el JSON). Para recuperación total ante desastres, copia del servidor los archivos físicos <code className="font-mono">db/custom.db</code> y <code className="font-mono">src/whatsapp-daemon/.wa-auth/</code>.
+                      </div>
                       <div className="mt-3">
                         <input
                           type="file"
@@ -2589,7 +2592,11 @@ export function SettingsPage() {
                               })
                               const data = await res.json()
                               if (!res.ok) throw new Error(data.error)
-                              toast.success(`Backup restaurado: ${data.imported} registros importados, ${data.skipped} omitidos`)
+                              const r = (data.restored || {}) as Record<string, number>
+                              const sk = (data.skipped || {}) as Record<string, number>
+                              const totalRestored = Object.values(r).reduce<number>((a, b) => a + Number(b || 0), 0)
+                              const totalSkipped = Object.values(sk).reduce<number>((a, b) => a + Number(b || 0), 0)
+                              toast.success(`Backup restaurado: ${totalRestored} registros importados, ${totalSkipped} omitidos`)
                             } catch (err: any) {
                               toast.error(err.message || 'Error al importar backup')
                             } finally {

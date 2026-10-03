@@ -75,6 +75,11 @@ services:
       # Misma BD que `app` (compartida por el volumen db-data)
       DATABASE_URL: file:/app/db/custom.db
       WHATSAPP_DAEMON_PORT: "3002"
+      # FIX auditoría pre-venta #2: el daemon llama a la API interna del CRM
+      # (agente /api/chat y ASR de notas de voz). Dentro de la red de compose,
+      # 'localhost' sería el propio contenedor del daemon → apuntar al
+      # servicio `app` por su nombre DNS interno.
+      NEXT_APP_URL: http://app:3000
       # INTERNAL_API_SECRET llega desde .env vía env_file y DEBE ser el
       # mismo valor que usa `app` (auth mutua). Sin él el daemon no arranca.
     volumes:
