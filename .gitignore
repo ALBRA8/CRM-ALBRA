@@ -84,3 +84,4 @@ wa-auth/
 Thumbs.db
 agent-ctx/
 /download/
+.clean-room/
