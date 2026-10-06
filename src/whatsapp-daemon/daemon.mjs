@@ -162,6 +162,14 @@ function getOrCreateConversation(orgId, contactPhone, contactName) {
 function saveMessage(conversationId, orgId, direction, fromNumber, toNumber, text, senderType, waMessageId = null, messageType = 'text') {
   if (!db) return null
 
+  // DEDUP (P0): Baileys puede re-entregar el mismo mensaje (y los salientes
+  // que nosotros mismos guardamos vuelven por messages.upsert). Sin este
+  // guard habría mensajes duplicados en el hilo y doble respuesta IA.
+  if (waMessageId) {
+    const dup = db.prepare('SELECT 1 FROM WhatsAppMessage WHERE conversationId = ? AND waMessageId = ? LIMIT 1').get(conversationId, waMessageId)
+    if (dup) return null
+  }
+
   const msgId = generateId()
   db.prepare(`
     INSERT INTO WhatsAppMessage (id, organizationId, conversationId, waMessageId, direction, fromNumber, toNumber, text, messageType, senderType, isRead, createdAt)
@@ -540,7 +548,10 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && path === '/status') {
-      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate, orgLinked: !!linkedOrgId, lastError })
+      // linkedOrgId: permite al proxy verificar que la org del JWT coincide
+      // con la org vinculada al daemon (endpoints internos, protegidos por
+      // INTERNAL_API_SECRET — nunca públicos).
+      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate, orgLinked: !!linkedOrgId, linkedOrgId: linkedOrgId || null, lastError })
       return
     }
 
@@ -616,6 +627,30 @@ const server = createServer(async (req, res) => {
       }
 
       const sent = await sendWhatsAppMessage(to, text)
+
+      // Persistencia del saliente (P0): las respuestas manuales de la bandeja
+      // deben aparecer en el hilo. Antes /send enviaba y NO guardaba → el
+      // historial quedaba incompleto para el vendedor y para la IA.
+      if (db && linkedOrgId) {
+        try {
+          const digits = String(to).replace(/\D+/g, '')
+          let conv = db.prepare('SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND contactPhone = ?').get(linkedOrgId, to)
+          if (!conv && digits) {
+            conv = db.prepare("SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND REPLACE(REPLACE(REPLACE(REPLACE(contactPhone, ' ', ''), '-', ''), '(', ''), ')', '') = ?").get(linkedOrgId, digits)
+          }
+          if (!conv) {
+            // Conversación/cliente nuevos: misma vía que los entrantes (round-robin NO aplica aquí; queda prospect)
+            const contactName = body.contactName || to
+            conv = getOrCreateConversation(linkedOrgId, to, contactName)
+          }
+          if (conv) {
+            saveMessage(conv.id, linkedOrgId, 'outbound', connectedPhone || '', to, text, 'user', sent?.key?.id || null)
+          }
+        } catch (persistErr) {
+          console.error('[WA] No se pudo persistir el mensaje saliente:', persistErr?.message || persistErr)
+        }
+      }
+
       jsonResponse(res, { success: true, messageId: sent?.key?.id })
       return
     }
@@ -697,9 +732,21 @@ const server = createServer(async (req, res) => {
         values.push(body.transferredTo)
       }
       if (updates.length > 0) {
+        // Aislamiento multi-tenant (P0): el proxy envía orgId del JWT; el UPDATE
+        // solo toca conversaciones de ESA organización. Sin esto, un usuario de
+        // otra org podía pausar/alterar conversaciones ajenas por id directo.
+        if (!body.orgId) {
+          jsonResponse(res, { error: 'orgId requerido (aislamiento multi-tenant)' }, 400)
+          return
+        }
         updates.push("updatedAt = datetime('now')")
+        values.push(body.orgId)
         values.push(convId)
-        db.prepare(`UPDATE WhatsAppConversation SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+        const out = db.prepare(`UPDATE WhatsAppConversation SET ${updates.join(', ')} WHERE id = ? AND organizationId = ?`).run(...values)
+        if (!out || out.changes === 0) {
+          jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
+          return
+        }
       }
 
       jsonResponse(res, { success: true })

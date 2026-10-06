@@ -8,6 +8,8 @@ import { recordTimelineEvent } from '@/lib/timeline'
 import { buildNichoContext } from '@/lib/integrations'
 import { buildKnowledgeContext } from '@/lib/knowledge'
 import { recallContext } from '@/lib/memory'
+import { notifyOrganization } from '@/lib/push'
+import { z } from 'zod'
 
 /**
  * POST /api/chat — AGENTE COMERCIAL con herramientas (tool-calling por JSON).
@@ -20,6 +22,54 @@ import { recallContext } from '@/lib/memory'
  */
 
 const MAX_ITERATIONS = 3
+
+/**
+ * Registro de tools del agente (contrato por herramienta):
+ *   kind      → 'read' (solo consulta) | 'write' (muta datos comerciales)
+ *   schema    → zod: valida los params del LLM ANTES de tocar la BD; un
+ *             parámetro alucinado produce un error de campo estructurado,
+ *             no una escritura degradada en silencio.
+ * Herramientas SENSIBLES de fase 1 (envío masivo, borrado, dinero) NO existen
+ * por diseño: el catálogo completo es create_/schedule_/add_note + 2 reads.
+ */
+const AGENT_TOOLS: Record<string, { kind: 'read' | 'write'; schema: z.ZodType }> = {
+  create_client: {
+    kind: 'write',
+    schema: z.object({
+      name: z.string().min(1).max(120),
+      phone: z.string().max(40).optional(),
+      email: z.string().max(160).optional(),
+    }),
+  },
+  create_opportunity: {
+    kind: 'write',
+    schema: z.object({
+      clientId: z.string().max(64).optional(),
+      title: z.string().min(1).max(160),
+      amount: z.coerce.number().min(0).max(1_000_000_000_000).optional(),
+    }),
+  },
+  schedule_reservation: {
+    kind: 'write',
+    schema: z.object({
+      clientId: z.string().max(64).optional(),
+      title: z.string().min(1).max(160),
+      startsAt: z.string().min(4).max(40),
+    }),
+  },
+  add_note: {
+    kind: 'write',
+    schema: z.object({ clientId: z.string().max(64), content: z.string().min(1).max(2000) }),
+  },
+  quote_summary: {
+    kind: 'read',
+    schema: z.object({ clientId: z.string().max(64) }),
+  },
+  list_recent_clients: {
+    kind: 'read',
+    schema: z.object({}),
+  },
+}
 
 interface AgentAction {
   type: string
@@ -341,6 +391,44 @@ export async function POST(req: NextRequest) {
       if (!client) return json({ error: 'Cliente no encontrado' }, { status: 404 })
     }
 
+    // HUMAN HANDOFF (canal Baileys → /api/chat): el canal principal no pasaba
+    // por la evaluación de handoffKeywords que ya tenían Telegram/Instagram.
+    // Si el cliente pide un humano → se pausa la IA de la conversación (persistido,
+    // sobrevive reinicios), se notifica al equipo y se responde sin LLM.
+    if (!auth.userId && selectedClientId) {
+      const nicho = await db.nichoConfig.findUnique({
+        where: { organizationId: auth.orgId },
+        select: { autoReplyEnabled: true, handoffKeywords: true },
+      })
+      let keywords: string[] = []
+      try {
+        keywords = nicho?.handoffKeywords ? (JSON.parse(nicho.handoffKeywords) as string[]) : []
+      } catch {}
+      const wantsHuman = keywords.some((k) => k && message.toLowerCase().includes(k.toLowerCase()))
+      if (wantsHuman || nicho?.autoReplyEnabled === false) {
+        if (wantsHuman) {
+          await db.whatsAppConversation.updateMany({
+            where: { organizationId: auth.orgId, clientId: selectedClientId },
+            data: { isAutoReply: false, updatedAt: new Date() },
+          })
+          await notifyOrganization(auth.orgId, {
+            type: 'integration',
+            title: 'WhatsApp: el cliente pide un humano',
+            body: message.slice(0, 200),
+            data: JSON.stringify({ clientId: selectedClientId, channel: 'whatsapp' }),
+          })
+        }
+        // reply vacío → el daemon NO envía nada (guard `if (!replyText) return`)
+        return json({
+          content: wantsHuman ? '¡Claro! Un asesor humano te atenderá en un momento.' : '',
+          reply: wantsHuman ? '¡Claro! Un asesor humano te atenderá en un momento.' : '',
+          actions: [],
+          handoff: wantsHuman,
+          paused: true,
+        })
+      }
+    }
+
     // Memoria vectorial (Fase 5): con un cliente seleccionado, inyecta los
     // fragmentos de conversaciones anteriores más relevantes para la pregunta.
     const [orgContext, memoryBlock] = await Promise.all([
@@ -363,8 +451,23 @@ export async function POST(req: NextRequest) {
       const decision = extractJson<AgentDecision>(raw)
 
       if (decision && typeof decision.action === 'string' && decision.action) {
-        const params = (decision.params && typeof decision.params === 'object' ? decision.params : {}) as Record<string, unknown>
-        const result = await executeAgentAction(auth.orgId, auth.userId, decision.action, params)
+        // Validación de contrato de la tool (zod) ANTES de ejecutar: un parámetro
+        // alucinado devuelve error de campo al LLM en vez de escribir basura.
+        const tool = AGENT_TOOLS[decision.action]
+        let params = (decision.params && typeof decision.params === 'object' ? decision.params : {}) as Record<string, unknown>
+        let validationError = ''
+        if (tool) {
+          const parsed = tool.schema.safeParse(params)
+          if (!parsed.success) {
+            const issue = parsed.error.issues[0]
+            validationError = `Parámetro inválido en ${decision.action}${issue?.path?.length ? ` (${issue.path.join('.')})` : ''}: ${issue?.message ?? 'formato incorrecto'}`
+          } else {
+            params = parsed.data as Record<string, unknown>
+          }
+        }
+        const result = validationError
+          ? { ok: false, summary: validationError }
+          : await executeAgentAction(auth.orgId, auth.userId, decision.action, params)
         if (result.ok) executedActions.push({ type: decision.action, summary: result.summary })
         else lastActionError = result.summary
         messages.push({ role: 'assistant', content: JSON.stringify({ action: decision.action, params }) })

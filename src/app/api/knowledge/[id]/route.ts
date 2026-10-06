@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, requireAdmin } from '@/lib/auth'
 import { handle, json, auditAndTimeline } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 
@@ -14,7 +14,7 @@ const KNOWLEDGE_CATEGORIES = ['general', 'catalogo', 'terminos', 'faq', 'politic
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requireAdmin(req)
     const { id } = await params
     const entry = await db.knowledge.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!entry) return json({ error: 'Entrada de conocimiento no encontrada' }, { status: 404 })
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requireAdmin(req)
     const { id } = await params
     const existing = await db.knowledge.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!existing) return json({ error: 'Entrada de conocimiento no encontrada' }, { status: 404 })
@@ -67,7 +67,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requireAdmin(req)
     const { id } = await params
     const existing = await db.knowledge.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true, title: true } })
     if (!existing) return json({ error: 'Entrada de conocimiento no encontrada' }, { status: 404 })

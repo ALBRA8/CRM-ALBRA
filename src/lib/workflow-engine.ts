@@ -379,9 +379,34 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
   const results: Array<{ automationId: string; status: string; error?: string }> = []
 
   for (const automation of automations) {
-    const run = await db.automationRun.create({
-      data: { organizationId: event.orgId, automationId: automation.id, input: JSON.stringify(event.payload).slice(0, 5000) },
-    })
+    // IDEMPOTENCIA (P0): webhooks (Meta/Telegram) pueden re-entregar el mismo
+    // evento; un retry de red NUNCA debe disparar el workflow dos veces.
+    // Clave = tipo:entidad (id del cliente/mensaje/cotización/scheduledAt) con
+    // unique (automationId, idempotencyKey) → dedup PERMANENTE por evento:
+    // la misma re-entrega queda 'deduplicated' siempre; un evento distinto
+    // (id distinto) ejecuta normal. Los schedules usan scheduledAt en la clave
+    // (único por disparo) y el claim atómico de nextRunAt del scheduler.
+    const p = (event.payload ?? {}) as Record<string, unknown>
+    const entityKey = String(p.id ?? p.messageId ?? p.reservationId ?? p.quoteId ?? p.scheduledAt ?? '')
+    const idempotencyKey = entityKey ? `${event.type}:${entityKey}`.slice(0, 180) : null
+    let run
+    try {
+      run = await db.automationRun.create({
+        data: {
+          organizationId: event.orgId,
+          automationId: automation.id,
+          input: JSON.stringify(event.payload).slice(0, 5000),
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        },
+      })
+    } catch (err) {
+      // P2002: ese MISMO evento ya ejecutó esta automatización → no duplicar
+      if ((err as { code?: string }).code === 'P2002') {
+        results.push({ automationId: automation.id, status: 'deduplicated' })
+        continue
+      }
+      throw err
+    }
     try {
       const conditions = safeParse<Condition[]>(automation.conditions)
       if (!evaluateConditions(conditions, event.payload)) {
@@ -454,6 +479,13 @@ export async function resumeWaitingRuns(): Promise<number> {
 
   let processed = 0
   for (const run of waiting) {
+    // CLAIM atómico: solo una instancia reanuda cada run (concurrentes → count=0)
+    const claim = await db.automationRun.updateMany({
+      where: { id: run.id, status: 'waiting', resumeAt: { lte: now } },
+      data: { status: 'running' },
+    })
+    if (claim.count === 0) continue
+
     const automation = await db.automation.findUnique({ where: { id: run.automationId } })
     if (!automation || !automation.isActive) {
       await db.automationRun.update({

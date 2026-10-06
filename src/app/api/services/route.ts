@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { requireAuth, HttpError } from '@/lib/auth'
+import { requireAuth, requireAdmin, HttpError } from '@/lib/auth'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { handle, json, readBody, requireFields, str, numOrNull, bool, qparam } from '../_lib/shared'
 
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/services — { name, description?, category?, price?, duration?, unit?, isActive? } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requireAdmin(req)  // RBAC: mutaciones del catálogo = admin (auditoría #3)
     const body = await readBody(req)
     requireFields(body, ['name'])
 
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 /** PUT /api/services — { id, ...campos } (según lib/api.ts el id va en el body). */
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requireAdmin(req)  // RBAC: mutaciones del catálogo = admin (auditoría #3)
     const body = await readBody(req)
     const id = str(body.id)
     if (!id) throw new HttpError(400, 'Falta el id del servicio')
@@ -83,7 +83,7 @@ export async function PUT(req: NextRequest) {
 /** DELETE /api/services?id=... */
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requireAdmin(req)  // RBAC: mutaciones del catálogo = admin (auditoría #3)
     const id = qparam(req, 'id')
     if (!id) throw new HttpError(400, 'Falta el parámetro id')
 

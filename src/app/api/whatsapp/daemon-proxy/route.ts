@@ -32,6 +32,32 @@ const ALLOWED_GET = [/^\/status$/, /^\/qr$/, /^\/conversations$/, /^\/conversati
 const ALLOWED_POST = ['/connect', '/disconnect', '/send', '/logout']
 const ALLOWED_PUT = [/^\/conversations\/[\w@.:-]+$/]
 
+/**
+ * GUARD MULTI-TENANT (crítico auditoría externa): el daemon es UNA sola sesión
+ * de WhatsApp vinculada a UNA organización. Un usuario autenticado de la org B
+ * NO puede leer/enviar/desconectar la sesión de la org A. Solo /status se
+ * permite siempre (la UI necesita estado sin ser dueño de la sesión).
+ */
+async function daemonLinkedOrgId(): Promise<string | null> {
+  try {
+    const res = await fetch(`${DAEMON_URL}/status`, {
+      headers: daemonHeaders(),
+      signal: AbortSignal.timeout(1500),
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    const j = (await res.json()) as { linkedOrgId?: string | null }
+    return j.linkedOrgId || null
+  } catch {
+    return null // daemon apagado: los llamantes manejan su propia degradación
+  }
+}
+
+async function assertSameOrg(authOrgId: string): Promise<boolean> {
+  const linked = await daemonLinkedOrgId()
+  return !linked || linked === authOrgId // sin vincular no hay fuga (respuestas vacías/error río abajo)
+}
+
 function daemonHeaders(): Record<string, string> {
   // El secreto interno solo se usa server-to-server. Si falta, la config está rota
   // y fallamos con error descriptivo (nunca con una clave hardcodeada).
@@ -77,6 +103,10 @@ export async function GET(req: NextRequest) {
     const rest = new URL(req.url)
     rest.searchParams.delete('path')
     const extra = rest.searchParams.toString()
+    const auth = requireAuth(req)
+    if (clean !== '/status' && clean !== '/qr' && !(await assertSameOrg(auth.orgId))) {
+      return json({ error: 'Esta sesión de WhatsApp pertenece a otra organización' }, { status: 403 })
+    }
     return proxyGet(clean + (extra ? `?${extra}` : ''))
   })
 }
@@ -96,7 +126,12 @@ export async function POST(req: NextRequest) {
     }
     try {
       // Multi-tenant: la sesión de WhatsApp se vincula a la org del JWT.
-      // El frontend NO puede elegir otra organización.
+      // El frontend NO puede elegir otra organización. Y si el daemon ya está
+      // vinculado a OTRA org, se rechaza (un usuario de la org B no puede
+      // robar/rebotar la sesión de la org A).
+      if (!(await assertSameOrg(auth.orgId))) {
+        return json({ error: 'Esta sesión de WhatsApp pertenece a otra organización' }, { status: 403 })
+      }
       const payload = path === '/connect' ? { ...body, orgId: auth.orgId } : body
       const res = await fetch(`${DAEMON_URL}${path}`, {
         method: 'POST',
@@ -118,18 +153,22 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    requireAuth(req)
+    const auth = requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as ProxyBody
     const path = String(body.path || '')
     if (!ALLOWED_PUT.some((re) => re.test(path))) {
       return json({ error: `path no permitido: ${path || '(vacío)'}` }, { status: 400 })
     }
+    if (!(await assertSameOrg(auth.orgId))) {
+      return json({ error: 'Esta sesión de WhatsApp pertenece a otra organización' }, { status: 403 })
+    }
     try {
       const { path: _path, ...updates } = body
+      // El daemon filtra el UPDATE por esta organización (defensa en profundidad)
       const res = await fetch(`${DAEMON_URL}${path}`, {
         method: 'PUT',
         headers: daemonHeaders(),
-        body: JSON.stringify(updates),
+        body: JSON.stringify({ ...updates, orgId: auth.orgId }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })
       const text = await res.text()

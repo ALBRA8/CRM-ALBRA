@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
 
     const userIds = Array.from(new Set(logs.map((l) => l.userId).filter(Boolean))) as string[]
     const users = userIds.length
-      ? await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } })
+      ? await db.user.findMany({ where: { id: { in: userIds }, organizationId: auth.orgId }, select: { id: true, name: true, email: true } })
       : []
     const userMap = new Map(users.map((u) => [u.id, { id: u.id, name: u.name, email: u.email }]))
 

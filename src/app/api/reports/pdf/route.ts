@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { getAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { buildSimplePdf } from '@/lib/pdf'
@@ -21,8 +21,9 @@ function dominantCurrency(currencies: (string | null | undefined)[]): string {
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = getAuth(req)
-    if (!auth) return json({ error: 'Token de autorización requerido' }, { status: 401 })
+    // RBAC (auditoría externa #1): los PDF financieros exigían solo sesión;
+    // ahora requieren el MISMO permiso que el reporte JSON (reports.read).
+    const auth = requirePermission(req, 'reports.read')
     const period = new URL(req.url).searchParams.get('period') || '30d'
     const days: number | null = { '7d': 7, '30d': 30, month: 30, '90d': 90, quarter: 90, '1y': 365, year: 365, all: null }[period] ?? 30
     const from = days ? new Date(Date.now() - days * 86_400_000) : new Date(0)

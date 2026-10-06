@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, requireAdmin } from '@/lib/auth'
 import { handle, json, auditAndTimeline } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 
@@ -32,7 +32,7 @@ interface KnowledgeBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requireAdmin(req)  // RBAC: base de conocimiento = settings (auditoría #3)
     const body = (await req.json().catch(() => ({}))) as KnowledgeBody
     const title = String(body.title ?? '').trim()
     const content = String(body.content ?? '').trim()

@@ -333,9 +333,11 @@ model AutomationRun {
   resumeAt       DateTime? // cuándo reanudar un run en espera (acción "Esperar")
   startedAt      DateTime     @default(now())
   finishedAt     DateTime?
+  idempotencyKey String? // trigger:entidad — evita doble ejecución por retry/webhook duplicado
 
   @@index([automationId, startedAt])
   @@index([status, resumeAt])
+  @@unique([automationId, idempotencyKey])
 }
 
 // ---------- IA ----------
@@ -349,6 +351,7 @@ model AgentMemory {
   key            String?
   content        String
   source         String       @default("manual") // manual | agent | conversation | correction
+  type           String       @default("fact") // fact | preference | observation | learning | procedural (contrato MemoryDV)
   importance     Int          @default(1)
   embedding      String? // JSON array de floats (vector del content); null → solo texto
   createdAt      DateTime     @default(now())

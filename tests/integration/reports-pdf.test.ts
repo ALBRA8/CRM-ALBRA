@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { GET as reportsPdfGET } from '@/app/api/reports/pdf/route'
-import { FIX, digitsOf, jsonBody, pdfLines, req, tokenA, tokenB } from '../helpers'
+import { FIX, digitsOf, jsonBody, pdfLines, req, tokenA, tokenB, tokenFor } from '../helpers'
 
 /**
  * Reportes PDF (/api/reports/pdf, handler real):
@@ -59,8 +59,17 @@ describe('reportes PDF — /api/reports/pdf', () => {
     expect(digitsOf(findLine(lines, 'Ingresos:')!)).not.toBe('11399')
   })
 
-  it('aislamiento multi-tenant: org B solo ve sus propias cifras', async () => {
+  it('RBAC (auditoría): un member ya NO puede descargar el PDF financiero → 403', async () => {
+    // Antes: PDF/Excel aceptaban cualquier sesión (getAuth) — inconsistente con
+    // /api/reports que exige reports.read (admin). Ahora un member recibe 403.
     const res = await reportsPdfGET(req('/api/reports/pdf?period=all', { token: tokenB() }))
+    expect(res.status).toBe(403)
+  })
+
+  it('aislamiento multi-tenant: el dueño de org B solo ve sus propias cifras', async () => {
+    // reports.read es admin/owner → el aislamiento se prueba con un owner de org B
+    const ownerB = tokenFor({ ...FIX.userB, role: 'owner' })
+    const res = await reportsPdfGET(req('/api/reports/pdf?period=all', { token: ownerB }))
     const lines = pdfLines(Buffer.from(await res.arrayBuffer()))
     expect(digitsOf(findLine(lines, 'Ingresos:')!)).toBe('500')
     expect(digitsOf(findLine(lines, 'Balance:')!)).toBe('500')

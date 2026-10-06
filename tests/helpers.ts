@@ -15,7 +15,13 @@ const BASE_URL = 'http://localhost:3000'
 
 export type SeedUser = (typeof FIX)['userA'] | (typeof FIX)['userB']
 
-export function tokenFor(user: SeedUser): string {
+/** Firma ensanchada: permite variantes de rol (ej. owner de org B en tests RBAC). */
+export function tokenFor(user: {
+  id: string
+  email: string
+  role: string
+  organizationId: string
+}): string {
   return signToken({
     userId: user.id,
     orgId: user.organizationId,

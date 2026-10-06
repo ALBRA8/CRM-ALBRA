@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { handle, json } from '@/lib/api-helpers'
 import { requireAuth } from '@/lib/auth'
+import { safeEquals } from '@/lib/integrations'
 import { runDueJobs } from '@/lib/scheduler'
 
 /**
@@ -10,9 +11,11 @@ import { runDueJobs } from '@/lib/scheduler'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const cronSecret = process.env.APP_SECRET
+    // Seguro independiente del APP_SECRET (que firma JWTs): si CRON_SECRET
+    // está definido se usa él; comparación constant-time (auditoría #7).
+    const cronSecret = process.env.CRON_SECRET || process.env.APP_SECRET
     const provided = req.headers.get('x-cron-secret')
-    if (cronSecret && provided && provided === cronSecret) {
+    if (cronSecret && provided && safeEquals(provided, cronSecret)) {
       const { processed, results } = await runDueJobs()
       return json({ processed, runs: results, via: 'cron-secret' })
     }

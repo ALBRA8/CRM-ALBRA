@@ -93,7 +93,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const updated = await db.$transaction(async (tx) => {
       if (newItems) {
         await tx.quoteItem.deleteMany({ where: { quoteId: id } })
-        await tx.quoteItem.createMany({ data: quoteItemRows(newItems).map((r) => ({ ...r, quoteId: id })) })
+        await tx.quoteItem.createMany({ data: quoteItemRows(newItems, auth.orgId).map((r) => ({ ...r, quoteId: id })) })
       }
       return tx.quote.update({
         where: { id },

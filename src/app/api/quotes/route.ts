@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
         number,
         clientId,
         opportunityId: opportunityId || null,
-        items: { create: quoteItemRows(items) },
+        items: { create: quoteItemRows(items, auth.orgId) },
         subtotal: totals.subtotal,
         tax: totals.tax,
         total: totals.total,

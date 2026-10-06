@@ -142,7 +142,7 @@ export async function GET(req: NextRequest) {
     // ---- Actividad reciente (timeline unificado)
     const tlClientIds = Array.from(new Set(timelineEvents.map((e) => e.clientId).filter(Boolean))) as string[]
     const tlClients = tlClientIds.length
-      ? await db.client.findMany({ where: { id: { in: tlClientIds } }, select: { id: true, name: true } })
+      ? await db.client.findMany({ where: { id: { in: tlClientIds }, organizationId: auth.orgId }, select: { id: true, name: true } })
       : []
     const tlClientMap = new Map(tlClients.map((c) => [c.id, c.name]))
 

@@ -36,8 +36,9 @@ export function computeQuoteTotals(items: QuoteItemParsed[], discountPct: number
 }
 
 /** Items listos para `create`/`update` anidado (Prisma resuelve el quoteId). */
-export function quoteItemRows(items: QuoteItemParsed[]) {
+export function quoteItemRows(items: QuoteItemParsed[], organizationId?: string) {
   return items.map((it, idx) => ({
+    ...(organizationId ? { organizationId } : {}),
     sku: it.sku,
     description: it.description,
     quantity: it.quantity,

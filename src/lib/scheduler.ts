@@ -20,6 +20,18 @@ export async function runDueJobs(): Promise<{ processed: number; results: unknow
   try {
     const now = new Date()
 
+    // 0) Sweeper: runs 'running' huérfanos (crash/reinicio a mitad de acción)
+    //    → 'failed' determinista. Sin esto quedaban atascados para siempre.
+    try {
+      const orphaned = await db.automationRun.updateMany({
+        where: { status: 'running', startedAt: { lt: new Date(Date.now() - 15 * 60_000) } },
+        data: { status: 'failed', error: 'interrupted: proceso reiniciado a mitad del run (sweeper)', finishedAt: new Date() },
+      })
+      if (orphaned.count > 0) console.warn(`[scheduler] runs huérfanos marcados failed: ${orphaned.count}`)
+    } catch (err) {
+      console.error('[scheduler] fallo sweeper', err)
+    }
+
     // 1) Reanudar runs en espera cuyo "Esperar" venció (patrón DELAY de Twenty)
     let resumed = 0
     try {
@@ -37,10 +49,16 @@ export async function runDueJobs(): Promise<{ processed: number; results: unknow
     })
 
     for (const automation of due) {
-      // marcar próxima ejecución antes de correr (idempotencia ante reinicios)
+      // CLAIM atómico: solo el worker que logre mover nextRunAt ejecuta.
+      // Con dos instancias (Next + cron externo), la segunda recibe count=0
+      // y salta — la automatización NO corre dos veces.
       const intervalMinutes = intervalFromConfig(automation.triggerConfig)
       const next = new Date(Date.now() + intervalMinutes * 60_000)
-      await db.automation.update({ where: { id: automation.id }, data: { nextRunAt: next } })
+      const claim = await db.automation.updateMany({
+        where: { id: automation.id, isActive: true, triggerType: 'schedule', nextRunAt: { lte: now } },
+        data: { nextRunAt: next },
+      })
+      if (claim.count === 0) continue
 
       try {
         const { runWorkflowsForTrigger } = await import('./workflow-engine')
