@@ -786,3 +786,19 @@ Stage Summary:
 - PENDIENTE DEL USUARIO: PAT de GitHub (classic, scopes repo + workflow) en https://github.com/settings/tokens. Al pegarlo: push completo en <1 min. Estados seguros: nada se pierde (snapshot preservado en snapshot-v2.3, initial en backup-version-anterior).
 - COMPLETADO: token recibido con scopes repo+workflow (verificado vía x-oauth-scopes). Push exitoso: snapshot-v2.3 (ddf2227 preservado) + force push main ddf2227→70638cc. Verificado ls-remote: GitHub main = local HEAD (70638cc), 51 commits, ci.yml publicado. backup-version-anterior intacta (ff8b184).
 - RECORDATORIOS al usuario: (1) revocar el PAT pegado en chat tras confirmar (github.com/settings/tokens) y generar uno nuevo con expiración cuando se necesite; (2) rotar llave NVIDIA nvapi-THrlN (quedó en historial local antiguo de main).
+
+---
+Task ID: 31
+Agent: main (Super Z)
+Task: Finalización de producción (AUDIT+IMPLEMENT+TESTS+E2E+CLEAN-ROOM) — INCIDENTE de rollback del entorno y recuperación desde GitHub.
+
+Work Log:
+- Al iniciar el turno, dos auditorías (multi-tenancy/auth y automations/WhatsApp/memoria/tools) describieron un árbol SIN fromMe fix, SIN memory.ts, SIN ConversationEmbedding. Verificación directa: rg fromMe = 0 matches; src/lib/memory.ts inexistente. CONTRADICCIÓN con el estado visto al inicio del turno.
+- Diagnóstico: el workspace fue RESTAURADO a un snapshot viejo (era Task ~22-24, HEAD b7ef97a con commits gateway UUID sobre dcee6e6). Perdidos del árbol y de .git: Fase 5, fixes de auditoría (7029f4a), scripts de backup + DEPLOY.md del turno anterior. Los objetos de 7029f4a ya no existían localmente.
+- RECUPERACIÓN: GitHub tenía main=7029f4a (repo legible anónimamente). git fetch + branch snapshot-post-restore (preserva estado rollback) + git reset --hard origin/main. Verificado: fromMe (3), memory.ts OK, backup v2 OK.
+- Recreados DEPLOY.md, scripts/sqlite-backup.cjs, scripts/backup-nightly.sh (contenido íntegro de contexto).
+- Cliente Prisma regenerado + db push. Baseline sobre árbol restaurado: 197/197 tests, tsc 0, eslint 0.
+
+Stage Summary:
+- Lección: el workspace puede ser restaurado a snapshots viejos entre turnos; GitHub es la red de seguridad real. Verificar el árbol contra HEAD antes de confiar en lecturas previas.
+- El estado actual = 7029f4a + archivos de despliegue recreados. Las auditorías del turno (hechas sobre el árbol viejo) se RE-VERIFICAN hallazgo por hallazgo antes de arreglar.
