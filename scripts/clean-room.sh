@@ -34,11 +34,14 @@ DATABASE_URL="file:db/clean-room.db"
 WHATSAPP_DAEMON_URL="http://localhost:3998"
 ENV
 
-echo "── [3/8] instalación limpia (lockfile congelado)"
-if command -v bun >/dev/null 2>&1; then
-  bun install --frozen-lockfile >/dev/null
-else
+echo "── [3/8] instalación limpia (lockfile congelado, PARIDAD con Dockerfile)"
+# El Dockerfile de producción usa npm ci (--legacy-peer-deps): aquí igual.
+# (bun install completa el build pero hoy no emite .next/standalone de forma
+# fiable — trazado de node_modules distinto; CI usa bun solo para tipos+tests.)
+if [ -f package-lock.json ]; then
   npm ci --legacy-peer-deps --no-audit --no-fund >/dev/null
+else
+  npm install --legacy-peer-deps --no-audit --no-fund >/dev/null
 fi
 
 echo "── [4/8] prisma generate + BD desde CERO"
