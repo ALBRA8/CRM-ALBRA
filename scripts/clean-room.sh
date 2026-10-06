@@ -1,0 +1,88 @@
+#!/bin/bash
+# ============================================================
+# CRM ALBRA — CLEAN-ROOM (§31 del cierre de producción)
+#
+# Demuestra que el repo funciona desde un CLONE LIMPIO, sin reutilizar
+# node_modules, BDs, builds, caches ni secretos del entorno original:
+#
+#   git clone → install (lockfile) → prisma generate → BD desde cero
+#   → build → start → health → E2E completo (scripts/e2e-final.mjs)
+#
+# Salida: .clean-room/ (clonado completo, se conserva para inspección)
+# Exit: 0 PASS · 1 FAIL
+# ============================================================
+set -euo pipefail
+
+SRC="$(cd "$(dirname "$0")/.." && pwd)"
+DEST="$SRC/.clean-room"
+PORT=3102
+
+echo "── [1/8] git clone limpio → $DEST"
+rm -rf "$DEST"
+git clone --quiet "$SRC" "$DEST"
+cd "$DEST"
+# Verificación de pureza: no debe existir nada heredado
+test ! -d node_modules && test ! -f db/clean-room.db
+echo "   clone OK (sin node_modules ni BD previa)"
+
+echo "── [2/8] entorno: .env generado con secretos NUEVOS (no se copia el original)"
+cat > .env << ENV
+APP_SECRET="cleanroom-$(openssl rand -hex 16)"
+APP_ENCRYPTION_KEY="cleanroom-$(openssl rand -hex 16)"
+INTERNAL_API_SECRET="cleanroom-$(openssl rand -hex 16)"
+DATABASE_URL="file:db/clean-room.db"
+WHATSAPP_DAEMON_URL="http://localhost:3998"
+ENV
+
+echo "── [3/8] instalación limpia (lockfile congelado)"
+if command -v bun >/dev/null 2>&1; then
+  bun install --frozen-lockfile >/dev/null
+else
+  npm ci --legacy-peer-deps --no-audit --no-fund >/dev/null
+fi
+
+echo "── [4/8] prisma generate + BD desde CERO"
+npx prisma generate >/dev/null
+npx prisma db push --skip-generate >/dev/null
+
+echo "── [5/8] build de producción (esto tarda; sin caches del original)"
+# Reintento: en VPS/sandboxes de 4 GB un worker de Turbopack puede ser
+# OOM-killed; el segundo intento reconstruye sin estado corrupto.
+if ! npm run build >/dev/null 2>&1; then
+  echo "   build falló (probable OOM transitorio) — reintentando..."
+  rm -rf .next
+  npm run build >/dev/null
+fi
+test -f .next/standalone/server.js || { echo "FAIL: el build no produjo standalone"; exit 1; }
+
+echo "── [6/8] start standalone :$PORT + health"
+set -a; source .env; set +a
+export PORT=$PORT HOSTNAME=127.0.0.1
+setsid node .next/standalone/server.js > "$DEST/clean-room-server.log" 2>&1 &
+SRV=$!
+HEALTH=""
+for i in $(seq 1 20); do
+  sleep 1
+  HEALTH=$(curl -sf "http://127.0.0.1:$PORT/api/health" 2>/dev/null || true)
+  [ -n "$HEALTH" ] && break
+done
+echo "   health: $HEALTH"
+echo "$HEALTH" | grep -q '"ok":true' || { echo "FAIL: health no respondió ok"; kill $SRV 2>/dev/null || true; exit 1; }
+
+echo "── [7/8] E2E completo contra la instancia clean-room"
+set +e
+node scripts/e2e-final.mjs --base "http://127.0.0.1:$PORT" | tail -24
+E2E_RC=$?
+set -e
+
+echo "── [8/8] limpieza de procesos"
+kill $SRV 2>/dev/null || true
+pkill -f "standalone/server.js" 2>/dev/null || true
+
+if [ "$E2E_RC" -eq 0 ]; then
+  echo "CLEAN-ROOM: PASS"
+  exit 0
+else
+  echo "CLEAN-ROOM: FAIL"
+  exit 1
+fi
