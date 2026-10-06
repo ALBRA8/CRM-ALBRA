@@ -13,6 +13,11 @@
 # ============================================================
 set -euo pipefail
 
+# Neutraliza contaminación del entorno original (el gate #31 existe para
+# descubrir EXACTAMENTE esto): variables exportadas en el shell pisan .env
+# por precedencia de Prisma → la BD "clean-room" podría apuntar a la BD real.
+unset DATABASE_URL APP_SECRET APP_ENCRYPTION_KEY INTERNAL_API_SECRET PORT HOSTNAME || true
+
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$SRC/.clean-room"
 PORT=3102
