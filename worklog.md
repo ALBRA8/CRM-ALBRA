@@ -802,3 +802,22 @@ Work Log:
 Stage Summary:
 - Lección: el workspace puede ser restaurado a snapshots viejos entre turnos; GitHub es la red de seguridad real. Verificar el árbol contra HEAD antes de confiar en lecturas previas.
 - El estado actual = 7029f4a + archivos de despliegue recreados. Las auditorías del turno (hechas sobre el árbol viejo) se RE-VERIFICAN hallazgo por hallazgo antes de arreglar.
+
+---
+Task ID: 32
+Agent: main (Super Z)
+Task: CIERRE DE PRODUCCIÓN — AUDIT + IMPLEMENTATION + TESTS + E2E + CLEAN-ROOM (prompt de finalización §0-§37).
+
+Work Log:
+- AUDIT baseline sobre árbol restaurado (7029f4a): 197/197 tests, tsc 0, eslint 0, CI real (bun install frozen → prisma → tsc → vitest → build). 2 auditorías Explore: multi-tenancy (82 rutas, 1 crítico: daemon-proxy sin chequeo org↔daemon) + automations/WhatsApp/memoria/tools (hallazgos RE-verificados contra HEAD: la memoria Fase 5 y fromMe SÍ existían — eran del árbol viejo).
+- IMPLEMENTATION (solo brechas P0 confirmadas, sin reescribir): daemon-proxy guard org↔daemon via /status.linkedOrgId (403 cross-org) + PUT envía orgId; daemon: dedup waMessageId en saveMessage, persistencia de salientes en /send, filtro organizationId en PUT; chat: handoffKeywords+autoReplyEnabled en canal Baileys (pausa persistente + notificación + respuesta sin LLM) y registro de tools con zod+kind (read/write); scheduler: sweeper de runs huérfanos + claim atómico nextRunAt + claim de resumeWaitingRuns; workflow-engine: idempotencia PERMANENTE por evento (automationId,idempotencyKey unique, P2002→deduplicated); memoria: columna type (fact|preference|observation|learning|procedural) + src/lib/memory-contract.ts (MemoryDV puro) + filtros/enum en API; RBAC: reports/pdf|excel→reports.read, services+knowledge→admin, cron safeEquals+CRON_SECRET, QuoteItem.organizationId poblado, dashboard/activity lookups con orgId; health real (db check + versión) + /api/doctor (owner/admin, 8 checks, ?fix=1 determinista); middleware defensa en profundidad.
+- Schema aditivo: AutomationRun.idempotencyKey (+unique) y AgentMemory.type. db push OK sin pérdida.
+- TESTS: +27 tests (multitenant-p0 12, automation-durability 5, memory-contract 5, doctor 3, reports-pdf RBAC 2). Suite final: 224/224, tsc 0, eslint 0.
+- E2E (§30): scripts/e2e-final.mjs — 20 pasos (login×3, cliente, oportunidad, tool IA real vía mock OpenAI, memoria+MemoryDV+búsqueda, automatización SUCCESS, auditoría, aislamiento A/B ×3, doctor) → 20/20 PASS contra standalone :3101.
+- CLEAN-ROOM (§31): scripts/clean-room.sh — clone→install(lockfile)→prisma→BD cero→build→start→health→E2E → PASS. Descubrió 3 dependencias accidentales reales: (1) bun install no emite .next/standalone (cambiado a npm ci = paridad Dockerfile), (2) DATABASE_URL relativo resuelto distinto CLI/runtime (absoluto), (3) DATABASE_URL exportado del shell pisaba .env por precedencia (unset inicial). OOM transitorio en build → reintento documentado.
+- INCIDENTE previo documentado en Task 31: rollback del entorno + recuperación desde GitHub.
+
+Stage Summary:
+- CRITERIO §35: AUDIT PASS · Multi-tenancy PASS (batería A vs B + guard nuevo) · Auth PASS · Permissions PASS (RBAC alineado) · Customer/Opp PASS · AI PASS · Memory PASS · Memory isolation PASS · Consolidation PASS · Corrections PASS · Automations PASS (idempotentes+durables) · WhatsApp PASS (sin loops, handoff, salientes persistidos) · Human handoff PASS · Providers PASS (frontera mockeable) · Audit log PASS · Doctor PASS · Observability PASS (health+doctor) · Dashboard PASS (preservado) · Unit+Integration 224/224 · E2E 20/20 · Clean-room PASS.
+- FINAL STATUS: DONE (limitaciones conocidas documentadas, ninguna P0: rate-limit login, revocación JWT, entityId polimórfico, cola de reenvío de notificaciones PENDIENTE, ?token= en descargas, DISABLE_DEMO_LOGIN pendiente para producción con clientes).
+- Commits: 5b903f3 (recuperación) → hardening 224 tests → e2e+clean-room (5 commits).
