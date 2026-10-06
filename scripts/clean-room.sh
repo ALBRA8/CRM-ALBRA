@@ -30,9 +30,12 @@ cat > .env << ENV
 APP_SECRET="cleanroom-$(openssl rand -hex 16)"
 APP_ENCRYPTION_KEY="cleanroom-$(openssl rand -hex 16)"
 INTERNAL_API_SECRET="cleanroom-$(openssl rand -hex 16)"
-DATABASE_URL="file:db/clean-room.db"
+# Ruta ABSOLUTA: Prisma (CLI) y el runtime resuelven file: relativo de forma
+# distinta (schema dir vs cwd) — la misma lección del docker-compose.
+DATABASE_URL="file:$DEST/db/clean-room.db"
 WHATSAPP_DAEMON_URL="http://localhost:3998"
 ENV
+mkdir -p "$DEST/db"
 
 echo "── [3/8] instalación limpia (lockfile congelado, PARIDAD con Dockerfile)"
 # El Dockerfile de producción usa npm ci (--legacy-peer-deps): aquí igual.
@@ -46,7 +49,8 @@ fi
 
 echo "── [4/8] prisma generate + BD desde CERO"
 npx prisma generate >/dev/null
-npx prisma db push --skip-generate >/dev/null
+npx prisma db push --skip-generate 2>&1 | tail -1
+test -f "$DEST/db/clean-room.db" || { echo "FAIL: la BD clean-room no se creó"; exit 1; }
 
 echo "── [5/8] build de producción (esto tarda; sin caches del original)"
 # Reintento: en VPS/sandboxes de 4 GB un worker de Turbopack puede ser
