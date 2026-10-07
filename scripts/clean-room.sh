@@ -67,7 +67,18 @@ if ! npm run build >/dev/null 2>&1; then
 fi
 test -f .next/standalone/server.js || { echo "FAIL: el build no produjo standalone"; exit 1; }
 
-echo "── [6/8] start standalone :$PORT + health"
+echo "── [6/9] start standalone :$PORT + health"
+# Guard de puerto QUIRÚRGICO: un servidor zombie de una corrida anterior aquí
+# haría pasar el health contra la instancia EQUIVOCADA (falso PASS/FAIL).
+# SOLO se libera el puerto del clean-room (nunca un CRM de producción en :3000).
+if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+  echo "   puerto $PORT ocupado — liberando solo ese puerto"
+  fuser -k "$PORT/tcp" 2>/dev/null || true
+  sleep 1
+fi
+if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+  echo "FAIL: el puerto $PORT sigue ocupado por algo ajeno al clean-room"; exit 1
+fi
 set -a; source .env; set +a
 export PORT=$PORT HOSTNAME=127.0.0.1
 setsid node .next/standalone/server.js > "$DEST/clean-room-server.log" 2>&1 &
@@ -97,7 +108,6 @@ set -e
 
 echo "── [9/9] limpieza de procesos"
 kill $SRV 2>/dev/null || true
-pkill -f "standalone/server.js" 2>/dev/null || true
 
 if [ "$E2E_RC" -eq 0 ] && [ "$WA_RC" -eq 0 ]; then
   echo "CLEAN-ROOM: PASS"
