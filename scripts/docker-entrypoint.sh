@@ -39,16 +39,25 @@ fi
 # ---------------- Rol app (default) ----------------
 # Sincroniza el esquema con la BD (idempotente: no-op si ya está en sync).
 #
-# TRADE-OFF documentado (README › Despliegue con Docker):
-#   En v0.x con SQLite usamos `prisma db push` en cada arranque como
-#   "migración automática": los cambios del schema.prisma se aplican solos.
-#   Con --accept-data-loss, cambios destructivos (borrar/renombrar columnas)
-#   también se aplican → HAZ BACKUP del volumen db-data antes de actualizar.
-#   Desactiva con SKIP_DB_PUSH=1 si prefieres aplicarlo a mano:
+# SEGURO POR DEFECTO (auditoría pre-venta, revisión de migraciones):
+#   Sin datos que perder, `prisma db push` aplica cambios aditivos sin ruido.
+#   Si un cambio de esquema exige destruir datos, push FALLA RUIDOSO en vez
+#   de aceptarlos: primero HAZ BACKUP y decide. Solo con ALLOW_DATA_LOSS=1
+#   se añade --accept-data-loss (misma conducta que antes de este hardening).
+#   Desactiva por completo con SKIP_DB_PUSH=1 (BD ya en producción):
 #     docker compose exec app npx prisma db push
 if [ "${SKIP_DB_PUSH:-0}" != "1" ]; then
-  echo "[entrypoint] Sincronizando esquema Prisma (prisma db push --skip-generate)..."
-  npx prisma db push --skip-generate --accept-data-loss
+  if [ "${ALLOW_DATA_LOSS:-0}" = "1" ]; then
+    echo "[entrypoint] Sincronizando esquema Prisma (db push --accept-data-loss)..."
+    npx prisma db push --skip-generate --accept-data-loss
+  else
+    echo "[entrypoint] Sincronizando esquema Prisma (db push, FAIL-CLOSED ante pérdida de datos)..."
+    if ! npx prisma db push --skip-generate; then
+      echo "[entrypoint] ERROR: el cambio de esquema exigiría destruir datos." >&2
+      echo "[entrypoint] Haz BACKUP del volumen db-data y re-ejecuta con ALLOW_DATA_LOSS=1 si aceptas la pérdida." >&2
+      exit 1
+    fi
+  fi
 fi
 
 # Servidor standalone de Next (escucha en PORT/HOSTNAME = 3000 / 0.0.0.0).

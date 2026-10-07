@@ -1,8 +1,7 @@
-# CI — CRM ALBRA (cierre H-12 de la auditoría)
-# Pipeline mínimo: instala dependencias con el lockfile de bun,
-# verifica tipos de TypeScript y corre la batería de tests Vitest.
-# El build de producción se valida en cada push (next build ya NO
-# silencia errores de tipos: ver next.config.ts).
+# CI — CRM ALBRA (hardening pre-venta)
+# Pipeline completo: lockfile congelado → prisma validate → tipos estrictos
+# → lint → batería Vitest (unit+integration, multi-tenant P0 incluido) → build
+# de producción standalone. VERDE = requisito de venta (auditoría pre-venta P0).
 
 name: CI
 
@@ -14,13 +13,16 @@ on:
 
 jobs:
   test:
-    name: Tests + tipos
+    name: Prisma + tipos + lint + tests + build
     runs-on: ubuntu-latest
     env:
-      # Dummy SOLO para tests (nunca son secretos reales: los tests usan
-      # una BD efímera db/test-vitest.db y mockean los canales de envío)
+      # Dummies SOLO para tests (nunca son secretos reales: los tests usan
+      # una BD efímera db/test-vitest.db y mockean los canales de envío).
+      # INTERNAL_API_SECRET es necesario para el camino OTHER_ORG del guard
+      # multi-tenant del proxy WhatsApp (mock del daemon responde orgLinked).
       APP_SECRET: ci-dummy-secret-test-only-0123456789abcdef
       APP_ENCRYPTION_KEY: ci-dummy-key-test-only-0123456789abcdef
+      INTERNAL_API_SECRET: ci-dummy-internal-test-only-0123456789abcdef
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
@@ -35,8 +37,14 @@ jobs:
       - name: Generar cliente Prisma
         run: bunx prisma generate
 
+      - name: Validar schema Prisma
+        run: bunx prisma validate
+
       - name: Verificación de tipos (tsc estricto en src/)
         run: bunx tsc --noEmit
+
+      - name: Lint (ESLint)
+        run: bun run lint
 
       - name: Batería de tests Vitest
         run: bun run test
