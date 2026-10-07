@@ -23,6 +23,9 @@ jobs:
       APP_SECRET: ci-dummy-secret-test-only-0123456789abcdef
       APP_ENCRYPTION_KEY: ci-dummy-key-test-only-0123456789abcdef
       INTERNAL_API_SECRET: ci-dummy-internal-test-only-0123456789abcdef
+      # Requerido por `prisma validate` (schema usa env("DATABASE_URL"));
+      # solo validación de esquema — los tests usan su propia BD efímera.
+      DATABASE_URL: file:./db/ci-dummy.db
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
