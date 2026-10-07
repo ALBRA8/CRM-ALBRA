@@ -575,6 +575,16 @@ const server = createServer(async (req, res) => {
           jsonResponse(res, { error: 'Organización no encontrada' }, 400)
           return
         }
+        // FAIL-CLOSED (auditoría pre-venta P0, defensa en profundidad): si la
+        // sesión ya está vinculada a OTRA organización, el daemon se NIEGA a
+        // re-vincularla aunque llegue un orgId distinto con el secreto interno.
+        // La desvinculación solo ocurre por /disconnect de la org dueña
+        // (verificada por el proxy) o borrando el volumen wa-auth.
+        if (linkedOrgId && linkedOrgId !== body.orgId) {
+          console.warn(`[ORG] REBIND denegado: sesión de ${linkedOrgId}, solicitud de ${body.orgId}`)
+          jsonResponse(res, { error: 'Esta sesión de WhatsApp ya está vinculada a otra organización' }, 403)
+          return
+        }
         linkedOrgId = body.orgId
         persistLinkedOrg(linkedOrgId)
         console.log(`[ORG] Sesión vinculada a organización: ${linkedOrgId}`)

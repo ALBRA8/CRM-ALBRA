@@ -149,3 +149,117 @@ describe('MULTI-TENANT P0 — documentos/exportaciones', () => {
     expect(text).toContain('Cliente Beta Org B')
   })
 })
+
+// ============================================================
+// FAIL-CLOSED (auditoría pre-venta P0 + regresión del CI rojo):
+// la duda NUNCA se resuelve a favor del llamador. Si la propiedad de la
+// sesión no puede verificarse (daemon caído, status no-ok, respuesta
+// ambigua) la operación se DENIEGA — para B y también para A.
+// ============================================================
+describe('MULTI-TENANT P0 — WhatsApp fail-closed (ownership no verificable)', () => {
+  it('daemon CAÍDO (fetch rechaza): B recibe 403 y A también (fail-closed total)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('ECONNREFUSED: daemon caído')
+    }))
+    try {
+      const sendB = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenB(), method: 'POST', body: { path: '/send', to: '+573001110000', text: 'hola' } }))
+      expect(sendB.status).toBe(403)
+      const convsB = await daemonGet(req('/api/whatsapp/daemon-proxy?path=/conversations', { token: tokenB() }))
+      expect(convsB.status).toBe(403)
+      // Ni el dueño legítimo opera cuando no se puede verificar propiedad
+      const sendA = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenA(), method: 'POST', body: { path: '/send', to: '+573001110000', text: 'hola' } }))
+      expect(sendA.status).toBe(403)
+      const statusA = await daemonGet(req('/api/whatsapp/daemon-proxy?path=/status', { token: tokenA() }))
+      expect(statusA.status).toBe(403)
+      const connectA = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenA(), method: 'POST', body: { path: '/connect' } }))
+      expect(connectA.status).toBe(403)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('daemon /status responde 500 (error consultando ownership) → DENIED 403', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL) => {
+      const url = String(_url)
+      if (url.endsWith('/status')) return new Response('internal error', { status: 500 })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }))
+    try {
+      const sendA = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenA(), method: 'POST', body: { path: '/send', to: '+573001110000', text: 'hola' } }))
+      expect(sendA.status).toBe(403)
+      const disconnectB = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenB(), method: 'POST', body: { path: '/disconnect' } }))
+      expect(disconnectB.status).toBe(403)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('respuesta AMBIGUA (200 sin orgLinked boolean) → DENIED 403', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL) => {
+      const url = String(_url)
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ status: 'connected' }), { status: 200 })
+      return new Response(JSON.stringify({ conversations: [] }), { status: 200 })
+    }))
+    try {
+      const convsA = await daemonGet(req('/api/whatsapp/daemon-proxy?path=/conversations', { token: tokenA() }))
+      expect(convsA.status).toBe(403)
+      const sendA = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenA(), method: 'POST', body: { path: '/send', to: '+573001110000', text: 'hola' } }))
+      expect(sendA.status).toBe(403)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('orgLinked:true pero linkedOrgId ausente → DENIED 403 (no se infiere propiedad)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL) => {
+      const url = String(_url)
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ status: 'connected', orgLinked: true }), { status: 200 })
+      return new Response(JSON.stringify({ conversations: [] }), { status: 200 })
+    }))
+    try {
+      const sendA = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenA(), method: 'POST', body: { path: '/send', to: '+573001110000', text: 'hola' } }))
+      expect(sendA.status).toBe(403)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('UNLINKED verificado (orgLinked:false): /connect de A procede, pero send/conversations de B siguen DENIED', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL) => {
+      const url = String(_url)
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ status: 'disconnected', orgLinked: false, linkedOrgId: null }), { status: 200 })
+      return new Response(JSON.stringify({ status: 'connecting' }), { status: 200 })
+    }))
+    try {
+      const connectA = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenA(), method: 'POST', body: { path: '/connect' } }))
+      expect(connectA.status).toBe(200)
+      const sendB = await daemonPost(req('/api/whatsapp/daemon-proxy', { token: tokenB(), method: 'POST', body: { path: '/send', to: '+573001110000', text: 'hola' } }))
+      expect(sendB.status).toBe(403)
+      const convsB = await daemonGet(req('/api/whatsapp/daemon-proxy?path=/conversations', { token: tokenB() }))
+      expect(convsB.status).toBe(403)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('sesión vinculada a A: B tampoco obtiene /qr ni /status (sin fuga de teléfono/org)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL) => {
+      const url = String(_url)
+      if (url.endsWith('/status')) {
+        return new Response(JSON.stringify({ status: 'connected', phone: '+573009990000', linkedOrgId: 'org-a', orgLinked: true }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ status: 'waiting_qr', qr: 'data:image/png;base64,XXX' }), { status: 200 })
+    }))
+    try {
+      const qrB = await daemonGet(req('/api/whatsapp/daemon-proxy?path=/qr', { token: tokenB() }))
+      expect(qrB.status).toBe(403)
+      const statusB = await daemonGet(req('/api/whatsapp/daemon-proxy?path=/status', { token: tokenB() }))
+      expect(statusB.status).toBe(403)
+      const statusText = await statusB.text()
+      expect(statusText).not.toContain('+573009990000')
+      expect(statusText).not.toContain('org-a')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

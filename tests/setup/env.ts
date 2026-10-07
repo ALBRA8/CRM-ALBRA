@@ -98,4 +98,8 @@ try {
 // el daemon: el motor de workflows queda no-op durante toda la batería.
 vi.mock('@/lib/workflow-engine', () => ({
   runWorkflowsForTrigger: vi.fn(async () => []),
+  // El scheduler también reanuda runs en espera al arrancar (scheduler.ts);
+  // sin este export el mock explota con ruido en stderr en cada runDueJobs.
+  // Debe devolver NUMBER: scheduler suma processed = due.length + resumed.
+  resumeWaitingRuns: vi.fn(async () => 0),
 }))
