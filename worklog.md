@@ -847,3 +847,5 @@ Stage Summary:
 - P1 credenciales: rotación NVIDIA+PATs OBLIGATORIA pre-venta (evidencia en historial publicado)
 - P1 HTTPS/loopback, backup externo verificado, restore real PASS, IA honesta (NO VERIFICADO/BLOCKED)
 - Estado final alcanzado según gates: ver informe final en la respuesta al usuario
+- CI GREEN verificado: run b747837 → success (pipeline completo: prisma validate + tsc + lint + 230 tests + build). Fix intermedio: DATABASE_URL dummy para prisma validate en CI (efb6991 → failure P1012 → b747837 verde)
+- GATES FINALES: AUDIT PASS · TESTS 230/230 · E2E 20/20 · MULTI-TENANT PASS · WHATSAPP ISOLATION 19/19 · CI GREEN · CLEAN-ROOM PASS · BACKUP PASS · RESTORE PASS · SECURITY PASS → PRIMERA VENTA CONTROLADA (con rotación NVIDIA/PAT obligatoria pre-cobro e IA real = NO VERIFICADO/BLOCKED BY EXTERNAL CREDENTIAL, documentado)
