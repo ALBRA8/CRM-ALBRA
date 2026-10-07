@@ -81,17 +81,25 @@ done
 echo "   health: $HEALTH"
 echo "$HEALTH" | grep -q '"ok":true' || { echo "FAIL: health no respondió ok"; kill $SRV 2>/dev/null || true; exit 1; }
 
-echo "── [7/8] E2E completo contra la instancia clean-room"
+echo "── [7/9] E2E completo contra la instancia clean-room"
 set +e
 node scripts/e2e-final.mjs --base "http://127.0.0.1:$PORT" | tail -24
 E2E_RC=$?
 set -e
 
-echo "── [8/8] limpieza de procesos"
+echo "── [8/9] E2E de aislamiento WhatsApp multi-tenant (HTTP real, fail-closed)"
+# Levanta su propia app (:3100, BD efímera) + mock de daemon (:3997) —
+# usa el standalone construido dentro de ESTE clone limpio.
+set +e
+node scripts/e2e-whatsapp-isolation.mjs | tail -24
+WA_RC=$?
+set -e
+
+echo "── [9/9] limpieza de procesos"
 kill $SRV 2>/dev/null || true
 pkill -f "standalone/server.js" 2>/dev/null || true
 
-if [ "$E2E_RC" -eq 0 ]; then
+if [ "$E2E_RC" -eq 0 ] && [ "$WA_RC" -eq 0 ]; then
   echo "CLEAN-ROOM: PASS"
   exit 0
 else
