@@ -47,9 +47,11 @@ echo "── [3/8] instalación limpia (lockfile congelado, PARIDAD con Dockerfi
 # (bun install completa el build pero hoy no emite .next/standalone de forma
 # fiable — trazado de node_modules distinto; CI usa bun solo para tipos+tests.)
 if [ -f package-lock.json ]; then
-  npm ci --legacy-peer-deps --no-audit --no-fund >/dev/null
+  npm ci --legacy-peer-deps --no-audit --no-fund >/dev/null \
+    || { echo "   npm ci interrumpido (probable OOM) — reintentando..."; npm ci --legacy-peer-deps --no-audit --no-fund >/dev/null; }
 else
-  npm install --legacy-peer-deps --no-audit --no-fund >/dev/null
+  npm install --legacy-peer-deps --no-audit --no-fund >/dev/null \
+    || { echo "   npm install interrumpido — reintentando..."; npm install --legacy-peer-deps --no-audit --no-fund >/dev/null; }
 fi
 
 echo "── [4/8] prisma generate + BD desde CERO"
