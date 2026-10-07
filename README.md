@@ -132,7 +132,7 @@ git pull
 docker compose up -d --build
 ```
 
-En cada arranque, `app` ejecuta `prisma db push --skip-generate --accept-data-loss`: el esquema de `prisma/schema.prisma` se aplica sobre tu SQLite (idempotente; no-op si ya está en sync). **Trade-off:** en v0.x esto actúa como migración automática y los cambios destructivos (renombrar/borrar columnas) se aplican igual → **haz backup del volumen antes de actualizar**. Para desactivarlo, descomenta `SKIP_DB_PUSH=1` en `docker-compose.yml` y aplica el esquema a mano:
+En cada arranque, `app` ejecuta `prisma db push --skip-generate`: el esquema de `prisma/schema.prisma` se aplica sobre tu SQLite (idempotente; no-op si ya está en sync). **Seguro por defecto (hardening pre-venta):** si un cambio de esquema exigiría destruir datos, el arranque **falla ruidoso** en vez de aplicarlos — haz backup del volumen y decide. Para aceptar la pérdida explícitamente, descomenta `ALLOW_DATA_LOSS=1` en `docker-compose.yml`; para congelar del todo, `SKIP_DB_PUSH=1` y aplica a mano:
 
 ```bash
 docker compose exec app npx prisma db push

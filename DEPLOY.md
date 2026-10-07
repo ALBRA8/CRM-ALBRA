@@ -85,12 +85,13 @@ arranca el servidor; `wa-daemon` espera a que la BD tenga esquema (con
 `depends_on: service_healthy` + doble defensa en el entrypoint) y abre el
 puerto interno 3002.
 
-**Trade-off `SKIP_DB_PUSH`** (riesgo 🟠 del auditor): en v0.x el esquema se
-aplica solo en cada arranque con `--accept-data-loss` — cómodo, pero si un
-cambio de schema fuera destructivo recortaría datos. La red de seguridad es
-el backup nocturno (§8). Cuando la BD ya esté en producción y quieras
-congelar, descomenta `SKIP_DB_PUSH: "1"` en `docker-compose.yml` y aplica
-cambios de esquema a mano:
+**Migraciones seguras por defecto** (hardening pre-venta): desde esta versión
+el arranque ejecuta `prisma db push` **sin** `--accept-data-loss`: si un cambio
+de esquema exigiría destruir datos, el contenedor **falla ruidoso y no arranca**
+en vez de recortarlos. Solo con `ALLOW_DATA_LOSS: "1"` en compose se acepta la
+pérdida explícitamente (haz backup antes, §8). Cuando la BD esté en producción
+y quieras congelar del todo, descomenta `SKIP_DB_PUSH: "1"` y aplica cambios
+a mano:
 
 ```bash
 docker compose exec app npx prisma db push
@@ -157,10 +158,11 @@ ingress:
 sudo cloudflared service install && sudo systemctl start cloudflared
 ```
 
-> El puerto 3000 del compose puede quedar publicado en el VPS solo para
-> pruebas locales (`curl`); los clientes SIEMPRE deben entrar por HTTPS.
-> El 3002 del daemon **nunca** se publica (no tiene auth de red; la app lo
-> expone de forma segura por su proxy con JWT).
+> **El puerto 3000 queda ligado a `127.0.0.1`** (hardening pre-venta):
+> Docker NO lo publica hacia Internet — solo Caddy/cloudflared en el host lo
+> alcanza por loopback. Los clientes SIEMPRE entran por HTTPS. El 3002 del
+> daemon **nunca** se publica (no tiene auth de red; la app lo expone de
+> forma segura por su proxy con JWT).
 
 ---
 
@@ -248,7 +250,16 @@ Si algo sale mal: `docker compose down`, restaura el backup (§8), y
 
 ## 10. Ensayo de desastre (drill trimestral — 10 minutos)
 
-Lo que no se ensaya no funciona el día que importa:
+Lo que no se ensaya no funciona el día que importa. **Drill automatizado**
+(verificado en el cierre pre-venta: PASS — snapshot → integridad → copia
+externa → destrucción controlada → restore → CRM funcional con login real):
+
+```bash
+bash scripts/backup-restore-drill.sh   # no toca la BD real; exit 0 = PASS
+```
+
+Complemento manual (simula también el volumen `wa-auth`, que el script
+automatizado NO cubre):
 
 1. `scp` el backup más reciente a tu portátil (prueba de que la copia
    externa es real y legible).
@@ -281,12 +292,32 @@ apuntando a `/api/health` con alerta a tu correo/WhatsApp.
 | 🔴1 | Bot se auto-respondía al dueño (`fromMe`) | ✅ commit `7029f4a` — mensajes del dueño se guardan como salientes, sin auto-respuesta |
 | 🔴2 | Daemon no alcanzaba la API en Docker (`NEXT_APP_URL`) | ✅ commit `7029f4a` — `http://app:3000` en compose |
 | 🔴3 | Restauración de backup perdía datos | ✅ commit `7029f4a` — restaura oportunidades, reservas, cotizaciones+ítems y transacciones; aviso honesto en la UI |
-| 🟠 | `prisma db push --accept-data-loss` | ✅ documentado (§4) con `SKIP_DB_PUSH` + backup previo como red |
-| 🟠 | HTTP plano | ✅ esta guía (§6) — Caddy o Cloudflare Tunnel |
+| 🟠 | `prisma db push --accept-data-loss` | ✅ hardening — arranque **fail-closed**: los cambios destructivos detienen el arranque; `ALLOW_DATA_LOSS=1` solo explícito (§4) |
+| 🟠 | HTTP plano | ✅ doble defensa — compose publica `127.0.0.1:3000` (§6) + Caddy/cloudflared obligatorios |
+| 🔴P0 | WhatsApp fail-open (`!linked \|\| linked === org`) | ✅ hardening — ownership verificable o DENIED en proxy y daemon (rebind bloqueado); 6 tests de regresión + E2E HTTP 19 pasos |
+| 🔴P0 | CI rojo (223/224) | ✅ corregido — la causa raíz era el mismo fail-open; CI completo: prisma validate + tsc + lint + tests + build |
 | 🟡 | Backup nocturno programado | ✅ §8 — `scripts/backup-nightly.sh` + cron + retención + externo |
 | 🟡 | Drill de desastre | ✅ §10 — procedimiento de 10 min |
 | ⚪ | Sobrediseño (Instagram/Telegram, niveles, Sheets) | Concordado: ya construidos, no se venden en fase 1 |
 
-Antes del primer cliente pagado, además: **rotar la llave NVIDIA**
-(`nvapi-THrlN-…` quedó en historial git antiguo) y tener el PAT de GitHub
-revocado/regenerado con expiración.
+Antes del primer cliente pagado, además (**obligatorio** — la auditoría
+pre-venta confirmó con `git log -S` que la llave NVIDIA completa vive en el
+historial de `main` ya publicado en GitHub, no solo local):
+
+1. **Rotar la llave NVIDIA** en [console.ngc.nvidia.com](https://console.ngc.nvidia.com) → revocar `nvapi-THrlN-…` → generar una nueva → Configuración → Agente IA.
+2. **Revocar todos los PAT de GitHub antiguos** ([github.com/settings/tokens](https://github.com/settings/tokens)) — hay PATs `ghp_…` en commits históricos de `worklog.md` y uno pegado en chat durante el despliegue.
+3. Opcional (P2): reescribir el historial (`git filter-repo`) para purgar los secretos viejos; mientras tanto la rotación del punto 1-2 neutraliza el riesgo.
+
+### Estado verificado de cada pieza (auditoría pre-venta)
+
+| Pieza | Estado |
+|---|---|
+| Aislamiento multi-tenant (API/memoria/automatizaciones/documentos) | **REAL** — tests P0 (230) + E2E HTTP (20 pasos) |
+| WhatsApp ownership fail-closed | **REAL** — E2E HTTP 19 pasos (ORG-A/B, unknown, daemon caído) |
+| Auth JWT + scrypt + RBAC | **REAL** — unit + E2E + drill de restauración |
+| Backup → externo → restore → CRM funcional | **REAL** — `bash scripts/backup-restore-drill.sh` (PASS; replica el flujo del §10) |
+| E2E del agente IA (tool-calling, memoria, embeddings) | **MOCK** — frontera OpenAI-compatible simulada; todo el código del CRM es real |
+| Proveedor de IA real (chat + embeddings) | **CONFIGURABLE / NO VERIFICADO** — sin credenciales disponibles al cierre; verificar con `node scripts/ai-real-smoke.mjs` (imprime REAL / REAL+CONFIGURACIÓN / NO VERIFICADO sin exponer la key) |
+| WhatsApp real (Baileys, QR, envío) | **CONFIGURABLE** — requiere teléfono + QR en el VPS; la arquitectura está testeada con daemon mock |
+| SMTP / notificaciones email | **CONFIGURABLE** — credentials en .env, no verificadas en el cierre |
+| Escalado (multi-sesión WhatsApp, >1 org pesada, HA) | **LIMITADO** — SQLite + 1 sesión de WhatsApp por despliegue: dimensionado para primera venta controlada, no para escala |

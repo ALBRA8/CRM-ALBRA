@@ -821,3 +821,29 @@ Stage Summary:
 - CRITERIO §35: AUDIT PASS · Multi-tenancy PASS (batería A vs B + guard nuevo) · Auth PASS · Permissions PASS (RBAC alineado) · Customer/Opp PASS · AI PASS · Memory PASS · Memory isolation PASS · Consolidation PASS · Corrections PASS · Automations PASS (idempotentes+durables) · WhatsApp PASS (sin loops, handoff, salientes persistidos) · Human handoff PASS · Providers PASS (frontera mockeable) · Audit log PASS · Doctor PASS · Observability PASS (health+doctor) · Dashboard PASS (preservado) · Unit+Integration 224/224 · E2E 20/20 · Clean-room PASS.
 - FINAL STATUS: DONE (limitaciones conocidas documentadas, ninguna P0: rate-limit login, revocación JWT, entityId polimórfico, cola de reenvío de notificaciones PENDIENTE, ?token= en descargas, DISABLE_DEMO_LOGIN pendiente para producción con clientes).
 - Commits: 5b903f3 (recuperación) → hardening 224 tests → e2e+clean-room (5 commits).
+
+---
+Task ID: 31
+Agent: Super Z (main)
+Task: FASE DE HARDENING PRE-VENTA (auditoría externa): AUDITAR → CORREGIR → TESTEAR → E2E → CLEAN-ROOM → AUDITAR NUEVAMENTE
+
+Work Log:
+- AUDIT: confirmado P0-1 fail-open en daemon-proxy/route.ts:58 (`!linked || linked === authOrgId`); guard de rebind ausente en daemon.mjs /connect (línea 578 re-vinculaba a cualquier orgId)
+- AUDIT: CI rojo confirmado vía GitHub API (run 37561703368 en 451452d: FAILURE en "Batería de tests Vitest"); log descargado → test multitenant-p0:112 esperaba 403 recibió 200 = MISMO fail-open (en CI falta INTERNAL_API_SECRET → daemonHeaders() lanza → catch → null → allow). 223/224 no reproducía local (224/224): la discrepancia era entornos, la causa raíz única es el fail-open
+- AUDIT: hallazgo propio corregido — ci.yml NO estaba corrupto (bytes verificados con od: `branches: [main]`; el "ain]" era artefacto ANSI del terminal)
+- AUDIT: llave NVIDIA COMPLETA en historial de main YA PUBLICADO (commits eb83110/70638cc/6e1ae78/47b6a5e) + PATs ghp_ en worklog histórico → rotación OBLIGATORIA documentada en DEPLOY.md §12
+- AUDIT: compose publicaba 3000:3000 en 0.0.0.0; backup externo sin verificación; Settings de BD sin credenciales IA
+- FIX P0-1: proxy fail-closed (resolveOwnership: SAME_ORG/UNLINKED/OTHER_ORG/UNKNOWN; UNKNOWN→403 DENIED; sin estados simulados ni 200 falsos; catches → 503 honesto) + daemon.mjs niega REBIND a otra org (403) + disconnectedStatus eliminado
+- FIX P0-2: 6 tests aditivos fail-closed en multitenant-p0 (daemon caído/500/ambiguo/orgLinked-sin-id/UNLINKED/leak-qr-status) → 230/230; mock global añade resumeWaitingRuns (tipado NUMBER); ci.yml completo (prisma validate + lint + INTERNAL_API_SECRET dummy para camino OTHER_ORG)
+- FIX P1: compose `127.0.0.1:3000:3000` (solo loopback) · entrypoint db push sin --accept-data-loss por defecto (ALLOW_DATA_LOSS=1 explícito; falla ruidoso) · DEPLOY.md §4/§6/§10/§12 actualizados + tabla REAL/MOCK/CONFIGURABLE/NO VERIFICADO/LIMITADO
+- P1 scripts: backup-restore-drill.sh (8 fases: siembra BD demo → snapshot Online Backup API → integridad → copia externa sha256 → destrucción → restore → conteos 9 tablas → boot standalone + health + login real) PASS en vivo; e2e-whatsapp-isolation.mjs (19 pasos HTTP real: S1 B bloqueado en 7 ops sin leak; S2 UNLINKED; S3 daemon caído → DENIED) PASS; ai-real-smoke.mjs → NO VERIFICADO (BLOCKED BY EXTERNAL CREDENTIAL, honesto)
+- E2E deployment smoke: e2e-final 20/20 PASS contra standalone real
+- CLEAN-ROOM: PASS (clone fresco de HEAD → npm ci → BD cero → build → health → E2E 20/20 → WhatsApp 19/19); incidente documentado: zombie next-server en :3102 invalidó 1ª corrida (health pasaba contra instancia equivocada) → guard de puerto quirúrgico añadido (fuser solo el puerto del clean-room, nunca pkill global); 2ª corrida cortada por OOM en npm ci → reintento añadido
+- Commits: d928688 (P0 fail-closed + tests), b7326b3 (CI+compose+entrypoint), 2a8b265 (scripts verificación+clean-room), e527515 (guard puerto clean-room), + docs
+
+Stage Summary:
+- P0-1 WhatsApp fail-closed: CERRADO (proxy+daemon+tests+E2E HTTP)
+- P0-2 CI verde: CAUSA RAÍZ corregida (mismo fail-open); pipeline completo; pendiente verificar run verde tras push
+- P1 credenciales: rotación NVIDIA+PATs OBLIGATORIA pre-venta (evidencia en historial publicado)
+- P1 HTTPS/loopback, backup externo verificado, restore real PASS, IA honesta (NO VERIFICADO/BLOCKED)
+- Estado final alcanzado según gates: ver informe final en la respuesta al usuario
