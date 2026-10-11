@@ -1,0 +1,9 @@
+{
+  "name": "whatsapp-daemon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mini-servicio de la plataforma: daemon Baileys de WhatsApp (puerto 3002). start.sh lo lanza en cada boot del contenedor como hijo de init → sobrevive a los comandos del agente. El script devuelve el cwd a la raíz del proyecto para que resuelva db/custom.db, .env y node_modules (Baileys, better-sqlite3) igual que siempre.",
+  "scripts": {
+    "dev": "cd /home/z/my-project && node src/whatsapp-daemon/daemon.mjs"
+  }
+}
