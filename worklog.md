@@ -849,3 +849,21 @@ Stage Summary:
 - Estado final alcanzado según gates: ver informe final en la respuesta al usuario
 - CI GREEN verificado: run b747837 → success (pipeline completo: prisma validate + tsc + lint + 230 tests + build). Fix intermedio: DATABASE_URL dummy para prisma validate en CI (efb6991 → failure P1012 → b747837 verde)
 - GATES FINALES: AUDIT PASS · TESTS 230/230 · E2E 20/20 · MULTI-TENANT PASS · WHATSAPP ISOLATION 19/19 · CI GREEN · CLEAN-ROOM PASS · BACKUP PASS · RESTORE PASS · SECURITY PASS → PRIMERA VENTA CONTROLADA (con rotación NVIDIA/PAT obligatoria pre-cobro e IA real = NO VERIFICADO/BLOCKED BY EXTERNAL CREDENTIAL, documentado)
+
+---
+Task ID: preview-crm
+Agent: main
+Task: Dar acceso al usuario para ver el CRM (dashboard)
+
+Work Log:
+- Sandbox reciclado: hostname cambió (c-6acaec1e→c-6ad0627f), BD reseteada (0 usuarios), dominio preview anterior devuelve 410 "Recycled"
+- Plataforma auto-arrancó dev server (bun run dev, puerto 3000) y wa-daemon (3002) en el boot
+- Seed demo regenerado vía POST /api/auth/demo (org + datos demo + usuario demo@crmalbra.com / demo1234, fuente: demo-seed.ts:82)
+- Verificado con navegador headless: login OK, dashboard y pipeline renderizan con datos demo
+- Capturas guardadas: download/crm-01-landing.png, crm-02-dashboard.png, crm-03-pipeline.png, crm-04-clientes.png
+- URL preview preview-<bot-id>.space-z.ai no construible desde dentro: bot-id no expuesto en env/SDK/agentes; todos los candidatos → 404 gateway
+
+Stage Summary:
+- CRM funcional con datos demo (8 clientes, $4.000 pipeline, 2 oportunidades IA)
+- Credenciales demo vigentes: demo@crmalbra.com / demo1234
+- Acceso interactivo del usuario: depende del panel de preview de la UI z.ai (bot id vive fuera del sandbox)
