@@ -47,3 +47,12 @@ CI passing is necessary but not sufficient: QR pairing, Meta credentials, real A
 
 ## Current integration boundary
 The Baileys daemon still calls the CRM's `/api/chat` endpoint. It is not yet routed through the separate AGENTE-GENERAL runtime. Keep that agent-runtime integration as a separate migration after the general agent and channel contract are accepted.
+
+
+## Durable Cloud API delivery and webhook idempotency
+
+- Cloud inbound message IDs are recorded in `WhatsAppWebhookEvent` with a unique key per organization and provider message ID. Completed deliveries are ignored; failed events and processing leases older than five minutes can be reclaimed.
+- Automated Cloud API replies are persisted to `WhatsAppOutboundDelivery` before the first send attempt. Failed sends use exponential backoff (up to eight attempts) and then move to `dead` for operator review.
+- Configure a host scheduler to POST to `/api/whatsapp/outbox` at least once per minute with the `X-Internal-Secret: <INTERNAL_API_SECRET>` header. Do not expose the internal secret to browsers.
+- Monitor rows in `WhatsAppOutboundDelivery` with status `retry` or `dead`. A stale `sending` lease is recovered by the worker.
+- Delivery is at-least-once, not mathematically exactly-once: if Meta accepts a message but the network times out before the acknowledgement arrives, retrying can result in a duplicate. Review this trade-off before high-volume deployment.
