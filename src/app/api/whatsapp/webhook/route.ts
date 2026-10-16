@@ -150,6 +150,15 @@ export async function POST(req: NextRequest) {
     }
 
     for (const message of value.messages || []) {
+      // Webhooks de Meta pueden reintentarse. Evita reprocesar mensajes que ya
+      // dejaron evento de entrada en el timeline (incluidas imágenes y audios).
+      if (message.id) {
+        const previouslyHandled = await db.timelineEvent.findFirst({
+          where: { organizationId: matchedOrgId, type: 'whatsapp', metadata: { contains: message.id } },
+          select: { id: true },
+        })
+        if (previouslyHandled) continue
+      }
       let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
       let isVoice = false
       let isImage = false
@@ -157,8 +166,9 @@ export async function POST(req: NextRequest) {
 
       // Notas de voz (Cloud API type 'audio'): antes se descartaban ("if (!text) continue").
       // Se descargan del Graph API con el token Cloud de la org y se transcriben (ASR).
-      if (!text && message.audio && matchedCloudToken) {
+      if (!text && message.audio) {
         try {
+          if (!matchedCloudToken) throw new Error('No hay token de WhatsApp Cloud para descargar el audio')
           const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.audio.id })
           text = await transcribeAudioBase64(buf.toString('base64'))
           isVoice = true
@@ -186,9 +196,10 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-      if (!text && message.image && matchedCloudToken) {
+      if (!text && message.image) {
         isImage = true
         try {
+          if (!matchedCloudToken) throw new Error('No hay token de WhatsApp Cloud para descargar la imagen')
           const mime = (message.image.mime_type || '').split(';')[0].toLowerCase()
           if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime)) {
             throw new Error('Formato de imagen no soportado')
@@ -201,6 +212,12 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           console.error('[whatsapp webhook] imagen no analizada', err instanceof Error ? err.message : 'unknown error')
           text = 'Imagen recibida (no se pudo analizar automáticamente; requiere revisión humana).'
+          await notifyOrganization(matchedOrgId, {
+            type: 'integration',
+            title: 'WhatsApp: imagen requiere revisión',
+            body: 'Se recibió una imagen que no pudo analizarse automáticamente. Revisa el mensaje en WhatsApp.',
+            data: JSON.stringify({ channel: 'whatsapp', messageId: message.id }),
+          })
         }
       }
       if (!text) continue
