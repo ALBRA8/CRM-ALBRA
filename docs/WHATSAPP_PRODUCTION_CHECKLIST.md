@@ -56,3 +56,8 @@ The Baileys daemon still calls the CRM's `/api/chat` endpoint. It is not yet rou
 - Configure a host scheduler to POST to `/api/whatsapp/outbox` at least once per minute with the `X-Internal-Secret: <INTERNAL_API_SECRET>` header. Do not expose the internal secret to browsers.
 - Monitor rows in `WhatsAppOutboundDelivery` with status `retry` or `dead`. A stale `sending` lease is recovered by the worker.
 - Delivery is at-least-once, not mathematically exactly-once: if Meta accepts a message but the network times out before the acknowledgement arrives, retrying can result in a duplicate. Review this trade-off before high-volume deployment.
+
+
+## Database rollout for this branch
+
+The Prisma schema now includes `WhatsAppWebhookEvent` and `WhatsAppOutboundDelivery`. Before deploying this branch, back up the configured database and apply the schema to the same database used by the Next.js app. This repository currently uses Prisma `db push` rather than checked-in SQL migrations; verify the target `DATABASE_URL` and review the schema diff before applying it. Do not run schema changes against production without a restorable backup.
