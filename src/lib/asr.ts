@@ -1,3 +1,5 @@
+import { getLLMConfig } from './ai'
+
 /**
  * Capa ASR (voz → texto) del CRM ALBRA. SOLO servidor.
  *
