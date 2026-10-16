@@ -18,6 +18,7 @@ import sharp from 'sharp'
 import { notifyOrganization } from '@/lib/push'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
+import { dispatchWhatsAppOutboxDelivery } from '@/lib/whatsapp-outbox'
 
 /**
  * Webhook de WhatsApp Cloud API (Meta).
@@ -259,14 +260,29 @@ export async function POST(req: NextRequest) {
           nichoContext: await buildNichoContext(matchedOrgId),
           send: async (reply) => {
             if (matchedCloudToken && matchedPhoneId) {
-              const sent = await sendWhatsAppCloud({ token: matchedCloudToken, phoneId: matchedPhoneId, to: phone, text: reply })
+              // Persistir antes de intentar enviar: si Meta falla o el proceso cae,
+              // el worker autenticado puede reintentar desde la cola durable.
+              const idempotencyKey = `wa-cloud:${message.id || `${phone}:${Date.now()}`}:reply`
+              const delivery = await db.whatsAppOutboundDelivery.create({
+                data: {
+                  organizationId: matchedOrgId,
+                  clientId: client?.id || null,
+                  idempotencyKey,
+                  recipient: phone,
+                  phoneNumberId: matchedPhoneId,
+                  text: reply.slice(0, 4096),
+                  status: 'pending',
+                },
+                select: { id: true },
+              })
+              const deliveryStatus = await dispatchWhatsAppOutboxDelivery(delivery.id, { token: matchedCloudToken, phoneId: matchedPhoneId })
               await recordTimelineEvent({
                 orgId: matchedOrgId,
                 clientId: client?.id || null,
                 type: 'whatsapp',
-                title: 'Respuesta automática del agente IA',
+                title: deliveryStatus === 'sent' ? 'Respuesta automática del agente IA' : 'Respuesta del agente en cola de reintento',
                 description: reply.slice(0, 500),
-                metadata: { to: phone, direction: 'out', delivered: sent.ok, via: 'cloud-api' },
+                metadata: { to: phone, direction: 'out', delivered: deliveryStatus === 'sent', deliveryId: delivery.id, via: 'cloud-api-outbox' },
                 source: 'agent',
               })
             } else {
