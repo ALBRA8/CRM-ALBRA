@@ -283,7 +283,9 @@ export async function POST(req: NextRequest) {
     return json({ ok: true })
   } catch (err) {
     console.error('[whatsapp webhook]', err)
-    return json({ ok: true, processed: false })
+    // Errores no controlados deben permitir que Meta reintente el webhook.
+    // Los eventos ya registrados se filtran arriba para reducir duplicados.
+    return json({ ok: false, processed: false }, { status: 500 })
   }
 }
 
@@ -313,7 +315,7 @@ async function downloadWaCloudMedia({ token, mediaId, maxBytes = 25 * 1024 * 102
   if (!meta.url) throw new Error('graph media sin url')
   const mediaUrl = new URL(meta.url)
   const allowedHosts = ['lookaside.fbsbx.com', 'fbcdn.net', 'graph.facebook.com']
-  if (mediaUrl.protocol !== 'https:' || !allowedHosts.some((host) => mediaUrl.hostname === host || mediaUrl.hostname.endsWith(`.${host}`))) {
+  if (mediaUrl.protocol !== 'https:' || mediaUrl.username || mediaUrl.password || (mediaUrl.port && mediaUrl.port !== '443') || !allowedHosts.some((host) => mediaUrl.hostname === host || mediaUrl.hostname.endsWith(`.${host}`))) {
     throw new Error('Host de media de Meta no permitido')
   }
 
