@@ -40,7 +40,7 @@ export async function llmChat(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${visionApiKey}`,
+          Authorization: `Bearer ${cfg.apiKey}`,
         },
         body: JSON.stringify({
           model: cfg.model || 'gpt-4o-mini',
@@ -137,7 +137,7 @@ export async function analyzeImageBase64(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
+      Authorization: `Bearer ${visionApiKey}`,
     },
     body: JSON.stringify({
       model: process.env.VISION_MODEL || cfg.model || 'gpt-4o-mini',
