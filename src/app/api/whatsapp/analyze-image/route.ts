@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { json } from '@/lib/api-helpers'
 import { analyzeImageBase64 } from '@/lib/ai'
+import sharp from 'sharp'
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const MAX_BASE64_CHARS = Math.ceil(MAX_IMAGE_BYTES / 3) * 4
@@ -55,10 +56,19 @@ export async function POST(req: NextRequest) {
   }
   if (!hasExpectedSignature(bytes, mime)) return json({ error: 'El contenido binario no coincide con el formato declarado' }, { status: 415 })
 
-  // El daemon se ejecuta bajo la sesión/organización vinculada y envía su orgId
-  // mediante el contexto de integración configurado en el servidor.
+  // Validar el tenant antes de gastar CPU o invocar el proveedor.
   const orgId = req.headers.get('x-whatsapp-org-id') || ''
   if (!orgId || orgId.length > 128) return json({ error: 'Organización de WhatsApp requerida' }, { status: 400 })
+  if (!hasExpectedSignature(bytes, mime)) return json({ error: 'El contenido binario no coincide con el formato declarado' }, { status: 415 })
+  try {
+    const metadata = await sharp(bytes, { failOn: 'error', limitInputPixels: 40_000_000 }).metadata()
+    const expectedFormat: Record<string, string> = { 'image/jpeg': 'jpeg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }
+    if (metadata.format !== expectedFormat[mime] || !metadata.width || !metadata.height) {
+      return json({ error: 'Imagen corrupta o formato interno no válido' }, { status: 415 })
+    }
+  } catch {
+    return json({ error: 'Imagen corrupta o demasiado compleja para procesar' }, { status: 415 })
+  }
 
   try {
     const text = await analyzeImageBase64(orgId, encoded, mime as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif')
