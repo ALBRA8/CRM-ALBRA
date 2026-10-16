@@ -39,7 +39,11 @@ This checklist covers the two existing WhatsApp transports in CRM ALBRA. **Choos
 - Cross-organization request: verify one organization's secret/session cannot read or mutate another organization's conversations.
 - Confirm logs redact tokens, message content, and image/audio bytes; rotate any secret that was previously pasted into chat or logs.
 
-CI passing is necessary but not sufficient: QR pairing, Meta credentials, real ASR/vision provider behavior, outbound delivery, and reconnect behavior must be validated against staging/PC before calling the integration production-ready.
+## Reliability boundary still open
+- Baileys agent invocation and outbound send are synchronous; there is no durable reply outbox/retry worker yet. If the agent or send call fails after the inbound message is saved, an operator may need to retry manually.
+- Cloud API duplicate suppression is best-effort via recorded timeline metadata, not an atomic unique event ledger. Concurrent duplicate webhook deliveries still need a durable idempotency/outbox design.
+
+CI passing is necessary but not sufficient: QR pairing, Meta credentials, real ASR/vision provider behavior, outbound delivery, and reconnect behavior must be validated against staging/PC before calling the integration production-ready. The two reliability gaps above must also be closed before a strict 100% production sign-off.
 
 ## Current integration boundary
 The Baileys daemon still calls the CRM's `/api/chat` endpoint. It is not yet routed through the separate AGENTE-GENERAL runtime. Keep that agent-runtime integration as a separate migration after the general agent and channel contract are accepted.
