@@ -43,7 +43,7 @@ export async function llmChat(
           Authorization: `Bearer ${visionApiKey}`,
         },
         body: JSON.stringify({
-          model: process.env.VISION_MODEL || cfg.model || 'gpt-4o-mini',
+          model: cfg.model || 'gpt-4o-mini',
           messages,
           temperature: opts.temperature ?? 0.4,
           ...(opts.jsonMode ? { response_format: { type: 'json_object' } } : {}),
@@ -140,7 +140,7 @@ export async function analyzeImageBase64(
       Authorization: `Bearer ${cfg.apiKey}`,
     },
     body: JSON.stringify({
-      model: cfg.model || 'gpt-4o-mini',
+      model: process.env.VISION_MODEL || cfg.model || 'gpt-4o-mini',
       messages: [{
         role: 'user',
         content: [
