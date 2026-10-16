@@ -221,6 +221,40 @@ async function transcribeViaApi(audioBuffer) {
   return (data.text || '').trim() || null
 }
 
+async function downloadWaImage(content) {
+  const mime = String(content?.mimetype || '').split(';')[0].toLowerCase()
+  const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+  if (!allowed.has(mime)) throw new Error('Formato de imagen no soportado')
+  const stream = await downloadContentFromMessage(content, 'image')
+  const chunks = []
+  let total = 0
+  for await (const chunk of stream) {
+    total += chunk.length
+    if (total > 8 * 1024 * 1024) throw new Error('La imagen excede 8 MiB')
+    chunks.push(chunk)
+  }
+  const buffer = Buffer.concat(chunks)
+  if (!buffer.length) throw new Error('Imagen vacía')
+  return { buffer, mime }
+}
+
+async function analyzeWaImageViaApi(buffer, mime) {
+  const internalSecret = process.env.INTERNAL_API_SECRET
+  const agentUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
+  const res = await fetch(`${agentUrl}/api/whatsapp/analyze-image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret },
+    body: JSON.stringify({ imageBase64: buffer.toString('base64'), mime }),
+    signal: AbortSignal.timeout(90_000),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`image analysis ${res.status}: ${detail.slice(0, 200)}`)
+  }
+  const data = await res.json()
+  return String(data.text || '').trim()
+}
+
 /**
  * Reintento de conexión con backoff: 3s, 6s, 9s... hasta 30s.
  * ANTES: si connectToWhatsApp() lanzaba (sin red / versión inaccesible / auth
@@ -373,37 +407,48 @@ async function connectToWhatsApp() {
                           msg.message?.extendedTextMessage?.text ||
                           null
         let messageType = 'text'
-        let voiceTranscribed = false // la IA solo responde a voz con transcripción
+        let voiceTranscribed = false
+        let imageAnalyzed = false
 
-        // Notas de voz (audioMessage/ptt/documento de audio): antes se descartaban
-        // silenciosamente. Ahora se descargan, se transcriben vía el endpoint
-        // interno de ASR y se guardan como messageType='voice'.
         if (!textContent) {
           const audioContent = msg.message?.audioMessage ||
                                msg.message?.pttMessage ||
                                (msg.message?.documentMessage?.mimetype?.startsWith('audio/') ? msg.message.documentMessage : null)
+          const imageContent = msg.message?.imageMessage
 
           if (audioContent) {
             messageType = 'voice'
             let transcribed = null
             try {
               const buf = await downloadWaAudio(audioContent)
-              if (buf && buf.length > 0) transcribed = await transcribeViaApi(buf)
+              if (buf && buf.length > 0 && buf.length <= 25 * 1024 * 1024) transcribed = await transcribeViaApi(buf)
+              else if (buf.length > 25 * 1024 * 1024) throw new Error('El audio excede 25 MiB')
             } catch (err) {
               console.error('[WA] Nota de voz sin transcribir:', err?.message || err)
             }
             if (transcribed) {
               textContent = transcribed
               voiceTranscribed = true
-              console.log(`[WA] Nota de voz transcrita de ${contactPhone}: ${transcribed.substring(0, 50)}...`)
             } else {
-              // Fail-open a humano: el mensaje NO se pierde; queda visible en la
-              // bandeja para gestión manual y la IA no responde sola.
-              textContent = '🎤 Nota de voz (no se pudo transcribir automáticamente)'
-              console.warn(`[WA] Nota de voz de ${contactPhone} guardada sin transcripción`)
+              textContent = 'Nota de voz recibida (no se pudo transcribir automáticamente)'
+            }
+          } else if (imageContent) {
+            messageType = 'image'
+            try {
+              const { buffer, mime } = await downloadWaImage(imageContent)
+              textContent = await analyzeWaImageViaApi(buffer, mime)
+              if (textContent) {
+                textContent = `Descripción de la imagen enviada por el cliente: ${textContent}`
+                imageAnalyzed = true
+              } else {
+                textContent = 'Imagen recibida, pero el modelo no devolvió un análisis.'
+              }
+            } catch (err) {
+              console.error('[WA] Imagen no analizada:', err?.message || err)
+              textContent = 'Imagen recibida (no se pudo analizar automáticamente; requiere revisión humana).'
             }
           } else {
-            continue // ni texto ni audio: se ignora como antes (stickers, imágenes, etc.)
+            continue
           }
         }
 
@@ -412,7 +457,7 @@ async function connectToWhatsApp() {
         const conv = getOrCreateConversation(orgId, contactPhone, contactName)
         if (!conv) continue
 
-        saveMessage(
+        const savedMessageId = saveMessage(
           conv.id, orgId,
           isOwner ? 'outbound' : 'inbound',
           isOwner ? (connectedPhone || '') : contactPhone,
@@ -422,6 +467,8 @@ async function connectToWhatsApp() {
           waMessageId,
           messageType
         )
+        // Baileys reentrega notificaciones; un duplicado no debe volver a disparar IA.
+        if (!savedMessageId) continue
 
         // Actualiza último contacto del cliente (solo con mensajes del cliente)
         if (!isOwner && conv.clientId && db) {
@@ -430,7 +477,7 @@ async function connectToWhatsApp() {
 
         // Auto-respuesta con IA si está habilitada (voz: solo si se transcribió).
         // JAMÁS para mensajes del dueño (fromMe): el bot no se responde a sí mismo.
-        if (!isOwner && conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed)) {
+        if (!isOwner && conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed) && (messageType !== 'image' || imageAnalyzed)) {
           console.log(`[WA] Auto-reply enabled for ${contactPhone}, calling agent...`)
           triggerAgentReply(orgId, conv, textContent, contactPhone)
         }
