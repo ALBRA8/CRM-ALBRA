@@ -403,18 +403,19 @@ async function connectToWhatsApp() {
           continue
         }
 
-        let textContent = msg.message?.conversation ||
-                          msg.message?.extendedTextMessage?.text ||
+        const message = msg.message?.ephemeralMessage?.message || msg.message?.viewOnceMessage?.message || msg.message?.viewOnceMessageV2?.message || msg.message
+        let textContent = message?.conversation ||
+                          message?.extendedTextMessage?.text ||
                           null
         let messageType = 'text'
         let voiceTranscribed = false
         let imageAnalyzed = false
 
         if (!textContent) {
-          const audioContent = msg.message?.audioMessage ||
-                               msg.message?.pttMessage ||
-                               (msg.message?.documentMessage?.mimetype?.startsWith('audio/') ? msg.message.documentMessage : null)
-          const imageContent = msg.message?.imageMessage
+          const audioContent = message?.audioMessage ||
+                               message?.pttMessage ||
+                               (message?.documentMessage?.mimetype?.startsWith('audio/') ? message.documentMessage : null)
+          const imageContent = message?.imageMessage
 
           if (audioContent) {
             messageType = 'voice'
@@ -438,7 +439,7 @@ async function connectToWhatsApp() {
               const { buffer, mime } = await downloadWaImage(imageContent)
               textContent = await analyzeWaImageViaApi(buffer, mime, orgId)
               if (textContent) {
-                textContent = `Descripción de la imagen enviada por el cliente: ${textContent}`
+                textContent = `Descripción de la imagen enviada por el cliente: ${textContent}${imageContent.caption ? `\nTexto adjunto: ${String(imageContent.caption).slice(0, 1000)}` : ''}`
                 imageAnalyzed = true
               } else {
                 textContent = 'Imagen recibida, pero el modelo no devolvió un análisis.'
