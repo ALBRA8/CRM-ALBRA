@@ -38,9 +38,15 @@ export async function POST(req: NextRequest) {
     return json({ error: 'El audio excede el tamaño máximo permitido (25 MB)' }, { status: 413 })
   }
 
+  const orgId = req.headers.get('x-whatsapp-org-id') || ''
+  if (!orgId || orgId.length > 128) return json({ error: 'Organización de WhatsApp requerida' }, { status: 400 })
+  const mime = (body.mime || 'audio/ogg').split(';')[0].toLowerCase()
+  if (!['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/wav', 'audio/webm', 'audio/flac'].includes(mime)) {
+    return json({ error: 'Formato de audio no soportado' }, { status: 415 })
+  }
+
   try {
-    const orgId = req.headers.get('x-whatsapp-org-id') || undefined
-    const text = await transcribeAudioBase64(audioBase64, orgId, body.mime || 'audio/ogg')
+    const text = await transcribeAudioBase64(audioBase64, orgId, mime)
     return json({ text })
   } catch (err) {
     if (err instanceof AsrError) {
