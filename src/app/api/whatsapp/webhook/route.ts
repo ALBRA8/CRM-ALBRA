@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
           const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.image.id, maxBytes: 8 * 1024 * 1024 })
           if (!hasExpectedImageSignature(buf, mime)) throw new Error('El contenido binario no coincide con el formato declarado')
           const description = await analyzeImageBase64(matchedOrgId, buf.toString('base64'), mime as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif')
-          text = `Descripción de la imagen enviada por el cliente: ${description}${message.image.caption ? `\\nTexto adjunto: ${message.image.caption.slice(0, 1000)}` : ''}`
+          text = `Descripción de la imagen enviada por el cliente: ${description}${message.image.caption ? `\nTexto adjunto: ${message.image.caption.slice(0, 1000)}` : ''}`
           imageAnalyzed = true
         } catch (err) {
           console.error('[whatsapp webhook] imagen no analizada', err instanceof Error ? err.message : 'unknown error')
