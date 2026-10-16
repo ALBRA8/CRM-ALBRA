@@ -52,10 +52,10 @@ describe('POST /api/whatsapp/analyze-image', () => {
     const req = new NextRequest('http://localhost:3000/api/whatsapp/analyze-image', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ imageBase64: 'AA==', mime: 'image/png' }),
+      body: JSON.stringify({ imageBase64: 'iVBORw0KGgo=', mime: 'image/png' }),
     })
     const res = await POST(req)
-    expect(res.status).toBe(415)
+    expect(res.status).toBe(400)
     expect(analyzeImageBase64).not.toHaveBeenCalled()
   })
 })
