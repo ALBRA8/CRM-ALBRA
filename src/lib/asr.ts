@@ -67,7 +67,7 @@ export async function transcribeAudioBase64(base64: string, orgId?: string, mime
           const form = new FormData()
           form.append('file', new Blob([new Uint8Array(bytes)], { type: normalizedMime }), `voice.${extension}`)
           form.append('model', process.env.ASR_MODEL || 'whisper-1')
-          const response = await fetch(`${cfg.baseUrl.replace(/\\/$/, '')}/audio/transcriptions`, {
+          const response = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/audio/transcriptions`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${cfg.apiKey}` },
             body: form,
