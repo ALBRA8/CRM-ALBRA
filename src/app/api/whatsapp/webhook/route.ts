@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
         try {
           if (!matchedCloudToken) throw new Error('No hay token de WhatsApp Cloud para descargar el audio')
           const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.audio.id })
-          text = await transcribeAudioBase64(buf.toString('base64'))
+          text = await transcribeAudioBase64(buf.toString('base64'), matchedOrgId, message.audio.mime_type || 'audio/ogg')
           isVoice = true
         } catch (err) {
           // Fail-open a humano: la nota queda registrada en timeline + push al equipo
