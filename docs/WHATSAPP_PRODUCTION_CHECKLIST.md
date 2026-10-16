@@ -25,7 +25,7 @@ This checklist covers the two existing WhatsApp transports in CRM ALBRA. **Choos
 - Captions are included as context. If download, validation, or vision analysis fails, the message is retained as a human-review item and the agent does not automatically invent an image description.
 
 ## Voice
-- Inbound voice notes are downloaded with a 25 MiB cap. The CRM first attempts the organization's configured OpenAI-compatible `/audio/transcriptions` endpoint (model defaults to `whisper-1`, overridable with `ASR_MODEL`), then falls back to the existing ZAI ASR adapter. A successful transcript is passed to the agent.
+- Inbound voice notes are downloaded with a 25 MiB cap. The CRM first attempts a dedicated OpenAI-compatible ASR endpoint when `ASR_API_KEY` is configured (`ASR_BASE_URL` defaults to `https://api.openai.com/v1`; model defaults to `whisper-1`, overridable with `ASR_MODEL`). Otherwise it attempts the organization's configured LLM endpoint, then falls back to the existing ZAI ASR adapter. A separate ASR key is recommended when the LLM provider does not expose speech transcription. A successful transcript is passed to the agent.
 - If ASR is unavailable or returns no usable transcript, the message is surfaced for human review and no automatic reply is generated from invented transcript text.
 - **Outbound spoken responses / TTS are not implemented by this change**; the agent currently replies with text.
 
