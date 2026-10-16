@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const text = await transcribeAudioBase64(audioBase64)
+    const orgId = req.headers.get('x-whatsapp-org-id') || undefined
+    const text = await transcribeAudioBase64(audioBase64, orgId, body.mime || 'audio/ogg')
     return json({ text })
   } catch (err) {
     if (err instanceof AsrError) {
