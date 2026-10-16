@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
               type: 'whatsapp',
               title: `Nota de voz recibida de ${phoneFall} (no transcrita)`,
               description: 'No se pudo transcribir la nota de voz automáticamente. Escucha el audio desde WhatsApp.',
-              metadata: { from: phoneFall, direction: 'in', voice: true, reason: err instanceof Error ? err.message : 'desconocido' },
+              metadata: { from: phoneFall, direction: 'in', voice: true, messageId: message.id, reason: err instanceof Error ? err.message : 'desconocido' },
               source: 'integration',
             })
             await notifyOrganization(matchedOrgId, {
