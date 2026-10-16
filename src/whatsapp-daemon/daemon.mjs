@@ -238,12 +238,12 @@ async function downloadWaImage(content) {
   return { buffer, mime }
 }
 
-async function analyzeWaImageViaApi(buffer, mime) {
+async function analyzeWaImageViaApi(buffer, mime, orgId) {
   const internalSecret = process.env.INTERNAL_API_SECRET
   const agentUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
   const res = await fetch(`${agentUrl}/api/whatsapp/analyze-image`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret },
+    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret, 'X-WhatsApp-Org-Id': orgId },
     body: JSON.stringify({ imageBase64: buffer.toString('base64'), mime }),
     signal: AbortSignal.timeout(90_000),
   })
@@ -436,7 +436,7 @@ async function connectToWhatsApp() {
             messageType = 'image'
             try {
               const { buffer, mime } = await downloadWaImage(imageContent)
-              textContent = await analyzeWaImageViaApi(buffer, mime)
+              textContent = await analyzeWaImageViaApi(buffer, mime, orgId)
               if (textContent) {
                 textContent = `Descripción de la imagen enviada por el cliente: ${textContent}`
                 imageAnalyzed = true
