@@ -209,12 +209,12 @@ async function downloadWaAudio(content) {
   return Buffer.concat(chunks)
 }
 
-async function transcribeViaApi(audioBuffer) {
+async function transcribeViaApi(audioBuffer, orgId) {
   const internalSecret = process.env.INTERNAL_API_SECRET
   const agentUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
   const res = await fetch(`${agentUrl}/api/whatsapp/transcribe`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret },
+    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret, 'X-WhatsApp-Org-Id': orgId },
     body: JSON.stringify({ audioBase64: audioBuffer.toString('base64'), mime: 'audio/ogg' }),
     signal: AbortSignal.timeout(90_000),
   })
@@ -427,7 +427,7 @@ async function connectToWhatsApp() {
             let transcribed = null
             try {
               const buf = await downloadWaAudio(audioContent)
-              if (buf && buf.length > 0 && buf.length <= 25 * 1024 * 1024) transcribed = await transcribeViaApi(buf)
+              if (buf && buf.length > 0 && buf.length <= 25 * 1024 * 1024) transcribed = await transcribeViaApi(buf, orgId)
               else if (buf.length > 25 * 1024 * 1024) throw new Error('El audio excede 25 MiB')
             } catch (err) {
               console.error('[WA] Nota de voz sin transcribir:', err?.message || err)
