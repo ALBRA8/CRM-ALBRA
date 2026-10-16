@@ -289,9 +289,9 @@ export async function POST(req: NextRequest) {
 
 async function isValidCloudImage(bytes: Buffer, mime: string): Promise<boolean> {
   if (mime === 'image/jpeg' && !(bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)) return false
-  if (mime === 'image/png' && !(bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return false
-  if (mime === 'image/gif' && !(bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))) return false
-  if (mime === 'image/webp' && !(bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return false
+  if (mime === 'image/png' && !(bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))) return false
+  if (mime === 'image/gif' && !(bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii')))) return false
+  if (mime === 'image/webp' && !(bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP')) return false
   try {
     const metadata = await sharp(bytes, { failOn: 'error', limitInputPixels: 40_000_000 }).metadata()
     const expected: Record<string, string> = { 'image/jpeg': 'jpeg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }
