@@ -70,17 +70,8 @@ export async function GET(req: NextRequest) {
     return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
   }
 
-  // verify_token por organización = App Secret configurado en Integration
-  const integrations = await db.integration.findMany({
-    where: { metaAppSecretEnc: { not: null } },
-    select: { metaAppSecretEnc: true },
-  })
-  for (const integration of integrations) {
-    const secret = decryptSecret(integration.metaAppSecretEnc)
-    if (secret && token === secret) {
-      return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
-    }
-  }
+  // Meta separa verify_token (secreto elegido por el operador) de App Secret
+  // (usado para validar X-Hub-Signature-256 en POST). Nunca intercambiar ambos.
   return new Response('Forbidden', { status: 403 })
 }
 
