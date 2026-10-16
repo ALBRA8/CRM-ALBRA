@@ -20,7 +20,7 @@ This checklist covers the two existing WhatsApp transports in CRM ALBRA. **Choos
 - Confirm the Meta phone-number ID matches the integration record before processing.
 
 ## Images and vision
-- In **Configuración → Agente IA**, configure a provider/base URL/API key/model that supports OpenAI-compatible multimodal `chat/completions` with `image_url` data URLs. Text-only models will fail closed.
+- In **Configuración → Agente IA**, configure a provider/base URL/API key/model that supports OpenAI-compatible multimodal `chat/completions` with `image_url` data URLs. If the conversation model is text-only, configure a separate `VISION_API_KEY`, optional `VISION_BASE_URL` (defaults to OpenAI's `/v1`), and `VISION_MODEL` in the server environment. Text-only vision providers fail closed.
 - Incoming images are limited to 8 MiB and JPEG, PNG, WebP, or GIF. The server checks the MIME declaration, binary signature, decoded format, and a 40-megapixel pixel limit before sending the image to the model.
 - Captions are included as context. If download, validation, or vision analysis fails, the message is retained as a human-review item and the agent does not automatically invent an image description.
 
