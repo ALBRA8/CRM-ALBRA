@@ -78,6 +78,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
+  let activeEventId: string | null = null
   try {
     const signature = req.headers.get('x-hub-signature-256')
     if (!signature) return json({ error: 'Firma X-Hub-Signature-256 requerida' }, { status: 401 })
@@ -142,14 +143,12 @@ export async function POST(req: NextRequest) {
     }
 
     for (const message of value.messages || []) {
-      // Webhooks de Meta pueden reintentarse. Evita reprocesar mensajes que ya
-      // dejaron evento de entrada en el timeline (incluidas imágenes y audios).
+      // Idempotencia durable: un ID único por org/proveedor, con lease para
+      // recuperar eventos fallidos o abandonados tras un reinicio del proceso.
       if (message.id) {
-        const previouslyHandled = await db.timelineEvent.findFirst({
-          where: { organizationId: matchedOrgId, type: 'whatsapp', metadata: { contains: message.id } },
-          select: { id: true },
-        })
-        if (previouslyHandled) continue
+        const claim = await claimWhatsAppWebhookEvent(matchedOrgId, message.id)
+        if (!claim.claimed) continue
+        activeEventId = claim.id
       }
       let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
       let isVoice = false
@@ -277,15 +276,63 @@ export async function POST(req: NextRequest) {
           },
         })
       }
+      if (activeEventId) {
+        await db.whatsAppWebhookEvent.update({
+          where: { id: activeEventId },
+          data: { status: 'processed', processedAt: new Date(), lastError: null },
+        })
+        activeEventId = null
+      }
     }
 
     // Meta exige 200 rápido
     return json({ ok: true })
   } catch (err) {
-    console.error('[whatsapp webhook]', err)
-    // Errores no controlados deben permitir que Meta reintente el webhook.
-    // Los eventos ya registrados se filtran arriba para reducir duplicados.
+    if (activeEventId) {
+      await db.whatsAppWebhookEvent.updateMany({
+        where: { id: activeEventId, status: 'processing' },
+        data: { status: 'failed', lastError: 'processing_failed' },
+      }).catch(() => undefined)
+    }
+    console.error('[whatsapp webhook]', err instanceof Error ? err.message : 'unknown error')
     return json({ ok: false, processed: false }, { status: 500 })
+  }
+}
+
+/**
+ * Claim a Cloud API message exactly once under normal concurrency. A processing
+ * lease older than five minutes can be reclaimed after a crashed worker.
+ */
+async function claimWhatsAppWebhookEvent(orgId: string, providerMessageId: string): Promise<{ claimed: boolean; id: string }> {
+  const now = new Date()
+  try {
+    const created = await db.whatsAppWebhookEvent.create({
+      data: { organizationId: orgId, providerMessageId, status: 'processing', attempts: 1, lockedAt: now },
+      select: { id: true },
+    })
+    return { claimed: true, id: created.id }
+  } catch (error) {
+    const existing = await db.whatsAppWebhookEvent.findUnique({
+      where: { organizationId_providerMessageId: { organizationId: orgId, providerMessageId } },
+      select: { id: true, status: true, lockedAt: true },
+    })
+    if (!existing) throw error
+    if (existing.status === 'processed') return { claimed: false, id: existing.id }
+    const staleBefore = new Date(now.getTime() - 5 * 60 * 1000)
+    if (existing.status === 'processing' && existing.lockedAt > staleBefore) {
+      return { claimed: false, id: existing.id }
+    }
+    const reclaimed = await db.whatsAppWebhookEvent.updateMany({
+      where: {
+        id: existing.id,
+        OR: [
+          { status: 'failed' },
+          { status: 'processing', lockedAt: { lt: staleBefore } },
+        ],
+      },
+      data: { status: 'processing', attempts: { increment: 1 }, lockedAt: now, lastError: null },
+    })
+    return { claimed: reclaimed.count === 1, id: existing.id }
   }
 }
 
