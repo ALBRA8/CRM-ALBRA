@@ -647,6 +647,25 @@ model WhatsAppMessage {
   @@index([organizationId, createdAt])
 }
 
+// Durable idempotency ledger for WhatsApp Cloud webhook deliveries.
+// A failed event or an abandoned lease can be retried; completed events are immutable.
+model WhatsAppWebhookEvent {
+  id                String    @id @default(cuid())
+  organizationId    String
+  providerMessageId String
+  status            String    @default("processing") // processing | processed | failed
+  attempts          Int       @default(1)
+  lockedAt          DateTime  @default(now())
+  processedAt       DateTime?
+  lastError         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([organizationId, providerMessageId])
+  @@index([status, lockedAt])
+  @@index([organizationId, createdAt])
+}
+
 // ---------- Base de conocimiento del Agente IA ----------
 
 model Knowledge {
