@@ -9,7 +9,6 @@ import {
   findOrCreateChannelClient,
   buildNichoContext,
   getHandoffKeywords,
-  sendWhatsAppCloud,
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-agent'
 import { transcribeAudioBase64 } from '@/lib/asr'
