@@ -262,8 +262,9 @@ export async function POST(req: NextRequest) {
               // Persistir antes de intentar enviar: si Meta falla o el proceso cae,
               // el worker autenticado puede reintentar desde la cola durable.
               const idempotencyKey = `wa-cloud:${message.id || `${phone}:${Date.now()}`}:reply`
-              const delivery = await db.whatsAppOutboundDelivery.create({
-                data: {
+              const delivery = await db.whatsAppOutboundDelivery.upsert({
+                where: { idempotencyKey },
+                create: {
                   organizationId: matchedOrgId,
                   clientId: client?.id || null,
                   idempotencyKey,
@@ -272,6 +273,8 @@ export async function POST(req: NextRequest) {
                   text: reply.slice(0, 4096),
                   status: 'pending',
                 },
+                // Replays reuse the existing durable delivery rather than enqueueing twice.
+                update: {},
                 select: { id: true },
               })
               const deliveryStatus = await dispatchWhatsAppOutboxDelivery(delivery.id, { token: matchedCloudToken, phoneId: matchedPhoneId })
