@@ -140,7 +140,7 @@ export async function analyzeImageBase64(
       Authorization: `Bearer ${visionApiKey}`,
     },
     body: JSON.stringify({
-      model: process.env.VISION_MODEL || cfg.model || 'gpt-4o-mini',
+      model: process.env.VISION_MODEL || (dedicatedVisionKey ? 'gpt-4o-mini' : cfg.model || 'gpt-4o-mini'),
       messages: [{
         role: 'user',
         content: [
