@@ -77,7 +77,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const declaredLength = Number(req.headers.get('content-length') || 0)
+  if (declaredLength > 2 * 1024 * 1024) return json({ error: 'Webhook demasiado grande' }, { status: 413 })
   const rawBody = await req.text()
+  if (Buffer.byteLength(rawBody, 'utf8') > 2 * 1024 * 1024) return json({ error: 'Webhook demasiado grande' }, { status: 413 })
   let activeEventId: string | null = null
   try {
     const signature = req.headers.get('x-hub-signature-256')
