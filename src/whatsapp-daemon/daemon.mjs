@@ -458,7 +458,7 @@ async function connectToWhatsApp() {
           }
         }
 
-        console.log(`[WA] ${isOwner ? 'Mensaje del dueño hacia' : 'Message from'} ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
+        console.log(`[WA] ${isOwner ? 'Mensaje saliente del dueño' : 'Mensaje entrante'} de ${contactPhone} (${messageType}); contenido omitido de logs`)
 
         const conv = getOrCreateConversation(orgId, contactPhone, contactName)
         if (!conv) continue
@@ -548,7 +548,7 @@ async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
     await sendWhatsAppMessage(contactPhone, replyText)
     saveMessage(conv.id, orgId, 'outbound', connectedPhone || '', contactPhone, replyText, 'agent')
 
-    console.log(`[Agent] Reply sent to ${contactPhone}: ${replyText.substring(0, 50)}...`)
+    console.log(`[Agent] Respuesta enviada a ${contactPhone}; contenido omitido de logs`)
   } catch (err) {
     console.error('[Agent] Auto-reply error:', err)
   }
