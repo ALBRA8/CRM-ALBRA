@@ -666,6 +666,28 @@ model WhatsAppWebhookEvent {
   @@index([organizationId, createdAt])
 }
 
+// Durable outbound queue for WhatsApp Cloud replies.
+model WhatsAppOutboundDelivery {
+  id                String   @id @default(cuid())
+  organizationId    String
+  clientId          String?
+  idempotencyKey    String   @unique
+  recipient         String
+  phoneNumberId     String
+  text              String
+  status            String   @default("pending") // pending | sending | retry | sent | dead
+  attempts          Int      @default(0)
+  nextAttemptAt     DateTime @default(now())
+  lockedAt          DateTime?
+  providerMessageId String?
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([organizationId, createdAt])
+}
+
 // ---------- Base de conocimiento del Agente IA ----------
 
 model Knowledge {
