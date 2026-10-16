@@ -54,7 +54,13 @@ export async function transcribeAudioBase64(base64: string, orgId?: string, mime
   if (orgId) {
     try {
       const cfg = await getLLMConfig(orgId)
-      if (cfg.apiKey && cfg.baseUrl) {
+      // ASR independiente opcional: permite usar OpenAI Whisper mientras el
+      // agente general usa otro proveedor (por ejemplo, NVIDIA para texto).
+      const dedicatedAsrKey = process.env.ASR_API_KEY || ''
+      const dedicatedAsrBaseUrl = process.env.ASR_BASE_URL || (dedicatedAsrKey ? 'https://api.openai.com/v1' : '')
+      const asrApiKey = dedicatedAsrKey || cfg.apiKey
+      const asrBaseUrl = dedicatedAsrKey ? dedicatedAsrBaseUrl : cfg.baseUrl
+      if (asrApiKey && asrBaseUrl) {
         const bytes = Buffer.from(clean, 'base64')
         const normalizedMime = mime.split(';')[0].toLowerCase()
         const extensions: Record<string, string> = {
@@ -67,9 +73,9 @@ export async function transcribeAudioBase64(base64: string, orgId?: string, mime
           const form = new FormData()
           form.append('file', new Blob([new Uint8Array(bytes)], { type: normalizedMime }), `voice.${extension}`)
           form.append('model', process.env.ASR_MODEL || 'whisper-1')
-          const response = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/audio/transcriptions`, {
+          const response = await fetch(`${asrBaseUrl.replace(/\/$/, '')}/audio/transcriptions`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${cfg.apiKey}` },
+            headers: { Authorization: `Bearer ${asrApiKey}` },
             body: form,
             signal: AbortSignal.timeout(60_000),
           })
