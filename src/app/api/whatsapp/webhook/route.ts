@@ -211,9 +211,17 @@ export async function POST(req: NextRequest) {
           })
         }
       }
-      if (!text) continue
+      if (!text) {
+        if (activeEventId) await db.whatsAppWebhookEvent.update({ where: { id: activeEventId }, data: { status: 'processed', processedAt: new Date() } })
+        activeEventId = null
+        continue
+      }
       const phone = normalizePhone(message.from)
-      if (!phone) continue
+      if (!phone) {
+        if (activeEventId) await db.whatsAppWebhookEvent.update({ where: { id: activeEventId }, data: { status: 'processed', processedAt: new Date() } })
+        activeEventId = null
+        continue
+      }
       const profileName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name || null
 
       // find-or-create Client por teléfono (aislado por org)
