@@ -200,7 +200,12 @@ async function downloadWaAudio(content) {
   const mediaType = content.mimetype && !content.mimetype.startsWith('audio/') ? 'document' : 'audio'
   const stream = await downloadContentFromMessage(content, mediaType)
   const chunks = []
-  for await (const chunk of stream) chunks.push(chunk)
+  let total = 0
+  for await (const chunk of stream) {
+    total += chunk.length
+    if (total > 25 * 1024 * 1024) throw new Error('El audio excede 25 MiB')
+    chunks.push(chunk)
+  }
   return Buffer.concat(chunks)
 }
 
