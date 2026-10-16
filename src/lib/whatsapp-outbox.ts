@@ -27,7 +27,12 @@ export async function dispatchWhatsAppOutboxDelivery(
     },
     data: { status: 'sending', lockedAt: now, attempts: { increment: 1 } },
   })
-  if (claimed.count !== 1) return 'busy'
+  if (claimed.count !== 1) {
+    const current = await db.whatsAppOutboundDelivery.findUnique({ where: { id }, select: { status: true } })
+    if (current?.status === 'sent') return 'sent'
+    if (current?.status === 'dead') return 'dead'
+    return 'busy'
+  }
 
   const delivery = await db.whatsAppOutboundDelivery.findUnique({ where: { id } })
   if (!delivery) return 'dead'
