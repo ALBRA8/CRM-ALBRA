@@ -54,8 +54,6 @@ export async function POST(req: NextRequest) {
   if (!bytes.length || bytes.length > MAX_IMAGE_BYTES || bytes.toString('base64') !== encoded) {
     return json({ error: 'Codificación de imagen inválida o tamaño excedido' }, { status: 400 })
   }
-  if (!hasExpectedSignature(bytes, mime)) return json({ error: 'El contenido binario no coincide con el formato declarado' }, { status: 415 })
-
   // Validar el tenant antes de gastar CPU o invocar el proveedor.
   const orgId = req.headers.get('x-whatsapp-org-id') || ''
   if (!orgId || orgId.length > 128) return json({ error: 'Organización de WhatsApp requerida' }, { status: 400 })
