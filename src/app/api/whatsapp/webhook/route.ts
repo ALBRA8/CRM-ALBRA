@@ -13,6 +13,7 @@ import {
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-agent'
 import { transcribeAudioBase64 } from '@/lib/asr'
+import { analyzeImageBase64 } from '@/lib/ai'
 import { notifyOrganization } from '@/lib/push'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
@@ -41,6 +42,7 @@ interface WaValue {
     text?: { body?: string }
     type?: string
     audio?: { id: string; mime_type?: string }
+    image?: { id: string; mime_type?: string; caption?: string }
     button?: { text?: string }
     interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } }
   }>
@@ -150,6 +152,8 @@ export async function POST(req: NextRequest) {
     for (const message of value.messages || []) {
       let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
       let isVoice = false
+      let isImage = false
+      let imageAnalyzed = false
 
       // Notas de voz (Cloud API type 'audio'): antes se descartaban ("if (!text) continue").
       // Se descargan del Graph API con el token Cloud de la org y se transcriben (ASR).
@@ -182,6 +186,23 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+      if (!text && message.image && matchedCloudToken) {
+        isImage = true
+        try {
+          const mime = (message.image.mime_type || '').split(';')[0].toLowerCase()
+          if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime)) {
+            throw new Error('Formato de imagen no soportado')
+          }
+          const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.image.id, maxBytes: 8 * 1024 * 1024 })
+          if (!hasExpectedImageSignature(buf, mime)) throw new Error('El contenido binario no coincide con el formato declarado')
+          const description = await analyzeImageBase64(matchedOrgId, buf.toString('base64'), mime as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif')
+          text = `Descripción de la imagen enviada por el cliente: ${description}${message.image.caption ? `\\nTexto adjunto: ${message.image.caption.slice(0, 1000)}` : ''}`
+          imageAnalyzed = true
+        } catch (err) {
+          console.error('[whatsapp webhook] imagen no analizada', err instanceof Error ? err.message : 'unknown error')
+          text = 'Imagen recibida (no se pudo analizar automáticamente; requiere revisión humana).'
+        }
+      }
       if (!text) continue
       const phone = normalizePhone(message.from)
       if (!phone) continue
@@ -194,9 +215,9 @@ export async function POST(req: NextRequest) {
         orgId: matchedOrgId,
         clientId: client?.id || null,
         type: 'whatsapp',
-        title: isVoice ? `Nota de voz de ${profileName || phone} (transcrita)` : `Mensaje recibido de ${profileName || phone}`,
+        title: isVoice ? `Nota de voz de ${profileName || phone} (transcrita)` : isImage ? `Imagen de ${profileName || phone}${imageAnalyzed ? ' (analizada)' : ' (requiere revisión)'}` : `Mensaje recibido de ${profileName || phone}`,
         description: text.slice(0, 500),
-        metadata: { from: phone, direction: 'in', messageId: message.id, ...(isVoice ? { voice: true } : {}) },
+        metadata: { from: phone, direction: 'in', messageId: message.id, ...(isVoice ? { voice: true } : {}), ...(isImage ? { image: true, analyzed: imageAnalyzed } : {}) },
         source: 'integration',
       })
 
@@ -212,7 +233,7 @@ export async function POST(req: NextRequest) {
 
       // Auto-respuesta IA
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: matchedOrgId }, select: { autoReplyEnabled: true } })
-      if (nicho?.autoReplyEnabled ?? true) {
+      if ((nicho?.autoReplyEnabled ?? true) && (!isImage || imageAnalyzed)) {
         await llmReplyOrNotification({
           orgId: matchedOrgId,
           clientId: client?.id || null,
@@ -257,8 +278,17 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Descarga un media (nota de voz) de la Cloud API de Meta vía Graph API. */
-async function downloadWaCloudMedia({ token, mediaId }: { token: string; mediaId: string }): Promise<Buffer> {
+function hasExpectedImageSignature(bytes: Buffer, mime: string): boolean {
+  if (mime === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  if (mime === 'image/png') return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  if (mime === 'image/gif') return bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))
+  if (mime === 'image/webp') return bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+  return false
+}
+
+/** Descarga media desde Graph API con host HTTPS permitido y límite de bytes. */
+async function downloadWaCloudMedia({ token, mediaId, maxBytes = 25 * 1024 * 1024 }: { token: string; mediaId: string; maxBytes?: number }): Promise<Buffer> {
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(mediaId)) throw new Error('Identificador de media inválido')
   const metaRes = await fetch(`https://graph.facebook.com/v21.0/${mediaId}`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15_000),
@@ -266,11 +296,32 @@ async function downloadWaCloudMedia({ token, mediaId }: { token: string; mediaId
   if (!metaRes.ok) throw new Error(`graph media ${metaRes.status}`)
   const meta = (await metaRes.json()) as { url?: string }
   if (!meta.url) throw new Error('graph media sin url')
+  const mediaUrl = new URL(meta.url)
+  const allowedHosts = ['lookaside.fbsbx.com', 'fbcdn.net', 'graph.facebook.com']
+  if (mediaUrl.protocol !== 'https:' || !allowedHosts.some((host) => mediaUrl.hostname === host || mediaUrl.hostname.endsWith(`.${host}`))) {
+    throw new Error('Host de media de Meta no permitido')
+  }
 
-  const binRes = await fetch(meta.url, {
+  const binRes = await fetch(mediaUrl, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(60_000),
   })
-  if (!binRes.ok) throw new Error(`descarga de audio ${binRes.status}`)
-  return Buffer.from(await binRes.arrayBuffer())
+  if (!binRes.ok) throw new Error(`descarga de media ${binRes.status}`)
+  const declared = Number(binRes.headers.get('content-length') || 0)
+  if (declared > maxBytes) throw new Error('El archivo multimedia excede el tamaño máximo permitido')
+  if (!binRes.body) throw new Error('Respuesta multimedia vacía')
+  const reader = binRes.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel()
+      throw new Error('El archivo multimedia excede el tamaño máximo permitido')
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total)
 }
