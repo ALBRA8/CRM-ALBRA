@@ -27,6 +27,7 @@ const AUDIO_B64 = Buffer.from('audio-falso-de-prueba-ogg').toString('base64')
 function internalReq(body: unknown | string, withSecret = true): NextRequest {
   const headers = new Headers({ 'content-type': 'application/json' })
   if (withSecret) headers.set('x-internal-secret', SECRET)
+  headers.set('x-whatsapp-org-id', 'org-a')
   return new NextRequest('http://localhost:3000/api/whatsapp/transcribe', {
     method: 'POST',
     headers,
