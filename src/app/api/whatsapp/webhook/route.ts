@@ -14,6 +14,7 @@ import {
 import { llmReplyOrNotification } from '@/lib/channel-agent'
 import { transcribeAudioBase64 } from '@/lib/asr'
 import { analyzeImageBase64 } from '@/lib/ai'
+import sharp from 'sharp'
 import { notifyOrganization } from '@/lib/push'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
@@ -196,7 +197,7 @@ export async function POST(req: NextRequest) {
             throw new Error('Formato de imagen no soportado')
           }
           const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.image.id, maxBytes: 8 * 1024 * 1024 })
-          if (!hasExpectedImageSignature(buf, mime)) throw new Error('El contenido binario no coincide con el formato declarado')
+          if (!await isValidCloudImage(buf, mime)) throw new Error('Imagen corrupta, formato inválido o dimensiones excesivas')
           const description = await analyzeImageBase64(matchedOrgId, buf.toString('base64'), mime as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif')
           text = `Descripción de la imagen enviada por el cliente: ${description}${message.image.caption ? `\nTexto adjunto: ${message.image.caption.slice(0, 1000)}` : ''}`
           imageAnalyzed = true
@@ -286,12 +287,18 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function hasExpectedImageSignature(bytes: Buffer, mime: string): boolean {
-  if (mime === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-  if (mime === 'image/png') return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  if (mime === 'image/gif') return bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))
-  if (mime === 'image/webp') return bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-  return false
+async function isValidCloudImage(bytes: Buffer, mime: string): Promise<boolean> {
+  if (mime === 'image/jpeg' && !(bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)) return false
+  if (mime === 'image/png' && !(bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return false
+  if (mime === 'image/gif' && !(bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))) return false
+  if (mime === 'image/webp' && !(bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return false
+  try {
+    const metadata = await sharp(bytes, { failOn: 'error', limitInputPixels: 40_000_000 }).metadata()
+    const expected: Record<string, string> = { 'image/jpeg': 'jpeg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }
+    return metadata.format === expected[mime] && Boolean(metadata.width && metadata.height)
+  } catch {
+    return false
+  }
 }
 
 /** Descarga media desde Graph API con host HTTPS permitido y límite de bytes. */
