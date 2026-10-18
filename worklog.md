@@ -893,3 +893,20 @@ Stage Summary:
 - Suite 370/370 PASS (baseline 12 fail), tsc OK, lint OK, build OK (sin /chat)
 - CRM = CHALECO autónomo; contratos: crm-actions/v1 + MCP 16 tools + MemoryDV + API keys
 - Ver docs/HARNESS.md §7 para inventario de eliminación
+
+---
+Task ID: chaleco-crm-fase2-final
+Agent: main
+Task: Cierre de la transformación CHALECO CRM (verificación de gates, E2E, auditoría final, merge)
+
+Work Log:
+- E2E final (scripts/e2e-final.mjs) migrado del extinto /api/chat al contrato crm-actions/v1 con API key; paso 4a-4d: API key → catálogo → create_client por host → verificación en CRM
+- E2E ejecutado contra dev server: 22/22 PASS (health, multi-org, clientes, oportunidades, host contract, memoria+MemoryDV+embeddings, automatización durable, auditoría, aislamiento A/B, doctor)
+- Suite final: 370/370 vitest PASS · tsc --noEmit limpio · lint 0 · build OK (sin /chat)
+- Verificación programática final: CERO dependencias funcionales del agente eliminado en src/ (imports/fetch), solo referencias documentales
+- Merge chaleco-crm → main (a4c63ec). Push a origin falla sin credenciales (PAT revocado por seguridad): cambios versionados localmente, push pendiente de credenciales del dueño
+
+Stage Summary:
+- CRM = CHALECO autónomo host-agnostic en main (a4c63ec)
+- Contratos vivos: POST/GET /api/crm/actions (crm-actions/v1, dual auth), MCP 16 tools, MemoryDV, API keys
+- docs/HARNESS.md = manual completo para el futuro host
