@@ -6,7 +6,7 @@ import { parseHandoffKeywords, matchesHandoffKeyword, createHandoffKeywordLoader
  * El daemon importa este archivo directamente (ESM .mjs), así que los tests
  * ejercitan EXACTAMENTE el código que corre en producción.
  * Escenarios: parseo tolerante de NichoConfig.handoffKeywords, matching
- * case-insensitive por inclusión (mismo criterio que channel-agent.ts) y
+ * case-insensitive por inclusión (mismo criterio que channel-autoresponder.ts) y
  * loader con caché TTL + fail-open ante errores de DB.
  */
 

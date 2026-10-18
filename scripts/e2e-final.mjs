@@ -2,13 +2,17 @@
 // ============================================================
 // CRM ALBRA — E2E de cierre de producción (§30)
 //
-//   LOGIN → CREATE CUSTOMER → CREATE OPPORTUNITY → AI TOOL (chat real)
-//   → MEMORY RETRIEVAL → FOLLOW-UP/AUTOMATION → AUDIT → ORG A vs ORG B
+//   LOGIN → CREATE CUSTOMER → CREATE OPPORTUNITY → HOST CONTRACT
+//   (crm-actions vía API key) → MEMORY RETRIEVAL → FOLLOW-UP/AUTOMATION
+//   → AUDIT → ORG A vs ORG B
 //
-// La IA se prueba de punta a punta contra un servidor mock OpenAI-compatible
-// que este script levanta (chat/completions + embeddings): todo el código del
-// CRM (settings cifrados, llmChat, tool-calling, memoria) es REAL; solo la
-// frontera del proveedor es mock — el E2E no depende de llaves externas.
+// La capa IA se prueba de punta a punta contra un servidor mock
+// OpenAI-compatible que este script levanta (chat/completions + embeddings):
+// todo el código del CRM (settings cifrados, llmChat del auto-responder,
+// memoria) es REAL; solo la frontera del proveedor es mock — el E2E no
+// depende de llaves externas. Las acciones de negocio se ejercitan por el
+// CONTRATO DEL CHALECO (/api/crm/actions), no por un agente propietario
+// (eliminado).
 //
 // Uso:  node scripts/e2e-final.mjs [--base http://127.0.0.1:3000]
 // Exit: 0 PASS · 1 FAIL
@@ -29,10 +33,14 @@ function ok(step, cond, extra = '') {
   if (!cond) process.exitCode = 1
 }
 
-async function api(method, path, { token, body } = {}) {
+async function api(method, path, { token, key, body } = {}) {
   const res = await fetch(base + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   let json = null
@@ -116,17 +124,24 @@ async function main() {
     const opp = await api('POST', '/api/opportunities', { token: tokA, body: { clientId, title: 'Venta piloto E2E', amount: 1500 } })
     ok('3. CREATE OPPORTUNITY', opp.status === 201 && !!(opp.json?.opportunity?.id ?? opp.json?.id))
 
-    // 4) AI TOOL (chat real con tool-calling a través del mock OpenAI)
-    const cfg = await api('PUT', '/api/settings', { token: tokA, body: { llm: { apiKey: 'sk-e2e-mock-key-0000000000', baseUrl: `${MOCK}/v1`, model: 'mock-brain', provider: 'custom', embedModel: 'mock-embed' } } })
-    ok('4a. AI provider configurado (settings cifrados)', cfg.status === 200)
-    const chat = await api('POST', '/api/chat', { token: tokA, body: { message: `E2E_CREAR_CLIENTE:Marta Gómez\nContexto: cliente del chat`, clientId } })
-    const acted = (chat.json?.actions ?? []).some((a) => a.type === 'create_client')
-    ok('4b. AI TOOL create_client ejecutada por el agente', chat.status === 200 && acted, chat.json?.actions?.[0]?.summary)
+    // 4) CONTRATO DEL CHALECO (crm-actions/v1 vía API key de la org)
+    const kgen = await api('POST', '/api/settings/api-keys', { token: tokA, body: { name: `E2E host ${TS}` } })
+    ok('4a. API key del host creada (hash SHA-256 en BD)', kgen.status === 201 && !!kgen.json?.secret)
+    const hostKey = kgen.json?.secret
+    const cat = await api('GET', '/api/crm/actions', { key: hostKey })
+    ok('4b. Catálogo crm-actions/v1 auto-descriptivo', cat.status === 200 && cat.json?.contract === 'crm-actions/v1')
+    const acted = await api('POST', '/api/crm/actions', { key: hostKey, body: { action: 'create_client', params: { name: 'Marta Gómez (host)', phone: '+57 320 777 8899' } } })
+    ok('4c. HOST ACTION create_client ejecutada por el contrato', acted.status === 200 && acted.json?.ok === true, acted.json?.summary)
     const list = await api('GET', '/api/clients?q=Marta', { token: tokA })
     const foundMarta = JSON.stringify(list.json).includes('Marta Gómez')
-    ok('4c. El cliente creado por la IA existe en el CRM', foundMarta)
+    ok('4d. El cliente creado por el host existe en el CRM', foundMarta)
+    await api('DELETE', `/api/settings/api-keys/${kgen.json?.apiKey?.id}`, { token: tokA })
 
     // 5) MEMORY RETRIEVAL (hechos + contrato MemoryDV + búsqueda semántica)
+    // La búsqueda semántica usa embeddings del LLM configurado (mock local):
+    // la configuración IA sigue siendo del CRM (settings cifrados por org).
+    const cfg = await api('PUT', '/api/settings', { token: tokA, body: { llm: { apiKey: 'sk-e2e-mock-key-0000000000', baseUrl: `${MOCK}/v1`, model: 'mock-brain', provider: 'custom', embedModel: 'mock-embed' } } })
+    ok('5a-0. AI provider configurado (settings cifrados)', cfg.status === 200)
     const mem = await api('POST', '/api/memory', { token: tokA, body: { clientId, content: 'Juana prefiere pagos contraentrega', type: 'preference', importance: 4 } })
     ok('5a. MEMORIA escrita (201)', mem.status === 201)
     const memList = await api('GET', `/api/memory?clientId=${clientId}`, { token: tokA })

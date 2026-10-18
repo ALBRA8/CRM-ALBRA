@@ -6,7 +6,7 @@ import { AsrError, MAX_AUDIO_BASE64_CHARS, transcribeAudioBase64 } from '@/lib/a
  * POST /api/whatsapp/transcribe — ENDPOINT INTERNO (daemon Baileys → Next.js).
  *
  * Autenticación: header X-Internal-Secret === INTERNAL_API_SECRET (mismo patrón
- * que usa el daemon contra /api/chat). No hay sesión de usuario: solo procesos
+ * que usa el daemon contra /api/whatsapp/auto-reply). No hay sesión de usuario: solo procesos
  * internos con el secreto compartido por .env.
  *
  * Body: { audioBase64: string (base64 crudo), mime?: string }
