@@ -1,0 +1,98 @@
+============================================================
+ CRM ALBRA - GUIA RAPIDA (Windows)
+============================================================
+
+QUE ES ESTO?
+  Tu CRM con su bot de WhatsApp, instalado en tu propio PC.
+  No necesitas PowerShell, ni terminales, ni comandos.
+  Todo se maneja con DOBLE CLIC.
+
+REQUISITOS
+  - Windows 10 o 11 (64 bits)
+  - Internet la primera vez (para instalar lo necesario)
+  - Nada mas. Node.js se instala solo si hace falta.
+
+============================================================
+ LOS 3 PASOS (solo la primera vez)
+============================================================
+
+ 1. DOBLE CLIC en  INICIAR-CRM.bat
+    - La primera vez instala todo solo (5-10 minutos).
+    - Si Windows muestra un aviso azul de proteccion,
+      clic en "Mas informacion" y luego "Ejecutar de todas formas".
+    - Si pide permisos de administrador, clic en "Si".
+
+ 2. Cuando abra el navegador, entra con la cuenta demo:
+        correo: demo@crmalbra.com
+        clave:  demo1234
+
+ 3. CONECTAR TU WHATSAPP (una sola vez):
+    - Mira la ventana negra llamada "CRM-BOT-WhatsApp".
+    - Aparecera un codigo QR.
+    - En tu telefono:  WhatsApp > Dispositivos vinculados
+                       > Vincular un dispositivo
+    - Escanea el QR de la pantalla. Listo.
+    - Esa ventana debe quedarse abierta (puede minimizarse).
+
+============================================================
+ EL USO DIARIO (ya instalado)
+============================================================
+
+  - DOBLE CLIC en INICIAR-CRM.bat  ->  se abre el navegador solo.
+  - Cuando termines: DOBLE CLIC en DETENER-CRM.bat
+  - NO necesitas escanear el QR otra vez (queda guardado).
+
+ QUE VENTANAS SE ABREN?
+  - La ventana del CRM (minimizada): es el servidor. NO la cierres
+    mientras uses el CRM. La ventana principal de INICIAR si puedes
+    cerrarla sin problema.
+  - La ventana del Bot WhatsApp: NO la cierres o el bot se desconecta.
+
+============================================================
+ DONDE ESTAN TUS COSAS
+============================================================
+
+  Tus datos (clientes, negocios, todo):
+      carpeta  db\custom.db
+      -> Copia esta carpeta como respaldo cuando quieras.
+
+  Tu sesion de WhatsApp (para no escanear QR de nuevo):
+      carpeta  src\whatsapp-daemon\.wa-auth
+      -> NO la borres ni la compartas.
+
+  Tu configuracion (claves secretas):
+      archivo  .env
+      -> NO lo borres ni lo compartas.
+
+============================================================
+ ACTUALIZAR A UNA VERSION NUEVA
+============================================================
+
+  DOBLE CLIC en ACTUALIZAR-CRM.bat y sigue las instrucciones
+  de la pantalla. Tus datos no se tocan.
+
+============================================================
+ PROBLEMAS FRECUENTES
+============================================================
+
+ "El navegador no abre"
+   -> Abre tu navegador y escribe:  localhost:3000
+
+ "El bot no responde mensajes"
+   -> Revisa que la ventana del Bot siga abierta.
+   -> Si dice ERROR o se cerro: ejecuta INICIAR-CRM.bat otra vez.
+   -> Si pide QR, escanealo de nuevo (pasa si cambian de red
+      o el telefono estuvo mucho tiempo sin internet).
+
+ "Le di doble clic y no pasa nada / se cierra al instante"
+   -> Clic derecho sobre INICIAR-CRM.bat > Abrir, y mira el
+      mensaje que sale. La causa mas comun: falta internet
+      la primera vez.
+
+ "Cambio el antivirus o Windows me bloquea el archivo"
+   -> Es normal con los .bat. Elige "Permitir" o restauralo
+      de la carpeta de cuarentena.
+
+ "Quiero que arranque solo cuando enciendo el PC"
+   -> Presiona Win+R, escribe:  shell:startup  y acepta.
+      Ahi pega un ACCESO DIRECTO a INICIAR-CRM.bat.
