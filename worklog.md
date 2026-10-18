@@ -910,3 +910,22 @@ Stage Summary:
 - CRM = CHALECO autónomo host-agnostic en main (a4c63ec)
 - Contratos vivos: POST/GET /api/crm/actions (crm-actions/v1, dual auth), MCP 16 tools, MemoryDV, API keys
 - docs/HARNESS.md = manual completo para el futuro host
+
+---
+Task ID: deploy-windows-launcher
+Agent: Z.ai (main)
+Task: Kit de arranque Windows con doble clic para CRM ALBRA + bot WhatsApp (sin PowerShell/terminales)
+
+Work Log:
+- Verificado estado: main local con CHALECO ya mergeado (e3e3e0f) pero remoto en 145a776
+- Auditado flujo de arranque local: daemon QR por consola (src/whatsapp-daemon/daemon.mjs, .wa-auth), ensure-env.mjs genera secretos (INTERNAL_API_SECRET>=24), /api/health publico, demo seed idempotente (demo@crmalbra.com/demo1234)
+- Detectado bloqueo Windows: "dev" usa tee (no existe en cmd) -> helpers usan npx next dev directo
+- Creado INICIAR-CRM.bat: auto-instala Node LTS via winget, .env con DATABASE_URL absoluto portable, npm install, prisma db push, ventana bot QR + servidor minimizado, polling /api/health, seed demo primera vez, abre navegador
+- Creado DETENER-CRM.bat (kill por puerto 3000/3002), ACTUALIZAR-CRM.bat (git pull o ruta ZIP), LEEME-PRIMERO.txt, scripts/windows/_crm-servidor.cmd y _crm-bot-whatsapp.cmd
+- Todos ASCII + CRLF; .env creado fuera de bloques parentesis (rutas con espacios/parentesis); ACTUALIZAR detiene procesos antes de npm install
+- Commit 07ca93b en main; push con PAT del usuario (inline, no persistido en config): remoto 145a776 -> 07ca93b (subio tambien el trabajo CHALECO pendiente)
+- Copias en download/arranque-windows/
+
+Stage Summary:
+- Remoto actualizado a 07ca93b; usuario puede descargar ZIP de GitHub y arrancar con doble clic
+- PENDIENTE USUARIO: revocar/rotar el PAT pegado en el chat (ghp_Icm0...UQRO) y los anteriores expuestos
