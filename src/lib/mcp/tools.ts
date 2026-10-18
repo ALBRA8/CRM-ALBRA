@@ -751,6 +751,73 @@ const listKnowledge: McpTool = {
   },
 }
 
+/**
+ * schedule_reservation — capability extraída del antiguo agente propietario
+ * (eliminado): agendar una cita es una operación del puesto (CRM), disponible
+ * ahora para cualquier host vía MCP con la misma semántica que la UI
+ * (status scheduled + timeline + workflow reservation_created vía trigger).
+ */
+const scheduleReservation: McpTool = {
+  name: 'schedule_reservation',
+  description:
+    'Agenda una cita/reserva para un cliente (status scheduled). Registra timeline y auditoría igual que la UI; el workflow reservation_created se dispara como el resto del CRM.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      clientId: { type: 'string', description: 'ID del cliente (create_client o list_clients)' },
+      title: { type: 'string', description: 'Título de la cita (ej. "Reunión de presentación")' },
+      startsAt: { type: 'string', description: 'Fecha/hora de inicio en ISO 8601 (ej. 2026-10-20T10:00:00-05:00)' },
+    },
+    required: ['title', 'startsAt'],
+  },
+  async handler(args, ctx) {
+    const title = required(args, 'title')
+    const startsAtRaw = required(args, 'startsAt')
+    const startsAt = new Date(startsAtRaw)
+    if (Number.isNaN(startsAt.getTime())) throw new Error(`Fecha inválida: ${startsAtRaw}`)
+    const clientId = s(args, 'clientId')
+    if (clientId) {
+      const client = await db.client.findFirst({ where: { id: clientId, organizationId: ctx.orgId }, select: { id: true } })
+      if (!client) throw new Error('Cliente no encontrado en esta organización')
+    }
+    const created = await db.reservation.create({
+      data: {
+        organizationId: ctx.orgId,
+        clientId: clientId ?? null,
+        title,
+        startsAt,
+        status: 'scheduled',
+        userId: null,
+      },
+    })
+    await auditAndTimeline({
+      orgId: ctx.orgId,
+      userId: null,
+      action: 'created',
+      entity: 'reservation',
+      entityId: created.id,
+      details: { title, startsAt: startsAt.toISOString(), via: 'mcp' },
+      clientId: created.clientId,
+      reservationId: created.id,
+      timelineType: 'meeting',
+      timelineTitle: `Cita agendada vía MCP: ${title}`,
+      timelineDescription: startsAt.toLocaleString('es-CO'),
+      source: MCP_SOURCE,
+    })
+    try {
+      const { runWorkflowsForTrigger } = await import('../workflow-engine')
+      await runWorkflowsForTrigger({
+        orgId: ctx.orgId,
+        type: 'reservation_created',
+        payload: { reservationId: created.id, clientId, title, startsAt: startsAt.toISOString() },
+      })
+    } catch (err) {
+      console.error('[mcp] workflow reservation_created', err)
+    }
+    return { created: true, reservation: { id: created.id, title: created.title, startsAt: startsAt.toISOString(), status: created.status } }
+  },
+}
+
 const getDashboardStats: McpTool = {
   name: 'get_dashboard_stats',
   description: 'Resumen ejecutivo del CRM: clientes, oportunidades abiertas y su valor, ganadas, cotizaciones enviadas/aceptadas y conversaciones sin leer.',
@@ -787,6 +854,7 @@ export const CRM_TOOLS: McpTool[] = [
   listOpportunities,
   createOpportunity,
   updateOpportunity,
+  scheduleReservation,
   listQuotes,
   getQuote,
   listConversations,

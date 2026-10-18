@@ -55,6 +55,7 @@ model Organization {
   settings              Settings?
   nichoConfig           NichoConfig?
   integration           Integration?
+  apiKeys               ApiKey[]
 }
 
 model User {
@@ -72,10 +73,31 @@ model User {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   savedViews     SavedView[]
+  apiKeysCreated ApiKey[]
   resetToken     String?
   resetTokenExp  DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+// ---------- Claves de API (host/contratos: servidor MCP y acciones CRM) ----------
+// La clave cruda (`albra_<48 hex>`) se muestra UNA vez al crearla; en BD solo
+// vive su hash SHA-256 (@unique → lookup O(1)). Revocación inmediata.
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  hashedKey      String    @unique
+  prefix         String
+  createdById    String?
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id])
 
   @@index([organizationId])
 }

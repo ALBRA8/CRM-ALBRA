@@ -3,7 +3,7 @@ import { db } from './db'
 /**
  * Construye el bloque "CONOCIMIENTO DEL NEGOCIO" a partir de las entradas
  * activas de la base de conocimiento de la organización. Se inyecta en los
- * system prompts del agente (canales WhatsApp/Telegram/Instagram y Chat AI).
+ * prompts de sistema de los canales del CRM (WhatsApp/Telegram/Instagram).
  */
 export async function buildKnowledgeContext(orgId: string): Promise<string> {
   const entries = await db.knowledge.findMany({

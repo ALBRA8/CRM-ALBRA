@@ -27,7 +27,6 @@ export const config = {
     '/finances/:path*',
     '/automations/:path*',
     '/reports/:path*',
-    '/chat/:path*',
     '/team/:path*',
     '/settings/:path*',
     '/whatsapp/:path*',

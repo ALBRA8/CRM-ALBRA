@@ -1,6 +1,8 @@
 # CRM ALBRA — Inteligencia Comercial que Trabaja por Ti
 
-CRM SaaS multi-tenant con agente de IA, construido con **Next.js 16 (App Router)**, **React 19**, **TypeScript**, **Tailwind CSS 4**, **shadcn/ui** y **Prisma sobre SQLite**. Evolución del CRM base de ALBRA GROUP: ahora con organizaciones aisladas (multi-tenancy), autenticación JWT, motor de automatizaciones con ejecución durable y WhatsApp real vía daemon Baileys.
+CRM SaaS multi-tenant **host-agnostic** (CHALECO CRM): construido con **Next.js 16 (App Router)**, **React 19**, **TypeScript**, **Tailwind CSS 4**, **shadcn/ui** y **Prisma sobre SQLite**. Evolución del CRM base de ALBRA GROUP: organizaciones aisladas (multi-tenancy), autenticación JWT, motor de automatizaciones con ejecución durable y WhatsApp real vía daemon Baileys.
+
+> **El CRM ya no depende de un agente propietario.** El antiguo agente de chat fue eliminado: la inteligencia que opera el CRM la aporta un **host externo** (un agente general, un servicio o un proceso) a través de contratos formales — REST `/api/crm/actions`, servidor MCP `/api/mcp` y contrato de memoria MemoryDV. Ver [docs/HARNESS.md](./docs/HARNESS.md).
 
 ## Módulos principales
 
@@ -10,21 +12,33 @@ CRM SaaS multi-tenant con agente de IA, construido con **Next.js 16 (App Router)
 - **Productos / Servicios** con inventario y categorías
 - **Calendario** con reservas y integración Google Calendar
 - **Cotizaciones** con numeración automática y timeline
-- **WhatsApp real** — conexión por QR (daemon Baileys propio, puerto 3002), envío/recepción, auto-respuestas con IA y secuencias con pausas durables
+- **WhatsApp real** — conexión por QR (daemon Baileys propio, puerto 3002), envío/recepción, auto-respuesta IA de canal (con handoff a humano y kill-switch) y secuencias con pausas durables
 - **Automatizaciones** — motor trigger → condiciones → acciones con ejecución programada (`/api/cron/run`), incluye la secuencia post-venta (check-in día 3 + IA pidiendo reseña día 7)
-- **Chat AI** — agente con herramientas (crear clientes, oportunidades, tareas, consultar datos)
+- **Contratos para hosts** — REST `/api/crm/actions` (acciones de negocio con RBAC) y servidor MCP (`/api/mcp`) con API keys por organización
 - **Instagram y Telegram** — canales adicionales por webhook
 - **Finanzas** — ingresos, gastos y transacciones por mes
 - **Reportes** — exportables a PDF, Excel y CSV
 - **Equipo** — usuarios por organización con roles y permisos
 - **Actividad** — log de auditoría de toda la organización
-- **Configuración con 12 pestañas** — Negocio, Agente IA, Google, WhatsApp, Instagram, Telegram, Email SMTP, Inventario, Plantillas, Campos personalizados, Equipo y Respaldo
+- **Configuración con 12 pestañas** — Negocio, IA del CRM, Google, WhatsApp, Instagram, Telegram, Email SMTP, Inventario, Plantillas, Campos personalizados, Equipo y Respaldo
 - **Búsqueda global** y notificaciones push (web-push)
-- **Seguridad** — Bearer JWT, rate limiting, HMAC en webhooks, cifrado de credenciales por organización
+- **Seguridad** — Bearer JWT, API keys con hash SHA-256 para hosts, RBAC granular server-side, rate limiting, HMAC en webhooks, cifrado de credenciales por organización
+
+## Chaleco CRM (consumo por hosts)
+
+El CRM expone tres contratos formales para que un host externo lo opere sin conocer su código:
+
+| Contrato | Ruta | Auth | Uso |
+|----------|------|------|-----|
+| Acciones de negocio | `POST /api/crm/actions` | JWT de usuario o `Authorization: Bearer albra_…` | `create_client`, `create_opportunity`, `schedule_reservation`, `add_note`, `quote_summary`, `list_recent_clients` |
+| Servidor MCP | `POST /api/mcp` | API key `albra_…` | 16 tools MCP (`list_clients`, `send_whatsapp`, `get_dashboard_stats`, …) |
+| Memoria canónica | `GET /api/memory` + `memory-contract.ts` | JWT | Contrato MemoryDV para consumidores externos |
+
+Detalle completo de capacidades, permisos, estados, errores y operaciones destructivas: **[docs/HARNESS.md](./docs/HARNESS.md)**.
 
 ## Multi-tenancy
 
-Cada organización tiene sus propios clientes, oportunidades, automatizaciones, plantillas y configuraciones (modelo `Organization` + `organizationId` en toda la capa de datos). El agente IA y los canales se configuran por organización.
+Cada organización tiene sus propios clientes, oportunidades, automatizaciones, plantillas y configuraciones (modelo `Organization` + `organizationId` en toda la capa de datos). La IA del CRM (auto-respuesta de canales, sugerencias) y los hosts se configuran por organización.
 
 ## Requisitos
 

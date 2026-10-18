@@ -1,18 +1,21 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { getGoogleClientConfig, buildOAuthUrl, exchangeCodeForTokens } from '@/lib/google'
 
 /**
- * GET /api/google/auth
+ * GET /api/google/auth — requirePermission 'integrations.*' (admin-only):
+ * iniciar el OAuth de la organización es una operación de integración, no
+ * operativa; el gate va ANTES de la validación de config para que un member
+ * reciba 403 y no un 400 de configuración.
  * - Sin config OAuth → 400 con mensaje claro.
  * - Con ?code= (callback de Google) → intercambia el código y guarda el refresh token.
  * - Normal → devuelve { url }; si es navegación del browser (Accept: text/html) redirige 302.
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requirePermission(req, 'integrations.*')
     const url = new URL(req.url)
     const origin = url.origin
     const redirectUri = `${origin}/api/google/auth`

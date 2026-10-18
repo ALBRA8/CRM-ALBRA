@@ -1,7 +1,8 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { handle, json } from '@/lib/api-helpers'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, requirePermission } from '@/lib/auth'
+import { can } from '@/lib/rbac'
 
 /**
  * Proxy al daemon de WhatsApp (Baileys) en http://localhost:3002 con timeout de 3s.
@@ -130,7 +131,9 @@ async function proxyGet(path: string): Promise<NextResponse> {
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    requireAuth(req)
+    // RBAC por operación (contrato rbac-gaps): leer estado/QR/conversaciones es
+    // whatsapp.read (rol comercial); el gate va antes del guard de sesión.
+    const auth = requirePermission(req, 'whatsapp.read')
     const path = new URL(req.url).searchParams.get('path') || '/status'
     const clean = path.startsWith('/') ? path : `/${path}`
     if (!ALLOWED_GET.some((re) => re.test(clean))) {
@@ -140,7 +143,6 @@ export async function GET(req: NextRequest) {
     const rest = new URL(req.url)
     rest.searchParams.delete('path')
     const extra = rest.searchParams.toString()
-    const auth = requireAuth(req)
     const op: Op = clean === '/status' || clean === '/qr' ? 'view' : 'operate'
     const denied = sessionGate(await resolveOwnership(auth.orgId), op)
     if (denied) return denied
@@ -160,6 +162,14 @@ export async function POST(req: NextRequest) {
     const path = String(body.path || '/connect')
     if (!ALLOWED_POST.includes(path)) {
       return json({ error: `path no permitido: ${path}` }, { status: 400 })
+    }
+    // RBAC por operación (contrato rbac-gaps): conectar/desconectar/cerrar la
+    // sesión de WhatsApp de la org es integración (admin-only, 'integrations.*')
+    // y va ANTES del guard de sesión; enviar mensajes es operativo
+    // ('whatsapp.write', rol comercial).
+    const capability = path === '/connect' || path === '/disconnect' || path === '/logout' ? 'integrations.*' : 'whatsapp.write'
+    if (!can(auth.role, capability)) {
+      return json({ error: `Sin permiso para esta acción (${capability})` }, { status: 403 })
     }
     try {
       // Multi-tenant fail-closed: la sesión se vincula a la org del JWT; si el
@@ -188,7 +198,9 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    // RBAC: actualizar conversaciones (marcar leídas, etc.) es operativo del rol
+    // comercial → 'whatsapp.write' antes del guard de sesión.
+    const auth = requirePermission(req, 'whatsapp.write')
     const body = (await req.json().catch(() => ({}))) as ProxyBody
     const path = String(body.path || '')
     if (!ALLOWED_PUT.some((re) => re.test(path))) {

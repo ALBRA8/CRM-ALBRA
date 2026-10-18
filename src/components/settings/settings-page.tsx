@@ -603,7 +603,7 @@ export function SettingsPage() {
       })
       if (!res.ok) throw new Error('Error al guardar')
       toast.success('Configuración del negocio guardada', {
-        description: 'El agente IA usará estos valores en sus respuestas.',
+        description: 'La IA del CRM usará estos valores en sus respuestas.',
       })
     } catch {
       toast.error('Error al guardar configuración del negocio')
@@ -960,7 +960,7 @@ export function SettingsPage() {
       {/* Tabs */}
       {/* Orden de izquierda a derecha por importancia:
           1. Negocio (define el comportamiento del CRM y del agente)
-          2. Agente IA (el cerebro: LLM que potencia chat y automatizaciones)
+          2. IA del CRM (el motor: LLM que potencia auto-respuestas y sugerencias)
           3. Google (Calendar/Gmail)
           4. Canales de comunicación: WhatsApp → Instagram → Telegram → Email
           5. Operativas: Inventario → Plantillas → Campos Custom → Equipo → Respaldo */}
@@ -970,7 +970,7 @@ export function SettingsPage() {
             <Building2 className="w-3.5 h-3.5" /> Negocio
           </TabsTrigger>
           <TabsTrigger value="llm" className="gap-1.5 text-xs">
-            <Brain className="w-3.5 h-3.5" /> Agente IA
+            <Brain className="w-3.5 h-3.5" /> IA del CRM
           </TabsTrigger>
           <TabsTrigger value="google" className="gap-1.5 text-xs">
             <Cloud className="w-3.5 h-3.5" /> Google
@@ -1270,7 +1270,7 @@ export function SettingsPage() {
                       isWaConnected ? 'text-emerald-700' : isWaWaitingQr ? 'text-amber-700' : 'text-slate-500'
                     }`}>
                       {isWaConnected
-                        ? `Conectado como ${waStatus.phone}. El agente IA puede responder automáticamente.`
+                        ? `Conectado como ${waStatus.phone}. La auto-respuesta IA puede responder automáticamente.`
                         : isWaWaitingQr
                           ? 'Escanea el código QR con tu WhatsApp para conectar.'
                           : 'Conecta tu WhatsApp escaneando un código QR. Sin necesidad de API de Meta.'}
@@ -1560,7 +1560,7 @@ export function SettingsPage() {
                   </div>
                   <div>
                     <CardTitle className="text-lg">Identidad del Negocio</CardTitle>
-                    <CardDescription>Nombre, rubro y personalidad del agente IA</CardDescription>
+                    <CardDescription>Nombre, rubro y personalidad de la IA del CRM</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -1598,7 +1598,7 @@ export function SettingsPage() {
                     rows={3}
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
                   />
-                  <p className="text-xs text-slate-400">Describe el tono y estilo de comunicación del agente IA</p>
+                  <p className="text-xs text-slate-400">Describe el tono y estilo de comunicación de la IA del CRM</p>
                 </div>
               </CardContent>
             </Card>
@@ -1821,7 +1821,7 @@ export function SettingsPage() {
                     </h3>
                     <p className={`text-sm mt-1 ${tgConnected ? 'text-emerald-700' : 'text-slate-500'}`}>
                       {tgConnected
-                        ? `Bot ${tgBotUsername ? `@${tgBotUsername}` : ''} vinculado. El agente IA puede responder automáticamente.`
+                        ? `Bot ${tgBotUsername ? `@${tgBotUsername}` : ''} vinculado. La auto-respuesta IA puede responder automáticamente.`
                         : 'Conecta tu bot de Telegram para recibir y responder mensajes automáticamente.'}
                     </p>
                   </div>
@@ -1854,7 +1854,7 @@ export function SettingsPage() {
                       <CheckCircle className="w-8 h-8 text-emerald-600" />
                     </div>
                     <p className="text-sm text-emerald-700 mb-1">Bot {tgBotUsername ? `@${tgBotUsername}` : ''} conectado</p>
-                    <p className="text-xs text-slate-400 mb-4">Los mensajes entrantes reciben respuesta automática del agente IA</p>
+                    <p className="text-xs text-slate-400 mb-4">Los mensajes entrantes reciben respuesta automática de la IA del CRM</p>
                     <div className="flex items-center justify-center gap-3 mb-4">
                       <span className="text-sm text-slate-600">Auto-respuesta IA:</span>
                       <button

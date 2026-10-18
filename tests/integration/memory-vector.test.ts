@@ -3,7 +3,7 @@ import { rememberMessage, recallContext, recallStyleLessons, consolidateMemory }
 import { db } from '@/lib/db'
 import { encryptSecret } from '@/lib/crypto'
 import { FIX, jsonBody, req, tokenA, tokenB } from '../helpers'
-import { POST as correctionsPOST } from '@/app/api/agent/corrections/route'
+import { POST as correctionsPOST } from '@/app/api/suggestions/corrections/route'
 import { GET as memoryVectorGET, POST as memoryVectorPOST } from '@/app/api/memory/vector/route'
 
 /**
@@ -15,7 +15,7 @@ import { GET as memoryVectorGET, POST as memoryVectorPOST } from '@/app/api/memo
  * - rememberMessage degrada a texto sin configuración (org-c)
  * - recallContext rankea semánticamente y degrada a recencia
  * - consolidateMemory crea hechos duraderos y marca fragmentos consolidados
- * - POST /api/agent/corrections: 201 + 404 cross-tenant + 401 sin sesión
+ * - POST /api/suggestions/corrections: 201 + 404 cross-tenant + 401 sin sesión
  * - GET /api/memory/vector: stats + búsqueda semántica con scores
  */
 
@@ -237,11 +237,11 @@ describe('consolidateMemory', () => {
   })
 })
 
-describe('POST /api/agent/corrections', () => {
+describe('POST /api/suggestions/corrections', () => {
   it('201: guarda la lección de estilo con embedding (auto-mejora)', async () => {
     vi.stubGlobal('fetch', fetchMock)
     const res = await correctionsPOST(
-      req('/api/agent/corrections', {
+      req('/api/suggestions/corrections', {
         method: 'POST',
         token: tokenB(),
         body: {
@@ -274,7 +274,7 @@ describe('POST /api/agent/corrections', () => {
 
   it('404: clientId de otra organización (aislamiento multi-tenant)', async () => {
     const res = await correctionsPOST(
-      req('/api/agent/corrections', {
+      req('/api/suggestions/corrections', {
         method: 'POST',
         token: tokenB(),
         body: { original: 'a', final: 'b', clientId: FIX.clientA1.id },
@@ -285,7 +285,7 @@ describe('POST /api/agent/corrections', () => {
 
   it('401: sin token no pasa', async () => {
     const res = await correctionsPOST(
-      req('/api/agent/corrections', { method: 'POST', body: { original: 'a', final: 'b' } })
+      req('/api/suggestions/corrections', { method: 'POST', body: { original: 'a', final: 'b' } })
     )
     expect(res.status).toBe(401)
   })

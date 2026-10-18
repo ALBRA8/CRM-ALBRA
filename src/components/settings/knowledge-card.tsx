@@ -29,9 +29,9 @@ import {
 import { api } from '@/lib/api'
 
 /**
- * Base de conocimiento del Agente IA (pestaña Agente IA de Configuración).
+ * Base de conocimiento de la IA del CRM (pestaña IA del CRM de Configuración).
  * Entradas de texto libre (catálogo, términos, FAQ, políticas) que se inyectan
- * en los system prompts del agente de canales y del Chat AI.
+ * en los prompts de sistema de los canales del CRM (auto-respuesta comercial).
  */
 
 interface KnowledgeEntry {
@@ -151,7 +151,7 @@ export function KnowledgeCard() {
               <div>
                 <CardTitle className="text-lg">Base de Conocimiento</CardTitle>
                 <CardDescription>
-                  Catálogo, términos y respuestas que el Agente IA usa al conversar por WhatsApp, Instagram, Telegram y Chat AI
+                  Catálogo, términos y respuestas que la IA del CRM usa al conversar por WhatsApp, Instagram y Telegram
                 </CardDescription>
               </div>
             </div>

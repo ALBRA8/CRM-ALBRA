@@ -76,7 +76,7 @@ export async function llmChat(
   } catch (err) {
     console.error('[ai] sin proveedor LLM disponible', err)
     throw new Error(
-      'No hay proveedor de IA disponible. Configura tu LLM (OpenAI/Groq/compatible) en Configuración → Agente IA con llmBaseUrl + llmApiKey, o define las credenciales del entorno.'
+      'No hay proveedor de IA disponible. Configura tu LLM (OpenAI/Groq/compatible) en Configuración → IA del CRM con llmBaseUrl + llmApiKey, o define las credenciales del entorno.'
     )
   }
 }

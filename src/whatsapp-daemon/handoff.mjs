@@ -3,7 +3,7 @@
  *
  * El cliente puede pedir explícitamente un humano con keywords configuradas en
  * NichoConfig.handoffKeywords (las MISMAS que ya usan los webhooks de
- * Telegram/Instagram vía channel-agent.ts). Cuando un mensaje entrante
+ * Telegram/Instagram vía channel-autoresponder.ts). Cuando un mensaje entrante
  * coincide:
  *   1. El daemon pausa la IA en ESA conversación (isAutoReply = 0).
  *   2. Notifica al equipo vía /api/whatsapp/handoff (timeline + push).
@@ -31,7 +31,7 @@ export function parseHandoffKeywords(raw) {
 
 /**
  * Coincidencia case-insensitive por inclusión (mismo criterio que
- * channel-agent.ts: `incomingText.toLowerCase().includes(keyword)`).
+ * channel-autoresponder.ts: `incomingText.toLowerCase().includes(keyword)`).
  * Vacío-safe: texto vacío o lista vacía → false.
  */
 export function matchesHandoffKeyword(text, keywords) {

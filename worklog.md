@@ -867,3 +867,29 @@ Stage Summary:
 - CRM funcional con datos demo (8 clientes, $4.000 pipeline, 2 oportunidades IA)
 - Credenciales demo vigentes: demo@crmalbra.com / demo1234
 - Acceso interactivo del usuario: depende del panel de preview de la UI z.ai (bot id vive fuera del sandbox)
+
+---
+Task ID: chaleco-crm-fase1
+Agent: main
+Task: Transformar CRM-ALBRA en CHALECO CRM host-agnostic (auditar → clasificar → extraer → eliminar agente → verificar)
+
+Work Log:
+- Auditoría total: núcleo agente = /api/chat (loop cognitivo + AGENT_TOOLS + persona), /api/agent/corrections, app/chat + components/chat, channel-agent.ts, memoria (AgentMemory/ConversationEmbedding/AgentCorrection), knowledge, nicho
+- Grafo bidireccional: channels (webhooks+daemon) → channel-agent; chat → tools+memory+knowledge+nicho; deal-ai/suggestions = capacidades CRM; MCP (15 tools) = contrato host existente
+- Hallazgos de sesión perdida: modelo ApiKey ausente en schema.prisma (rompía MCP completo + tsc), 12 tests TDD sin implementar (chat dual-persona, RBAC gates 403-vs-400, sweeper 10min/'interrumpido'), espejos crm_albra_mirrored/ + crm_albra_recovered/ con COPIA del agente
+- Reconstruido ApiKey (schema + relations), borrados espejos (REMOVE)
+- Extraído src/lib/capabilities/crm-actions.ts (6 acciones con zod+RBAC+procedencia) + /api/crm/actions (dual auth JWT/API key) + catálogo auto-descriptivo
+- Creado /api/whatsapp/auto-reply (workflow de canal: kill-switch, handoff, KB+memoria+estilo, historial saneado); daemon rewired a él
+- /api/agent/corrections → /api/suggestions/corrections (capability del CRM)
+- channel-agent.ts → channel-autoresponder.ts (renombre git mv + importers)
+- ELIMINADO agente: /api/chat, /api/agent, app/chat, components/chat, sendChatMessage, nav 'chat', middleware /chat, persona; sin sustituto
+- MCP: + schedule_reservation (16 tools); labels UI Agente IA → IA del CRM
+- RBAC: data.import admin-only; gates 403-antes-de-400 en import/csv, google/auth, sheets/read; daemon-proxy per-path (connect/disconnect/logout=integrations.*, send/PUT=whatsapp.write, status=whatsapp.read)
+- Sweeper: STALE_RUNNING_MS=10min + error 'interrumpido (interrupted)'
+- Tests: +harness-independence (gates estáticos A/B/C/C2), +crm-actions, +channel-autoresponder; reconciliados rbac-gaps (contrato fail-closed por provenance de error) y automation-durability
+- Docs: docs/HARNESS.md (contrato completo host), README host-agnostic
+
+Stage Summary:
+- Suite 370/370 PASS (baseline 12 fail), tsc OK, lint OK, build OK (sin /chat)
+- CRM = CHALECO autónomo; contratos: crm-actions/v1 + MCP 16 tools + MemoryDV + API keys
+- Ver docs/HARNESS.md §7 para inventario de eliminación

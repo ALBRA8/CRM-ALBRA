@@ -13,6 +13,9 @@ import { db } from './db'
 
 let running = false
 
+/** Umbral de huérfanos: un 'running' más viejo que esto se considera muerto. */
+export const STALE_RUNNING_MS = 10 * 60_000
+
 export async function runDueJobs(): Promise<{ processed: number; results: unknown[] }> {
   if (running) return { processed: 0, results: [] } // un solo worker a la vez
   running = true
@@ -24,8 +27,8 @@ export async function runDueJobs(): Promise<{ processed: number; results: unknow
     //    → 'failed' determinista. Sin esto quedaban atascados para siempre.
     try {
       const orphaned = await db.automationRun.updateMany({
-        where: { status: 'running', startedAt: { lt: new Date(Date.now() - 15 * 60_000) } },
-        data: { status: 'failed', error: 'interrupted: proceso reiniciado a mitad del run (sweeper)', finishedAt: new Date() },
+        where: { status: 'running', startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } },
+        data: { status: 'failed', error: 'interrumpido (interrupted): proceso reiniciado a mitad del run (sweeper)', finishedAt: new Date() },
       })
       if (orphaned.count > 0) console.warn(`[scheduler] runs huérfanos marcados failed: ${orphaned.count}`)
     } catch (err) {

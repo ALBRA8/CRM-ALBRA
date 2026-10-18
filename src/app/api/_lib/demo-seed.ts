@@ -330,7 +330,7 @@ async function seedDemoData(orgId: string): Promise<void> {
     ],
   })
 
-  // Base de conocimiento del Agente IA
+  // Base de conocimiento de la IA del CRM
   await db.knowledge.createMany({
     data: [
       {

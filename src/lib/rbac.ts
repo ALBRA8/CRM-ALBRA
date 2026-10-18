@@ -50,6 +50,7 @@ export const ADMIN_EXTRA_PERMISSIONS = [
   'integrations.*',
   'reports.read',
   'export.data',
+  'data.import',
   'custom-fields.*',
   'permissions.read',
 ] as const

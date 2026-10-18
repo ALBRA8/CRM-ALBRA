@@ -58,21 +58,38 @@ describe('RBAC server-side — gates nuevos', () => {
         body: { path: '/conversations/573001112222', unreadCount: 0 },
       })
     )
-    // Gate pasado: el proxy responde (daemon caído → 200 de fallback)
-    expect(res.status).not.toBe(403)
+    // El gate RBAC 'whatsapp.write' del member PASA: cualquier bloqueo restante
+    // es el guard multi-tenant fail-closed (sesión sin vincular/ownership no
+    // verificable → 403 de sesión) o el negocio del daemon — NUNCA un 403 de
+    // permisos.
+    const body = await jsonBody(res)
+    expect(String(body.error ?? '')).not.toContain('Sin permiso')
+    if (res.status === 403) {
+      expect(String(body.error)).toMatch(/sesión de WhatsApp|DENIED/)
+    }
   })
 
-  it('member SÍ sigue operando WhatsApp: lee estado y envía mensajes', async () => {
-    // GET /status: whatsapp.read del rol comercial (daemon caído → fallback 200)
+  it('member SÍ sigue operando WhatsApp: gates RBAC OK (bloqueos restantes son de sesión, no de permisos)', async () => {
+    // GET /status: whatsapp.read del rol comercial PASA. La respuesta depende
+    // del estado del daemon: 200 (alcanzable y sin sesión) o 403 fail-closed
+    // (ownership no verificable) — en ambos casos SIN error de permisos.
     const status = await daemonGET(req('/api/whatsapp/daemon-proxy?path=/status', { token: tokenB() }))
-    expect(status.status).toBe(200)
+    const statusBody = await jsonBody(status)
+    expect(String(statusBody.error ?? '')).not.toContain('Sin permiso')
+    if (status.status === 403) {
+      expect(String(statusBody.error)).toMatch(/sesión de WhatsApp|DENIED/)
+    } else {
+      expect(status.status).toBe(200)
+    }
 
-    // POST /send: whatsapp.write — pasa el gate (el daemon responde su propio
-    // negocio: 400 por body incompleto/sesión no conectada, nunca 403 nuestro)
+    // POST /send: whatsapp.write — pasa el gate RBAC; el bloqueo restante es
+    // del guard de sesión (403 UNLINKED/DENIED) o del daemon (503/400), jamás
+    // un 403 de permisos nuestro.
     const send = await daemonPOST(
       req('/api/whatsapp/daemon-proxy', { method: 'POST', token: tokenB(), body: { path: '/send' } })
     )
-    expect(send.status).not.toBe(403)
+    const sendBody = await jsonBody(send)
+    expect(String(sendBody.error ?? '')).not.toContain('Sin permiso')
   })
 
   it('owner pasa los gates nuevos (respuesta de negocio, nunca 403)', async () => {

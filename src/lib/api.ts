@@ -195,9 +195,17 @@ class ApiClient {
     return this.request('/dashboard')
   }
 
-  // Chat
-  async sendChatMessage(data: { message: string; clientId?: string }) {
-    return this.request('/chat', { method: 'POST', body: JSON.stringify(data) })
+  // Claves de API (hosts: MCP y acciones CRM)
+  async getApiKeys() {
+    return this.request('/settings/api-keys')
+  }
+
+  async createApiKey(data: { name: string }) {
+    return this.request('/settings/api-keys', { method: 'POST', body: JSON.stringify(data) })
+  }
+
+  async revokeApiKey(id: string) {
+    return this.request(`/settings/api-keys/${id}`, { method: 'DELETE' })
   }
 
   // Transactions

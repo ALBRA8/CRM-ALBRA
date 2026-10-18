@@ -13,7 +13,6 @@ import { ClientDetail } from '@/components/clients/client-detail'
 import { PipelineView } from '@/components/opportunities/pipeline-view'
 import { CalendarPage } from '@/components/calendar/calendar-page'
 import { AutomationsPage } from '@/components/automations/automations-page'
-import { ChatPage } from '@/components/chat/chat-page'
 import { QuotesList } from '@/components/quotes/quotes-list'
 import { QuoteDetail } from '@/components/quotes/quote-detail'
 import { FinancesPage } from '@/components/finances/finances-page'
@@ -195,8 +194,6 @@ function renderView(view: string): ReactNode {
       return <InboxPage />
     case 'automations':
       return <AutomationsPage />
-    case 'chat':
-      return <ChatPage />
     case 'quotes':
       return <QuotesList />
     case 'quote-detail':

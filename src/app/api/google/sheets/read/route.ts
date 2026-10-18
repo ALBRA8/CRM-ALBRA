@@ -1,16 +1,18 @@
 import type { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { getAccessToken, googleApi } from '@/lib/google'
 
 /**
  * POST /api/google/sheets/read — lee un rango de Google Sheets.
+ * requirePermission 'integrations.*' (admin-only): leer con los tokens de la
+ * org es operación de integración; el gate va ANTES de la validación del body.
  * Body: { spreadsheetId, range? } (range default: A1:Z1000).
  * Graceful: sin conexión → 400 descriptivo; API caída → { rows: [] }.
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requirePermission(req, 'integrations.*')
     const body = (await req.json().catch(() => ({}))) as { spreadsheetId?: string; range?: string }
     requireFields(body as unknown as Record<string, unknown>, ['spreadsheetId'])
     const spreadsheetId = String(body.spreadsheetId).trim()

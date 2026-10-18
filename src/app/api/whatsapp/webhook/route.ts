@@ -11,7 +11,7 @@ import {
   getHandoffKeywords,
   sendWhatsAppCloud,
 } from '@/lib/integrations'
-import { llmReplyOrNotification } from '@/lib/channel-agent'
+import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
 import { transcribeAudioBase64 } from '@/lib/asr'
 import { notifyOrganization } from '@/lib/push'
 import { recordTimelineEvent } from '@/lib/timeline'

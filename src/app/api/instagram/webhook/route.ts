@@ -5,7 +5,7 @@ import { json } from '@/lib/api-helpers'
 import { verifyMetaSignature, parseInstagramState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
-import { llmReplyOrNotification } from '@/lib/channel-agent'
+import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
 
 /**
  * Webhook de Instagram (Meta Graph).

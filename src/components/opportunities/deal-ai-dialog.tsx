@@ -14,7 +14,7 @@ import { toast } from 'sonner'
  * oportunidad (probabilidad, siguiente acción, mensaje y razonamiento) y
  * permite aplicarla (PUT /api/opportunities/:id), copiar el mensaje, EDITARLO
  * (auto-mejora Fase 5: la edición se guarda como lección de estilo para el
- * agente vía POST /api/agent/corrections) o enviarlo directo por los canales
+ * CRM vía POST /api/suggestions/corrections) o enviarlo directo por los canales
  * con conversación activa (POST /api/inbox/send — misma trazabilidad que la
  * Bandeja: daemon WA / Bot API TG / Graph API IG).
  */
@@ -80,7 +80,7 @@ function MessageSendBlock({
   const learnCorrection = () => {
     if (!edited) return
     // Fire-and-forget: la lección de estilo no puede retrasar ni tumbar el envío.
-    void fetch('/api/agent/corrections', {
+    void fetch('/api/suggestions/corrections', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ original: initial, final: message.trim(), clientId }),

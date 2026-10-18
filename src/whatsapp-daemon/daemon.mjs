@@ -451,7 +451,7 @@ async function connectToWhatsApp() {
   }
 }
 
-// ============ Agent Auto-Reply ============
+// ============ Auto-Respuesta IA del CRM (workflow de canal) ============
 async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
   try {
     const recentMsgs = db.prepare(`
@@ -465,10 +465,10 @@ async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
       content: m.text || ''
     }))
 
-    // Llama al agente del CRM (Next.js) con el secreto interno del .env compartido
+    // Llama a la auto-respuesta del CRM (Next.js) con el secreto interno del .env compartido
     const internalSecret = process.env.INTERNAL_API_SECRET
-    const agentUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
-    const response = await fetch(`${agentUrl}/api/chat`, {
+    const crmUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
+    const response = await fetch(`${crmUrl}/api/whatsapp/auto-reply`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -483,21 +483,21 @@ async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
     })
 
     if (!response.ok) {
-      console.error('[Agent] Error:', response.status)
+      console.error('[auto-reply] Error:', response.status)
       return
     }
 
     const data = await response.json()
-    const replyText = data.content || data.message
+    const replyText = data.reply || data.content || data.message
 
     if (!replyText) return
 
     await sendWhatsAppMessage(contactPhone, replyText)
     saveMessage(conv.id, orgId, 'outbound', connectedPhone || '', contactPhone, replyText, 'agent')
 
-    console.log(`[Agent] Reply sent to ${contactPhone}: ${replyText.substring(0, 50)}...`)
+    console.log(`[auto-reply] Reply sent to ${contactPhone}: ${replyText.substring(0, 50)}...`)
   } catch (err) {
-    console.error('[Agent] Auto-reply error:', err)
+    console.error('[auto-reply] Auto-reply error:', err)
   }
 }
 

@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { parseCsv, csvToObjects } from '@/lib/csv'
@@ -8,7 +8,9 @@ import { normalizePhone } from '@/lib/integrations'
 import { assignLeadRoundRobin } from '@/lib/lead-routing'
 
 /**
- * POST /api/import/csv — multipart/form-data: file + type=clients|services (requireAuth).
+ * POST /api/import/csv — multipart/form-data: file + type=clients|services
+ * (requirePermission 'data.import': admin-only; el gate RBAC va ANTES de la
+ * validación del formulario para que un member reciba 403, no 400).
  * Cabeceras esperadas: name,phone,email,status,... (clientes) / name,description,category,price,...
  * Respuesta: { imported, created, skipped, errors, errorList } (clients-list.tsx lee created/skipped/errors).
  */
@@ -29,7 +31,7 @@ function toNumber(v: string | undefined): number {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requirePermission(req, 'data.import')
     let form: FormData
     try {
       form = await req.formData()

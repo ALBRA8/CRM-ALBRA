@@ -52,7 +52,6 @@ const navItems = [
   { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, perm: 'whatsapp.read' },
   { id: 'inbox', label: 'Bandeja', icon: Inbox, perm: 'whatsapp.read' },
   { id: 'automations', label: 'Automatizaciones', icon: Zap, perm: 'automations.read' },
-  { id: 'chat', label: 'Chat AI', icon: MessageSquare, perm: 'ai.use' },
   { id: 'finances', label: 'Finanzas', icon: DollarSign, perm: 'transactions.read' },
   { id: 'reports', label: 'Reportes', icon: BarChart3, perm: 'reports.read' },
   { id: 'team', label: 'Equipo', icon: Shield, perm: 'team.manage' },
