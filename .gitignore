@@ -85,3 +85,8 @@ Thumbs.db
 agent-ctx/
 /download/
 .clean-room/
+
+# Local IDE and agents artifacts
+.agents/
+skills-lock.json
+AUDITORIA*.txt

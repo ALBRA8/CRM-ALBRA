@@ -55,6 +55,7 @@ services:
       #    red de compose (el http://localhost:3002 de .env es para dev).
       DATABASE_URL: file:/app/db/custom.db
       WHATSAPP_DAEMON_URL: http://wa-daemon:3002
+      ALBRA_AGENT_URL: ${ALBRA_AGENT_URL:-http://host.docker.internal:9000}
       PORT: "3000"
       HOSTNAME: 0.0.0.0
       # Descomenta para NO aplicar el esquema en cada arranque (recomendado

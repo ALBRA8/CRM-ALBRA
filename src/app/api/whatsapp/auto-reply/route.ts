@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { llmChat } from '@/lib/ai'
+import { isAgentBridgeEnabled, executeAgentQuery } from '@/lib/albra-agent-bridge'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { buildNichoContext } from '@/lib/integrations'
 import { buildKnowledgeContext } from '@/lib/knowledge'
@@ -151,11 +152,32 @@ Responde solo con el texto del mensaje; sin comillas ni prefijos.`
 
     // 7) Redacción de la respuesta (degradación elegante: error → sin respuesta).
     let reply = ''
+    let sourceEngine: 'albra-agent' | 'local-llm' = 'local-llm'
+
+    if (isAgentBridgeEnabled()) {
+      try {
+        const fullPrompt = `${systemPrompt}\n\nHISTORIAL PREVIO:\n${history.map((h) => `${h.role}: ${h.content}`).join('\n')}\n\nMENSAJE ENTRANTE:\n${message}`
+        const agentRes = await executeAgentQuery({
+          input: fullPrompt,
+          sessionId: clientId,
+          timeoutSeconds: 20,
+        })
+        if (agentRes.ok && agentRes.content) {
+          reply = agentRes.content.replace(/```json|```/g, '').trim()
+          sourceEngine = 'albra-agent'
+        }
+      } catch (agentErr) {
+        console.warn('[auto-reply] Agente General no disponible, recurriendo a LLM local:', agentErr)
+      }
+    }
+
+    if (!reply) {
     try {
       reply = await llmChat(orgId, messages, { temperature: 0.5 })
     } catch (err) {
       console.error('[auto-reply] LLM no disponible', err)
       return json({ reply: '', content: '', handoff: false, paused: false, error: 'IA no disponible' })
+    }
     }
     reply = reply.trim()
     if (!reply) return json({ reply: '', content: '', handoff: false, paused: false })
@@ -176,6 +198,6 @@ Responde solo con el texto del mensaje; sin comillas ni prefijos.`
     void rememberMessage({ orgId, clientId, channel: 'whatsapp', role: 'outgoing', text: reply })
     void maybeConsolidate(orgId, clientId)
 
-    return json({ reply, content: reply, handoff: false, paused: false })
+    return json({ reply, content: reply, handoff: false, paused: false, engine: sourceEngine })
   })
 }
