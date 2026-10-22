@@ -957,3 +957,21 @@ Work Log:
 
 Stage Summary:
 - Proyecto formalmente entregado; preview debe aparecer en la interfaz del usuario
+
+---
+Task ID: sales-strategy-sync
+Agent: Z.ai (main)
+Task: Sync con repo + inyección de estrategia comercial consultiva en canales
+
+Work Log:
+- Sync: rebaso 3 auto-commits de worklog sobre 2f289b6 (puente AGENTE GENERAL del usuario)
+- Creado src/lib/prompts/sales-strategy.ts (contenido exacto del usuario) e inyectado en 4 canales: WhatsApp auto-reply, Instagram/webhooks, channel-agent espejo, Telegram
+- tests/integration/sales-strategy-injection.test.ts: 5/5 PASS
+- DIAGNÓSTICO: e3e3e0f restauró por accidente el agente propietario eliminado (byte-idéntico al pre-misión) → GATEs A/B rojos desde el cierre; 8 tests fallando en línea base
+- Corregido: re-eliminados api/chat, app/chat, components/chat, api/agent/corrections + test viejo; api/agent/status → api/agent-general/status (sin consumidores); fix caché de salud del bridge (force=true); tsconfig excluye espejos de recuperación
+- Suite final: 381/381 PASS, tsc 0 errores, eslint limpio
+- Aceptación EN VIVO: POST auto-reply "Precio" con LLM real → rango contextual + contrapregunta de calificación + cierre activo PASS
+- Commit db95a5b y push con PAT del usuario (remoto par)
+
+Stage Summary:
+- Repo sincronizado y sano (381/381); estrategia comercial activa en todos los canales; GATEs del chaleco en verde
