@@ -41,6 +41,8 @@
     "repo-compare",
     "examples",
     "skills",
-    "mini-services"
+    "mini-services",
+    "crm_albra_recovered",
+    "crm_albra_mirrored"
   ]
 }

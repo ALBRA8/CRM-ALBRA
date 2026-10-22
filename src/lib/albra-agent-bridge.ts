@@ -121,8 +121,10 @@ export async function executeAgentQuery(params: {
     }
   }
 
-  // Comprobar salud previa para evitar timeout innecesario si está caído
-  const health = await checkAgentHealth()
+  // Comprobar salud previa para evitar timeout innecesario si está caído.
+  // force=true: una ejecución real nunca debe basarse en una caché de salud
+  // envenenada por un fallo transitorio previo (contrato del test del bridge).
+  const health = await checkAgentHealth(true)
   if (!health.online) {
     return {
       ok: false,

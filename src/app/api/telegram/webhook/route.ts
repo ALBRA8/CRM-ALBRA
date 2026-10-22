@@ -7,6 +7,7 @@ import { llmChat } from '@/lib/ai'
 import { transcribeAudioBase64 } from '@/lib/asr'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
+import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
 
 /**
  * POST /api/telegram/webhook — PÚBLICO pero con validación ESTRICTA del header
@@ -144,7 +145,7 @@ export async function POST(req: NextRequest) {
             [
               {
                 role: 'system',
-                content: `Eres el agente comercial por Telegram de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\n\nCONTEXTO DEL NEGOCIO:\n${nichoCtx}\n\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
+                content: `Eres el agente comercial por Telegram de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\n\n${SALES_STRATEGY_PROMPT}\nCONTEXTO DEL NEGOCIO:\n${nichoCtx}\n\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
               },
               { role: 'user', content: text },
             ],
