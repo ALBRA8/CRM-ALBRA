@@ -1269,3 +1269,21 @@ Work Log:
 
 Stage Summary:
 - Ventana del operador restaurada y verificada post-reinicio (WP a94815d + daemon + CRM :3000, cadena login→proxy→daemon 100%). Pendiente operador: abrir preview desde la UI, INICIAR DEMO (demo@crmalbra.com/AlbraDemo2026), WhatsApp→Conectar→QR con 573163301286, luego 1 mensaje real desde 573017543786 y confirmación para verificación E2E (0→N en WhatsAppMessage).
+
+---
+Task ID: GO-LIVE-prueba-real-2026-10-28
+Agent: main
+Task: Diagnosticar "listo pero no respondio" tras la primera prueba real de WhatsApp del operador.
+
+Work Log:
+- Verificado: daemon :3002 connected, phone 573163301286, orgLinked=true (sesion escaneada ~19:23 UTC tras reboot-restore del VM).
+- VM se reciclo ~19:15 UTC; golive-reboot-restore.sh restauro WP :3003 + daemon :3002; CRM :3000 volvio con boot del sandbox (Next carga .env alineado R2 -> proxy funciona).
+- Trazado el mensaje real del operador (pushName Johan Bravo, JID LID 215779257634953): recibido 19:25:16Z, persistido en WhatsAppMessage; CRM POST /api/whatsapp/auto-reply 200 en 928ms; respuesta IA generada y guardada 19:25:17Z (outbound/agent).
+- BARRERA 3 (causa raiz de "no respondio"): daemon.mjs:362 toma contactPhone de remoteJid (@lid) y :510 responde a LID@s.whatsapp.net (inexistente). Baileys no rechaza el envio -> log "Reply sent" enganoso; entrega real NUNCA ocurre.
+- Sesion .wa-auth persistida en src/whatsapp-daemon/.wa-auth (19:23) -> reinicio post-fix NO requiere re-escaneo.
+- Fix minimo propuesto (pendiente GO del operador, orden vigente: no corregir codigo automaticamente): preferir msg.key.senderPn para contactPhone / responder al JID real. ~2-4 lineas en daemon.mjs.
+
+Stage Summary:
+- E2E real: conexion OK, recepcion OK, persistencia OK (2 filas), IA OK (200/928ms), entrega final FALLA por LID-vs-telefono.
+- Veredicto sigue GO-LIVE BLOCKED por BARRERA 3 (nueva), con 4/5 etapas del circuito verificadas con mensaje 100% real.
+- 0 secretos impresos; 0 cambios de codigo; WP :3003 sin eventos (pipeline daemon->CRM interno, WP para campanas).
