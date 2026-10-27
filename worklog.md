@@ -993,3 +993,19 @@ Work Log:
 Stage Summary:
 - Los 3 repos al día localmente. Ecosistema: SEED (GENERAL) especializa agentes → LEADS genera y puntúa leads → hook webhook → CRM-ALBRA los recibe y convierte con el agente comercial consultivo.
 - Bloqueo: sin PAT válido para pushear el commit 9b30f3e (solo worklog) de CRM-ALBRA.
+
+---
+Task ID: review-sistema-3-repos-2026-10-27
+Agent: Z.ai (main)
+Task: Revisar CRM-ALBRA + AGENTE-GENERAL + AGENTE-LEADS como UN SOLO sistema (scope exclusivo: solo estos 3 repos)
+
+Work Log:
+- Re-fetch de los 3: remotos sin cambios (CRM-ALBRA db95a5b, GENERAL 69c79da, LEADS e1c0d5f). Local CRM-ALBRA 2 commits adelante (9b30f3e + 9437d54, solo worklog; push bloqueado por PAT inválido).
+- Verificado Integración 1 (CRM → SEED): albra-agent-bridge.ts llama {ALBRA_AGENT_URL}/api/v1/health y /api/v1/execution; el seed los monta bajo /api/v1 (app.py líneas 207-212). Contrato CORRECTO. Env: ALBRA_AGENT_URL (default localhost:9000), ALBRA_AGENT_API_KEY, ALBRA_AGENT_ENABLED. Visible en /api/agent-general/status.
+- Detectado GAP Integración 2 (LEADS → CRM): CRMAlbraHooks dispara 5 eventos (lead.created/scored/intelligenced/outreach_sent/execution.completed) con HMAC a CRM_ALBRA_WEBHOOK_URL, pero CRM-ALBRA NO tiene endpoint receptor para esos eventos (solo webhooks de canales WhatsApp/Telegram/Instagram). Los eventos morirían en 404 (el hook no bloquea el pipeline).
+- Integración 3 (SEED → LEADS): arquitectural — LEADS implementa en TS el patrón LIPO del seed (AgentAdapter + Bridges + Skills + Knowledge + Bootstrap), contrato-primero, especialización sin tocar DNA.
+- Confirmado scope: solo 3 repos; ignorar cualquier otro repo de la org.
+
+Stage Summary:
+- Sistema de 3 piezas coherente: SEED (DNA Python) ← bridge opcional → CRM (conversión) ← webhook (faltante) ← LEADS (prospección).
+- Único hueco real: receptor de webhooks de LEADS en CRM-ALBRA (validación HMAC + creación de Cliente/Oportunidad).
