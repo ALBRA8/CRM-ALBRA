@@ -1337,3 +1337,23 @@ Work Log:
 Stage Summary:
 - VEREDICTO: CONTROLLED REAL-WHATSAPP E2E VERIFIED. STOP según protocolo (paso 10).
 - Pendientes formales documentados: port del fix al repo CRM-ALBRA (reciclaje borró repo local), revocación 2 PATs, shred .push-token, restaurar repo CRM local.
+
+---
+Task ID: PORT-BARRERA3-ventana-formal-2026-10-28
+Agent: main
+Task: Ventana formal — port del fix BARRERA 3 al repo CRM-ALBRA y publicación.
+
+Work Log:
+- Repo restaurado: clone https://github.com/ALBRA8/CRM-ALBRA.git → HEAD 9b32591 exacto, branch main, tree limpio.
+- Verificado: daemon.mjs del repo == backup pre-fix byte a byte; diff repo→ejecución = 27 líneas = patch validado (equivalencia exacta).
+- Port aplicado (copia del archivo validado); git diff: 1 archivo, +21/−6, solo daemon.mjs.
+- Tests: node --check OK; regresión sintética sobre el archivo del repo 7/7 PASS (incluye complemento replyJid y verbatim JID); suite existente vitest 42 archivos / 390 tests PASS (env dummy test-only gitignoreado; DB efímera db/test-vitest.db por diseño del setup; canales externos mockeados — 0 WhatsApps reales posibles).
+- Nota preexistente: package-lock.json desincronizado con package.json en 9b32591 (npm ci falla: EUSAGE) + ERESOLVE en install → deps instaladas --no-save --no-package-lock --legacy-peer-deps + vite@8.3.5 (versión del propio lockfile) ad-hoc en node_modules (gitignored). Tree jamás tocado por esto.
+- Commit exclusivo: ea87cc2 (padre 9b32591), identidad ALBRA <dev@albra.co> (convención del repo, divulgada), 1 archivo, mensaje completo, 0 secretos (grep -F = 0).
+- Push: FALLIDO controlado (GIT_TERMINAL_PROMPT=0): sin credenciales en sandbox (helper ninguno, sin .netrc, sin gh, sin tokens de entorno). Remoto verificado INTACTO: main = 9b32591 (0 cambios publicados).
+- Patch publicable generado y verificado: download/0001-fix-barrera3-lid-jid-real.patch (80 líneas; git apply --check limpia sobre 9b32591).
+
+Stage Summary:
+- RESULTADO: PORT BLOCKED — NO CAMBIOS PUBLICADOS (bloqueo único y exacto: sin credenciales de push en el sandbox).
+- Commit local ea87cc2 listo + patch verificable para publicación por el operador (git am + push desde su lado).
+- ULTRA (e6ef56d) y WHATSPOWER (a94815d) intactos; breakers sin cambios; 0 secretos impresos; STOP según paso 10.
