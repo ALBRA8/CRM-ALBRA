@@ -1237,3 +1237,19 @@ Work Log:
 
 Stage Summary:
 - VEREDICTO: GO-LIVE BLOCKED. Items 1,2,3,7 verificados en vivo (14/14 + breakers frío/vivo/código, 0 drift). Items 4,5,6 bloqueados por: (1) sesión WhatsApp no vinculada (.wa-auth inexistente — QR requiere el teléfono físico del operador) y (2) prueba mínima sin definición ejecutable (piloto C2B authorized:false por código; cambiarlo = cambio de código prohibido). Sin campañas, sin envíos reales, sin cambios de código/config, 0 fugas, ventana cerrada limpia. Pendiente del operador: definir la prueba mínima (A o B) y vincular la sesión; luego re-ejecutar scripts/golive-run.sh y verificar 0→N en WhatsAppMessage.
+
+---
+Task ID: GO-LIVE-ventana-operador-2026-10-28
+Agent: Z.ai (main)
+Task: Operador no puede entrar al dashboard para conectar WhatsApp ("iniciar demo"). Diagnóstico y apertura de la ventana del operador (desbloqueo de BARRERA 1 del GO-LIVE).
+
+Work Log:
+- Diagnóstico: my-project ES el CRM (crm-albra-saas) servido en :3000 (preview). Su .env solo tenía DATABASE_URL/APP_SECRET/APP_ENCRYPTION_KEY → el proceso arrancó SIN INTERNAL_API_SECRET (fail-closed del daemon-proxy → 503/403 al conectar) y daemon :3002 / WP :3003 caídos (teardown de la verificación previa). Usuario demo@crmalbra.com (owner, activo) existe en db/custom.db; org albra-demo con autoReply=true; 0 mensajes (trazabilidad limpia).
+- Acciones (dentro del objetivo, sin tocar código): (1) .env del CRM alineado con secretos canónicos R2 — INTERNAL_API_SECRET, WHATSAPP_DAEMON_URL, WHATSPOWER_ENABLED=true, WHATSPOWER_INBOUND_URL, WHATSPOWER_STAGE_URL, WHATSPOWER_WEBHOOK_SECRET (valores jamás impresos; chmod 600) — esto además sobrevive reinicios del supervisor; (2) reset contraseña demo vía scripts/reset-demo-password.mjs (mecanismo existente del dueño); (3) arranque: daemon :3002 (copia my-project), WP :3003 (repos .env R2), CRM :3000 reiniciado con bun run dev (predev ensure-env ahora no-op).
+- Verificación de la cadena del operador (golive-verify-dashboard.sh): CRM health 200; WP health 200; daemon 401 sin auth / 200 con auth; POST /api/auth/demo → 200 token (oculto); GET /api/whatsapp/daemon-proxy?path=/status con sesión demo → {"status":"disconnected","phone":null,"orgLinked":false,"linkedOrgId":null} — la UI del dashboard ahora puede: Conectar → QR → vincular.
+- Ventana del operador ABIERTA (sin teardown): puertos 3000/3002/3003 vivos (pids 7349/7297/7298). Higiene: 0 fugas de secretos en logs golive2-*.log.
+- Scripts persistidos: golive-prepare-dashboard.sh, golive-start-dashboard.sh, golive-verify-dashboard.sh.
+- Advertencia honesta al operador: la respuesta IA del auto-reply depende de credencial del proveedor configurada en el sandbox (históricamente BLOCKED BY EXTERNAL CREDENTIAL); si la IA falla, recepción+persistencia+trazabilidad igual se verifican y el fallo de respuesta quedará visible en logs.
+
+Stage Summary:
+- Ventana del operador abierta y verificada: login demo OK, daemon-proxy OK, daemon esperando vinculación QR. Pendiente del operador: entrar al preview → INICIAR DEMO (o demo@crmalbra.com / contraseña demo) → sección WhatsApp → Conectar → escanear QR con el teléfono del negocio 573163301286 → avisar para verificación E2E (1 mensaje real desde 573017543786 → recepción → CRM → procesamiento → respuesta → trazabilidad 0→N).
