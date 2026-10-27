@@ -1185,3 +1185,21 @@ Work Log:
 
 Stage Summary:
 - Todo listo para push (commits a94815d/e6ef56d validados con suites). Único bloqueante: el token editado quedó INVALIDADO (401) — se necesita el valor vigente del fine-grained token con Contents: Read and write. Al recibirlo: probe → push → SHAs → árboles remotos → suites post-push → shred → documentos finales → informe con los 6 entregables.
+
+---
+Task ID: PRO-02-push-ejecutado-2026-10-27
+Agent: Z.ai (main)
+Task: Checklist completa del dueño — push final de PRO-02, verificación remota, suites post-push, destrucción de token y documentos.
+
+Work Log:
+- Token clásico nuevo (ghp_, distinto del comprometido ghp_Qksb…) guardado en 600; verificado: login ALBRA8, scopes repo+workflow; Contents:write confirmado (probe blobs HTTP 201).
+- Causa raíz del fallo previo encontrada: variable GH_TOKEN_PUSH sin export → credential-helper hijo recibía password vacía. Corregido con export.
+- PUSH EXITOSO: WP db0d088..a94815d, ULTRA 08a0bb3..e6ef56d (CRM sin cambios, remoto 9b32591 intacto).
+- SHAs remotos verificados inmediatamente vía ls-remote anónimo: idénticos a locales (3/3).
+- Árboles remotos verificados (fetch + grep origin/main): 0 fallbacks (dev_secret/fixed_length), 0 PATs; fail-closed presente (WP server.ts L49/L196/L246/L285; ULTRA execute-pilot L14 + 2 tests env-based); PNP-01 businessDate fijo publicado (bajas-circuit L93, contracts-integration L284+; commit 08a0bb3 en historia remota).
+- Suites post-push: WP npm test 22/22 PASS; ULTRA npm test 19/19 PASS; bajas-circuit integración (2A real :3003) 5/5 PASS; pilot-safeguards 4/5 (test 5 OPERATOR_PHONE_MISSING: inconsistencia PREEXISTENTE pilot-config L25 hardcodeado vs test, demostrada en worktree prístino 08a0bb3 — no introducida por PRO-02; ticket PNP recomendado). Servidor 2A detenido, puerto libre, worktree eliminado.
+- Token destruido con shred -u; barrido anti-persistencia: 0 apariciones de ambos tokens (clásico + fine-grained previo) en my-project/repos/audit_repos//tmp/historial/configs git; log temporal eliminado. secure-rotation vacío.
+- Documentos recreados tras el reciclaje: download/PRO-01-PRO-02-EVIDENCIA/{FINAL_STATUS.md, PUSH-STATUS.md, MATRIZ-03-ROTACION.md} — sin secretos ni tokens.
+
+Stage Summary:
+- PRO-02 PUBLICADO Y VERIFICADO EN REMOTO: a94815d (WP) / e6ef56d (ULTRA); 0 fallbacks en remoto; fail-closed y PNP-01 publicados; suites post-push 22/22 + 19/19 + 5/5 (4/5 pilot-safeguards por hallazgo preexistente documentado); token destruido con shred y 0 persistencia. Pendiente dueño: REVOCAR el token del push (expuesto en chat) + PAT comprometido + 2FA; ventana de despliegue con secretos NUEVOS según INSTRUCCIONES-ROTACION-PRODUCCION.md. Sin deploy ni mensajes reales. DETENIDO según instrucción.
