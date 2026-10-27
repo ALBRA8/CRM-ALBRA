@@ -56,6 +56,7 @@ model Organization {
   nichoConfig           NichoConfig?
   integration           Integration?
   apiKeys               ApiKey[]
+  agentLeadEvents       AgentLeadEvent[]
 }
 
 model User {
@@ -615,11 +616,40 @@ model Integration {
   metaAppSecretEnc      String?
   whatsappPhoneId       String?
   whatsappCloudTokenEnc String?
+  agentLeadsSecretEnc   String?      // Secret HMAC-SHA256 del webhook AGENTE-LEADS (cifrado AES-256-GCM)
   enableWhatsApp        Boolean      @default(false)
   enableTelegram        Boolean      @default(false)
   enableInstagram       Boolean      @default(false)
   enableGoogle          Boolean      @default(false)
   updatedAt             DateTime     @updatedAt
+}
+
+// ---------- AGENTE-LEADS (webhook de eventos de prospección) ----------
+// Receptor oficial de los eventos emitidos por AGENTE-LEADS (contrato §26):
+// lead.created / lead.scored / lead.intelligenced / lead.outreach_sent /
+// execution.completed. Registro de trazabilidad + dedup por event_id +
+// auditoría de rechazos. Secret de verificación HMAC por organización
+// (Integration.agentLeadsSecretEnc): la organización queda determinada por
+// el secret que matchea la firma — misma barrera multi-tenant del webhook
+// de WhatsApp (sin trust en el body).
+model AgentLeadEvent {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  eventId        String?      // event_id §26 del emisor (evt_…)
+  type           String       // lead.created | lead.scored | lead.intelligenced | lead.outreach_sent | execution.completed
+  leadId         String?      // lead_id del emisor
+  executionId    String?
+  payload        String?      // JSON del evento (trazabilidad completa)
+  status         String       @default("processed") // processed | deduped | error
+  error          String?
+  clientId       String?
+  opportunityId  String?
+  receivedAt     DateTime     @default(now())
+
+  @@unique([organizationId, eventId])
+  @@index([organizationId, receivedAt])
+  @@index([organizationId, leadId])
 }
 
 // ============ WhatsApp (daemon Baileys, puerto 3002) ============
