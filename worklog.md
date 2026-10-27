@@ -1101,3 +1101,23 @@ Work Log:
 
 Stage Summary:
 - Seguridad y verificación post-publicación COMPLETAS: remoto íntegro, artefactos saneados, 25+ pruebas funcionales PASS con controles activos, cero mensajes reales. Pendiente usuario: revocar PAT y rotar INTERNAL_API_SECRET/APP_ENCRYPTION_KEY antes de producción.
+
+---
+Task ID: PRO-01-PRO-02-rotacion-2026-10-27
+Agent: Z.ai (main)
+Task: Ejecutar PRO-01 y PRO-02 de la campaña integral: revocación PAT + rotación controlada de secretos (Matriz 03), preservando datos cifrados de APP_ENCRYPTION_KEY. Sin push, sin deploy, sin mensajes reales.
+
+Work Log:
+- Entorno re-verificado tras reciclaje: 3 SHAs remotos correctos vía ls-remote anónimo (CRM 9b32591, WHATSPOWER db0d088, ULTRA 08a0bb3). Clones limpios en /home/z/repos-limpio.
+- PRO-01 PAT: escaneo exhaustivo = 0 tokens completos persistidos (solo prefijos truncados 8-15 chars históricos); sin credenciales/netrc/ssh en entorno; revocación vía API imposible para PAT clásico → BLOCKED-OWNER con instrucciones exactas (PRO-01-PAT.md).
+- Mapeo por código de los 4 consumidores de INTERNAL_API_SECRET: CRM :3000 (daemon-proxy + X-Internal-Secret en handoff/describe-image/auto-reply/transcribe), daemon Baileys :3002 (gate arranque exit(1), Bearer en todas las rutas), WHATSPOWER :3003 (suppression POST/DELETE + /qr/data), ULTRA (dispatcher + execute-pilot). NVIDIA no consume INTERNAL_API_SECRET (credencial IA separada).
+- Descubrimiento crítico: valor publicado como fallback en WHATSPOWER server.ts ×3 + webhookSecret dev ×1, ULTRA execute-pilot ×1, tests ULTRA ×2, suite.test.ts CP-11 ×1.
+- Parches fail-closed aplicados al working tree (sin commit): eliminados 7 fallbacks; 0 ocurrencias restantes; diffs guardados.
+- Rotación sandbox: 5 secretos nuevos generados (chmod 600, jamás impresos); batería funcional 26/26 PASS en 4 procesos: NUEVO acepta / VIEJO + valor publicado + ausente → 401/503/exit(1). Correcciones durante la batería: symlinks de dependencias del daemon en clone (baileys/boom/qrcode/better-sqlite3) y kill por puerto de workers next-server supervivientes.
+- Suites oficiales tras parches: ULTRA 19/19, WHATSPOWER 22/22 + secret-config 3/3 (CP-11 actualizado a process.env; mismo flujo).
+- APP_ENCRYPTION_KEY: NO rotada (preservación); escaneo BD copia (34 tablas) = 0 payloads v1:*; migrador dual-key creado y probado (selftest TODOS-PASS: 3/3 re-cifrados, descifra con NUEVA, VIEJA inutilizada, planos intactos, no-descifrables se preservan).
+- Anti-fuga verificada: 0 secretos nuevos/viejos/publicados en logs, evidencia y worklog. Logs de prueba sanitizados.
+- Entregados: download/PRO-01-PRO-02-EVIDENCIA/ (MATRIZ-03-ROTACION.md, PRO-01-PAT.md, FINAL_STATUS.md, INSTRUCCIONES-ROTACION-PRODUCCION.md, bateria-rotacion.txt, diffs, secrets-nuevos.env chmod 600, BD copia).
+
+Stage Summary:
+- Rotación INTERNAL_API_SECRET VERIFICADA en los 4 procesos (sandbox); fallbacks publicados ELIMINADOS; APP_ENCRYPTION_KEY preservada con migrador probado; PAT BLOCKED-OWNER con pasos exactos. Paquete de despliegue listo para ventana del dueño. Sin push/deploy/mensajes reales. Próximo: autorización del dueño (PAT + push + ventana) y continuar PRO-03+.
