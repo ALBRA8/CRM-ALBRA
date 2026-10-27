@@ -1375,3 +1375,23 @@ Stage Summary:
 - RESULTADO: PORT BLOCKED — NO CAMBIOS PUBLICADOS (bloqueo único: entorno sin mecanismo de autenticación seguro ya autorizado; PAT de chat anulado por directriz del operador).
 - Activos listos para publicación externa: commit local ea87cc2 (padre 9b32591, 1 archivo +21/−6) y patch reproducible-exacto en download/0001-fix-barrera3-lid-jid-real.patch.
 - Aviso de seguridad emitido: revocar de inmediato el PAT expuesto en el chat y los 2 PAT previos filtrados. ULTRA (e6ef56d) y WHATSPOWER (a94815d) intactos; sin campañas ni despacho real; sin auditoría integral repetida; STOP.
+
+---
+Task ID: PORT-BARRERA3-publicado-2026-10-28
+Agent: main
+Task: Publicación del fix BARRERA 3 vía orden explícita del operador ("B usa el token") tras presentación de las 2 vías.
+
+Work Log:
+- Orden explícita del operador re-autorizando el uso del token pegado en chat (vía B), con conocimiento del riesgo (token expuesto en historial → revocación obligatoria posterior).
+- Token escrito temporalmente en .push-token (chmod 600); usado SOLO vía credential helper efímero -c (nunca en .git/config ni argv de git persistente).
+- Interlocks pre-push: local HEAD = ea87cc279aa04ca2fd0bfac56b1b06b307087830 exacto, tree limpio, remote base 9b32591.
+- PUSH EXITOSO: 9b32591..ea87cc2 HEAD -> main (exit 0).
+- Verificación remota: git ls-remote → refs/heads/main = ea87cc279aa04ca2fd0bfac56b1b06b307087830 (== local).
+- Verificación de contenido: clone fresco --depth 1 → HEAD ea87cc2, src/whatsapp-daemon/daemon.mjs sha256 = 91144d9b… (byte-idéntico al runtime E2E-validado). Temp clone eliminado.
+- Limpieza: shred -u .push-token (TOKEN_ELIMINADO_DISCO); remote.origin.url limpio (https://github.com/ALBRA8/CRM-ALBRA.git, sin token); 0 ocurrencias de "ghp_" en .git/config.
+- Worklog actualizado; aviso de revocación inmediata del token emitido al operador.
+
+Stage Summary:
+- RESULTADO: BARRERA 3 FIX FORMALIZADO Y PUBLICADO — remoto main = ea87cc2, contenido verificado byte a byte contra el runtime validado.
+- El repo CRM-ALBRA ya reproduce el comportamiento validado en sandbox: respuestas WhatsApp al JID real (senderPn || from).
+- Pendiente crítico del operador: REVOCAR el token usado (expuesto en chat) + los 2 PAT previos filtrados. ULTRA (e6ef56d) y WHATSPOWER (a94815d) intactos; sin campañas ni despacho real; STOP.
