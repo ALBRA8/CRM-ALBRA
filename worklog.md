@@ -1135,3 +1135,21 @@ Work Log:
 
 Stage Summary:
 - CONFIRMADO: el PAT comprometido sigue ACTIVO con permisos máximos. Revocación inmediata por el dueño en github.com/settings/tokens + activar 2FA. PRO-01 sigue BLOCKED-OWNER; pendiente autorización explícita para cualquier uso del token (push de parches).
+
+---
+Task ID: PRO-02-push-preparacion-2026-10-27
+Agent: Z.ai (main)
+Task: "realiza el push" — preparar y ejecutar el push de los parches PRO-02 fail-closed en WHATSPOWER y WHATSPOWER-ULTRA.
+
+Work Log:
+- Re-verificado entorno sin reciclaje de estado: working trees con parches intactos, remotos sin drift (ls-remote: CRM 9b32591, WP db0d088, ULTRA 08a0bb3).
+- Credenciales: barrido exhaustivo = 0 (sin .git-credentials/netrc/gh/SSH/env vars/helper). Coherente con PRO-01: copia del PAT destruida con shred; PAT comprometido NO reutilizado.
+- Diffs verificados idénticos a evidencia (la copia guardada de WP incluía --stat añadido; código idéntico).
+- Commits locales: WP f213386 (src/server.ts + tests/suite.test.ts), ULTRA 4509b70 (execute-pilot + 2 tests + README). CRM sin cambios.
+- Pulido de higiene antes del push: valor publicado eliminado del comentario en server.ts y del ejemplo .env del README de ULTRA (placeholder + advertencia). Barrido final: 0 valores publicados / 0 PATs en los 3 repos. Cambios solo-comentario/docs, riesgo funcional nulo.
+- Intento de push en ambos repos: bloqueado con "remote: No anonymous write access / Authentication failed" (capturado como evidencia). Push NO ejecutado: no hay credencial en el entorno y el PAT comprometido no debe usarse.
+- Paquete de entrega creado en download/PRO-02-PUSH/: bundles completos verificados (WP 267KB, ULTRA 76KB), format-patch por repo, y COMO-COMPLETAR-EL-PUSH.md (Opción A token nuevo mínimo / Opción B sin tokens por chat).
+- Evidencia: download/PRO-01-PRO-02-EVIDENCIA/PUSH-STATUS.md.
+
+Stage Summary:
+- Commits PRO-02 listos y verificados (fast-forward sobre SHAs remotos vigentes); push BLOQUEADO SOLO POR CREDENCIALES. Dos vías entregadas al dueño: (A) pegar token nuevo fine-grained de corta vida en chat y lo ejecuto, o (B) push desde su máquina con bundles/patches sin exponer tokens. Recordatorio PRO-01 vigente: revocar el PAT comprometido (sigue ACTIVO según última verificación) y activar 2FA. Sin deploy ni mensajes reales.
