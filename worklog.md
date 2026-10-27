@@ -1203,3 +1203,19 @@ Work Log:
 
 Stage Summary:
 - PRO-02 PUBLICADO Y VERIFICADO EN REMOTO: a94815d (WP) / e6ef56d (ULTRA); 0 fallbacks en remoto; fail-closed y PNP-01 publicados; suites post-push 22/22 + 19/19 + 5/5 (4/5 pilot-safeguards por hallazgo preexistente documentado); token destruido con shred y 0 persistencia. Pendiente dueño: REVOCAR el token del push (expuesto en chat) + PAT comprometido + 2FA; ventana de despliegue con secretos NUEVOS según INSTRUCCIONES-ROTACION-PRODUCCION.md. Sin deploy ni mensajes reales. DETENIDO según instrucción.
+
+---
+Task ID: PROD-R2-ventana-produccion-2026-10-28
+Agent: Z.ai (main)
+Task: Cierre de integración — FASE 1-5 de la ventana de producción controlada: rotación real (Matriz-03), smoke test de producción, evidencia sanitizada, sin deploy real ni mensajes WhatsApp.
+
+Work Log:
+- FASE 1: FINAL_STATUS/MATRIZ-03/PUSH-STATUS leídos; INSTRUCCIONES-ROTACION-PRODUCCION.md (perdido en reciclaje) reconstruido desde worklog. SHAs locales == remotos (9b32591/a94815d/e6ef56d). Higiene previa: 0 tokens en entorno; secure-rotation vacío.
+- FASE 2: 5 secretos nuevos generados (openssl rand, jamás impresos; solo huellas SHA-256 12 hex + longitud). .env escritos (600) en CRM/WP/ULTRA: INTERNAL_API_SECRET coherente 4/4 (daemon hereda .env de CRM), webhook secret compartido CRM↔WP, APP_SECRET+VERIFY_TOKEN de soporte. NVIDIA: N/A (0 ocurrencias nvapi|NVIDIA_API_KEY en src/ de los 3 repos). APP_ENCRYPTION_KEY: migración segura — BD escaneada (33 tablas, 0 payloads v1:*) + selftest migrador dual-key contra crypto.ts real 9/9 PASS.
+- FASE 3 (humo, sin cambios de código): batería 20/20 PASS — health ×3 (WP :3003, daemon :3002, CRM :3100 por next dev para no tocar la app del sandbox en :3000); auth NUEVO→200 / VIEJO(extraído en vivo de historia git)→401 / ausente→401; CRM↔WP vía bridge real con HMAC (NUEVO→200, VIEJO→401); CRM→daemon autenticado vía doctor con JWT admin (db=ok, schema=ok, security=ok, whatsapp=ok); persistencia: baja sobrevive reinicio REAL de WP y DELETE autorizado funciona; fail-closed frío (daemon exit(1), pilot exit(1)) y vivo (WP sin secret: POST 401, /qr/data 503; crypto sin clave → config error). Suites: WP 22/22, ULTRA 19/19, bajas-circuit 5/5. Teardown: puertos libres, .wa-auth inexistente (daemon nunca vinculado, status=disconnected), 0 fugas de secretos en logs (barrido grep -F de los 5 valores + token de sesión).
+- Incidencias resueltas: cwd del shell se resetea entre llamadas (prisma db push accidental ×2 contra la BD dev del propio sandbox my-project — aditivo, sin pérdida, sin secretos; documentado en evidencia); bajas exigía INTERNAL_API_SECRET (nombre de var) en env; seed de sesión admin replicó signToken/hashPassword de auth.ts (no importable fuera de Next); S15 requería ruta absoluta del entry.
+- FASE 4: download/PRODUCCION-VENTANA-CONTROLADA/{EVIDENCIA-ROTACION.md, EVIDENCIA-SMOKE.md} + FINAL_STATUS.md y MATRIZ-03-ROTACION.md actualizados — sin ningún secreto.
+- Restricciones respetadas: 0 mensajes WhatsApp reales (daemon disconnected toda la ventana), 0 campañas (ALLOW_REAL_DISPATCH=false, CONFIRMED_PILOT_EXECUTION nunca definida), execute-pilot solo ejecutado SIN secreto, sin deploy, sin cambios de código, sin PATs nuevos.
+
+Stage Summary:
+- VEREDICTO: PRODUCTION ENVIRONMENT VERIFIED — REAL DISPATCH STILL DISABLED. Rotación R2 real y verificada (4/4 consumidores + webhook + APP_ENCRYPTION_KEY por migración segura + NVIDIA N/A); smoke 20/20; suites 22/22 + 19/19 + 5/5; fail-closed demostrado frío y vivo; secretos viejos muertos (401); persistencia verificada; 0 fugas; rollback disponible (copia canónica 600 + fail-closed por diseño). Pendiente del dueño: revocar los 2 PATs expuestos en chat (ghp_Qksb… y ghp_wnxR…), activar 2FA, y para su despliegue real usar el procedimiento de migración dual-key. DESPLEGAR DESPACHO REAL SIGUE BLOQUEADO — ventana FASE 5: DETENIDO.
