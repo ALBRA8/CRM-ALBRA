@@ -1219,3 +1219,21 @@ Work Log:
 
 Stage Summary:
 - VEREDICTO: PRODUCTION ENVIRONMENT VERIFIED — REAL DISPATCH STILL DISABLED. Rotación R2 real y verificada (4/4 consumidores + webhook + APP_ENCRYPTION_KEY por migración segura + NVIDIA N/A); smoke 20/20; suites 22/22 + 19/19 + 5/5; fail-closed demostrado frío y vivo; secretos viejos muertos (401); persistencia verificada; 0 fugas; rollback disponible (copia canónica 600 + fail-closed por diseño). Pendiente del dueño: revocar los 2 PATs expuestos en chat (ghp_Qksb… y ghp_wnxR…), activar 2FA, y para su despliegue real usar el procedimiento de migración dual-key. DESPLEGAR DESPACHO REAL SIGUE BLOQUEADO — ventana FASE 5: DETENIDO.
+
+---
+Task ID: GO-LIVE-controlado-2026-10-28
+Agent: Z.ai (main)
+Task: GO-LIVE CONTROLADO — habilitar operación real mínima: health/auth (item 1), campañas ULTRA OFF (2), envío masivo OFF (3), prueba real mínima definida por operador (4), E2E recepción→CRM→procesamiento→respuesta (5), persistencia/trazabilidad (6), breakers/límites (7), sin campañas (8), sin ampliar permisos/config (9), evidencia sanitizada + STOP (10).
+
+Work Log:
+- Estado pre-ventana: SHAs íntegros (CRM 9b32591, WP a94815d, ULTRA e6ef56d), working trees limpios, secretos R2 intactos (secrets-r2.env 600, jamás impresos), sin re-rotación ni cambios de código/config.
+- Servicios levantados con R2 por env de proceso (golive-start.sh): WP :3003, daemon :3002, CRM :3100 (sandbox :3000 intocado). Arranque 3/3 OK.
+- Batería operativa golive-battery.mjs 14/14 PASS: health ×3; daemon 401 sin Bearer / 200 con R2; connected=false (sesión NO vinculada); CRM /api/health db=true; /api/doctor con JWT admin (seed real, mecanismo auth.ts) verdict=degraded coherente con daemon unlinked, db=ok schema=ok; WP suppression sin auth→401, con valor histórico publicado→401 (sigue muerto), con R2→200 (write+GET+DELETE probe 99900000001, limpieza OK); BD trazable desde 0 mensajes/0 conversaciones, orgs=2, autoReply org#1=true.
+- Breakers verificados: frío (execute-pilot sin secreto→exit(1)); código (pilot-config.ts:24 authorized:false ESTRICTAMENTE BLOQUEADO; execute-pilot:61 exige CONFIRMED_PILOT_EXECUTION, indefinida); env (ALLOW_REAL_DISPATCH=false, META_MOCK_MODE=true, AGENTIC_2A_ENABLED ausente); daemon.mjs:432 fromMe JAMÁS procesado (anti-bucle); 0 variables de despacho masivo en env del daemon.
+- Items 4-6 BLOQUEADOS — dos barreras exactas, documentadas sin ocultamiento: (B1) sesión WhatsApp no vinculada: .wa-auth inexistente, connected=false en vivo; la vinculación exige escaneo QR con el teléfono del negocio 573163301286, acción física del operador. (B2) la prueba real mínima 'previamente definida por el operador' no existe como definición ejecutable: la única en archivo (PILOTO_SUPERVISADO_C2B, plantilla fija, destinatario 573017543786) está authorized:false por código y desbloquearla exige modificar pilot-config.ts — prohibido en esta ventana. 0 mensajes reales enviados; no se inventó definición.
+- Camino de desbloqueo documentado (Opción A inbound sin cambios de código / Opción B piloto C2B con ventana de cambio de código autorizado + QR + 1 mensaje + re-verificación E2E).
+- Teardown: puertos 3002/3003/3100 libres; higiene grep -F: 0 fugas de los 5 secretos R2 + token de sesión en logs golive-*.log.
+- Evidencia sanitizada: download/GO-LIVE-CONTROLADO/EVIDENCIA-GO-LIVE.md (sin secretos; códigos HTTP, flags no-secretos, estados). Scripts persistidos: golive-start.sh, golive-battery.mjs, golive-run.sh.
+
+Stage Summary:
+- VEREDICTO: GO-LIVE BLOCKED. Items 1,2,3,7 verificados en vivo (14/14 + breakers frío/vivo/código, 0 drift). Items 4,5,6 bloqueados por: (1) sesión WhatsApp no vinculada (.wa-auth inexistente — QR requiere el teléfono físico del operador) y (2) prueba mínima sin definición ejecutable (piloto C2B authorized:false por código; cambiarlo = cambio de código prohibido). Sin campañas, sin envíos reales, sin cambios de código/config, 0 fugas, ventana cerrada limpia. Pendiente del operador: definir la prueba mínima (A o B) y vincular la sesión; luego re-ejecutar scripts/golive-run.sh y verificar 0→N en WhatsAppMessage.
