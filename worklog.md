@@ -1063,3 +1063,21 @@ Work Log:
 
 Stage Summary:
 - Publicación selectiva 100% preparada: 3 repos, 3 commits de misión aislados y probados (9141484 / 4d99204 / 9b32591), cero trabajo ajeno, cero secretos; push pendiente exclusivamente de un PAT válido del usuario.
+
+---
+Task ID: publicacion-selectiva-ejecucion-2026-10-27
+Agent: Z.ai (main)
+Task: Ejecución de la publicación selectiva con PAT + reconstrucción tras reciclaje del sandbox
+
+Work Log:
+- PAT validado con ls-remote (remotos intactos: d854749 / b7b5a5d / db95a5b).
+- PUSH 1 CRM-ALBRA: db95a5b..9b32591 (selective/whatspower-crm:main, FF sin force) → verificado en GitHub 9b32591.
+- SANDBOX RECICLADO a mitad: /home/z/repos (clones con 9141484/4d99204) y download/ perdidos; sobrevivió el volumen de CRM (rama selectiva, backup, worklog).
+- Re-clonados WHATSPOWER (d854749) y ULTRA (b7b5a5d) y RECONSTRUIDOS los cambios de misión desde el registro documentado: server.ts (HttpCrmClient real + secret dual), router.ts (correlationId→eventId), types.ts (opcional), .env.example, tests/webhook-secret-config.test.ts (3 casos), ULTRA PNP-01 businessDate.
+- Re-verificación: WHATSPOWER 22/22 + secrets 3/3 + smoke correlationId 200 (antes 500); ULTRA 19/19.
+- PUSH 2 WHATSPOWER: d854749..db0d088 → verificado db0d088. PUSH 3 ULTRA: b7b5a5d..08a0bb3 → verificado 08a0bb3.
+- Regenerado download/INFORME-FINAL-TRAZABILIDAD-PUBLICACION.md con la ejecución completa.
+- Sin force push en ningún repo; ramas remotas ajenas intactas; AGENTE-LEADS/GENERAL sin tocar.
+
+Stage Summary:
+- MISIÓN COMPLETADA: 3 repos publicados selectivamente y verificados en GitHub (WHATSPOWER db0d088, ULTRA 08a0bb3, CRM 9b32591). Cero trabajo ajeno, cero secretos publicados. Pendiente usuario: revocar el PAT pegado en chat.
