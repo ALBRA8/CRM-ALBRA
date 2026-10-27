@@ -5,6 +5,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { handle, json, readBody, str, numOrNull } from '../../_lib/shared'
+import { notifyWhatspowerStageChange } from '@/lib/whatspower-bridge'
 import { loadClientAttrs } from '../../_lib/clients'
 import { buildOppMeta, oppAmountFrom, parseOppMeta, serializeOpportunity } from '../../_lib/opportunities'
 
@@ -111,6 +112,27 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           amount: finalAmount,
         },
       })
+
+      // CRM Stage Triggers → WHATSPOWER (Nivel 2): notifica el cambio de etapa
+      // para que WHATSPOWER dispare su mensaje/flujo/secuencia configurado.
+      // Fire-and-forget: el pipeline del CRM nunca depende de WHATSPOWER.
+      try {
+        const wpClient = existing.clientId
+          ? await db.client.findUnique({ where: { id: existing.clientId }, select: { name: true, phone: true } })
+          : null
+        notifyWhatspowerStageChange({
+          orgId: auth.orgId,
+          clientId: existing.clientId,
+          clientPhone: wpClient?.phone || null,
+          clientName: wpClient?.name || null,
+          opportunityId: id,
+          fromStage: fromName,
+          toStage: toName,
+          dealValue: finalAmount,
+        }).catch((err) => console.error('[opportunities] whatspower stage bridge', err))
+      } catch (err) {
+        console.error('[opportunities] whatspower stage bridge prep', err)
+      }
     } else if (Object.keys(data).length > 0) {
       await auditAndTimeline({
         orgId: auth.orgId,

@@ -12,6 +12,7 @@ import {
   sendWhatsAppCloud,
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
+import { forwardInboundToWhatspower } from '@/lib/whatspower-bridge'
 import { transcribeAudioBase64 } from '@/lib/asr'
 import { notifyOrganization } from '@/lib/push'
 import { recordTimelineEvent } from '@/lib/timeline'
@@ -209,6 +210,18 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error('[whatsapp webhook] workflows', err)
       }
+
+      // Inbound Bridge CRM→WHATSPOWER (Nivel 2): reenvía el mensaje entrante
+      // firmado (HMAC-SHA256 + timestamp) al motor conversacional. Fire-and-forget:
+      // si WHATSPOWER está caído o deshabilitado el CRM sigue operativo (modo
+      // Nivel 1 autónomo, ver README de WHATSPOWER).
+      forwardInboundToWhatspower({
+        orgId: matchedOrgId,
+        phone,
+        name: profileName,
+        text,
+        messageId: message.id,
+      }).catch((err) => console.error('[whatsapp webhook] whatspower bridge', err))
 
       // Auto-respuesta IA
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: matchedOrgId }, select: { autoReplyEnabled: true } })
