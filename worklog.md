@@ -1307,3 +1307,18 @@ Stage Summary:
 - FIX BARRERA 3 activo en el daemon en ejecución; sesión WhatsApp íntegra; breakers intactos; cadena CRM/WP/daemon healthy.
 - Pendiente: operador envía 1 mensaje real → verificar circuito completo + entrega física + persistencia → evidencia final y veredicto.
 - Nota: repo CRM-ALBRA borrado por reciclaje (pendiente restauración; no afecta circuito: CRM corre desde my-project). Port del fix al repo = tarea formal futura.
+
+---
+Task ID: FIX-BARRERA3-complemento-2026-10-28
+Agent: main
+Task: Complemento del fix BARRERA 3 — responder al JID original cuando senderPn ausente.
+
+Work Log:
+- Mensaje real #2 del operador (~19:49 UTC): recibido y persistido (DB 2→4 filas), IA respondió 200/1289ms, PERO WhatsApp NO incluyó senderPn en msg.key → fallback LID → reply otra vez a dirección muerta (mismo síntoma).
+- Complemento aplicado (mismo GO, "corregir el destinatario"): triggerAgentReply recibe msg.key.senderPn || from (JID COMPLETO; si es @lid se responde a ...@lid — dirección exacta de entrega con sesión cifrada existente); sendWhatsAppMessage usa JIDs con '@' verbatim (ya soportado); saveMessage/log usan parte numérica. Diff total vs original: 27 líneas, solo daemon.mjs copia de ejecución.
+- node --check OK; patch guardado en scripts/backups/diff-fix-barrera3-completo.patch.
+- Daemon reiniciado (fix3-start-daemon.sh): connected, orgLinked, 0 QR regenerados, ppid=1, pid 2659.
+- Poll 180s sin mensaje nuevo. En espera del mensaje real #3.
+
+Stage Summary:
+- Cadena completa funciona excepto entrega; destinatario ahora = JID original exacto. Pendiente confirmación del operador (recepción física en su teléfono) para veredicto final.
