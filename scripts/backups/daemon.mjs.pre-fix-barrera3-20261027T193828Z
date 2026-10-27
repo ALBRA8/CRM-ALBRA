@@ -1,0 +1,831 @@
+#!/usr/bin/env node
+/**
+ * CRM ALBRA - WhatsApp Daemon (Baileys)
+ * Conexión por QR (protocolo WhatsApp Web) usando @whiskeysockets/baileys.
+ * Corre como proceso separado en el puerto 3002 (WHATSAPP_DAEMON_URL).
+ *
+ * Adaptado al CRM multi-tenant: usa organizationId (no userId) y el esquema
+ * Prisma actual (Client sin temperature/score, WhatsAppConversation/Message).
+ *
+ * Arranque: bun run wa:daemon  ó  node src/whatsapp-daemon/daemon.mjs
+ */
+
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys'
+import QRCode from 'qrcode'
+import qrcodeTerminal from 'qrcode-terminal'
+import { createServer } from 'http'
+import { Boom } from '@hapi/boom'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+import fs from 'fs'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const AUTH_DIR = join(__dirname, '.wa-auth')
+const PORT = Number(process.env.WHATSAPP_DAEMON_PORT || 3002)
+
+// El daemon es un proceso Node independiente: carga el .env del proyecto para
+// compartir DATABASE_URL e INTERNAL_API_SECRET con el servidor Next.js.
+try {
+  process.loadEnvFile(join(__dirname, '..', '..', '.env'))
+  console.log('[ENV] .env del proyecto cargado')
+} catch {
+  console.warn('[ENV] Sin .env en la raíz — usa variables de entorno del proceso')
+}
+
+// SEGURIDAD (auditoría crítica #2/#4): sin secreto interno no arranca.
+// Evita que el daemon quede expuesto con una clave hardcodeada conocida.
+const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET
+if (!INTERNAL_SECRET || INTERNAL_SECRET.length < 24) {
+  console.error('[ENV] INTERNAL_API_SECRET no configurado (mínimo 24 caracteres). El daemon no arranca por seguridad.')
+  process.exit(1)
+}
+
+// Prevent crashes from unhandled errors
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT] Error:', err.message)
+})
+process.on('unhandledRejection', (err) => {
+  console.error('[UNHANDLED] Rejection:', err)
+})
+
+// ============ State ============
+let sock = null
+let connectionStatus = 'disconnected' // disconnected, connecting, waiting_qr, connected
+let qrCodeData = null // base64 QR image
+let qrCodeText = null // raw QR string
+let connectedPhone = null
+let lastConnectionUpdate = null
+let linkedOrgId = null // organización dueña de esta sesión de WhatsApp (multi-tenant)
+let lastError = null // último error de conexión, visible en /status y en la UI
+let connectInFlight = false // evita bucles de conexión duplicados
+let connectRetries = 0 // reintento con backoff (se resetea al abrir sesión)
+
+// ============ Database Helper ============
+// better-sqlite3 directo para evitar overhead de Prisma en el daemon
+import Database from 'better-sqlite3'
+
+// Ruta portable: DATABASE_URL absoluto gana; si es relativo, se resuelve
+// contra la raíz del proyecto (src/whatsapp-daemon -> <root>/db/custom.db).
+const DB_PATH = (() => {
+  const fromEnv = process.env.DATABASE_URL?.replace('file:', '')
+  if (fromEnv && (fromEnv.startsWith('/') || /^[A-Za-z]:[\\/]/.test(fromEnv))) return fromEnv
+  return join(__dirname, '..', '..', 'db', 'custom.db')
+})()
+
+let db = null
+try {
+  db = new Database(DB_PATH)
+  db.pragma('journal_mode = WAL')
+  console.log(`[DB] Connected to: ${DB_PATH}`)
+} catch (err) {
+  console.error('[DB] Failed to connect:', err.message)
+}
+
+/**
+ * Organización dueña del número conectado.
+ * SEGURIDAD (auditoría crítica #1 — fuga multi-tenant): YA NO se toma la primera
+ * organización de la BD (SELECT ... LIMIT 1). La org se vincula explícitamente
+ * cuando la sesión de WhatsApp se conecta desde la UI de una organización
+ * (POST /connect { orgId }, validado contra la BD y persistido junto a la sesión).
+ * Sin org vinculada, los mensajes entrantes NO se guardan (se avisa en el log).
+ */
+const ORG_META_FILE = join(AUTH_DIR, 'session-org.json')
+
+function persistLinkedOrg(orgId) {
+  try {
+    fs.mkdirSync(AUTH_DIR, { recursive: true })
+    fs.writeFileSync(ORG_META_FILE, JSON.stringify({ orgId, linkedAt: new Date().toISOString() }))
+  } catch (err) {
+    console.error('[ORG] No se pudo persistir la vinculación de organización:', err.message)
+  }
+}
+
+function loadLinkedOrgFromDisk() {
+  try {
+    if (fs.existsSync(ORG_META_FILE)) {
+      const meta = JSON.parse(fs.readFileSync(ORG_META_FILE, 'utf8'))
+      if (meta.orgId && orgExists(meta.orgId)) {
+        linkedOrgId = meta.orgId
+        console.log(`[ORG] Sesión previa vinculada a organización: ${linkedOrgId}`)
+      }
+    }
+  } catch {}
+}
+
+function orgExists(orgId) {
+  if (!db || !orgId) return false
+  return !!db.prepare('SELECT id FROM Organization WHERE id = ?').get(orgId)
+}
+
+function getOrgId() {
+  return linkedOrgId
+}
+
+function getOrCreateConversation(orgId, contactPhone, contactName) {
+  if (!db || !orgId) return null
+
+  let conv = db.prepare('SELECT * FROM WhatsAppConversation WHERE organizationId = ? AND contactPhone = ?').get(orgId, contactPhone)
+
+  if (!conv) {
+    // Busca o crea el cliente de la organización
+    let client = db.prepare('SELECT id FROM Client WHERE organizationId = ? AND phone = ?').get(orgId, contactPhone)
+
+    if (!client) {
+      const clientId = generateId()
+      db.prepare(`
+        INSERT INTO Client (id, organizationId, name, phone, source, status, lastContactAt, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, 'whatsapp', 'prospect', datetime('now'), datetime('now'), datetime('now'))
+      `).run(clientId, orgId, contactName || contactPhone, contactPhone)
+      client = { id: clientId }
+    }
+
+    const convId = generateId()
+    db.prepare(`
+      INSERT INTO WhatsAppConversation (id, organizationId, clientId, contactPhone, contactName, lastMessage, lastMessageAt, lastMessageFrom, unreadCount, isAutoReply, status, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, NULL, datetime('now'), 'contact', 1, 1, 'active', datetime('now'), datetime('now'))
+    `).run(convId, orgId, client.id, contactPhone, contactName || contactPhone)
+
+    conv = { id: convId, clientId: client.id, organizationId: orgId, contactPhone, contactName, isAutoReply: 1, status: 'active' }
+  } else {
+    db.prepare(`
+      UPDATE WhatsAppConversation
+      SET unreadCount = unreadCount + 1,
+          status = CASE WHEN status = 'closed' THEN 'active' ELSE status END,
+          updatedAt = datetime('now')
+      WHERE id = ?
+    `).run(conv.id)
+  }
+
+  return conv
+}
+
+function saveMessage(conversationId, orgId, direction, fromNumber, toNumber, text, senderType, waMessageId = null, messageType = 'text') {
+  if (!db) return null
+
+  // DEDUP (P0): Baileys puede re-entregar el mismo mensaje (y los salientes
+  // que nosotros mismos guardamos vuelven por messages.upsert). Sin este
+  // guard habría mensajes duplicados en el hilo y doble respuesta IA.
+  if (waMessageId) {
+    const dup = db.prepare('SELECT 1 FROM WhatsAppMessage WHERE conversationId = ? AND waMessageId = ? LIMIT 1').get(conversationId, waMessageId)
+    if (dup) return null
+  }
+
+  const msgId = generateId()
+  db.prepare(`
+    INSERT INTO WhatsAppMessage (id, organizationId, conversationId, waMessageId, direction, fromNumber, toNumber, text, messageType, senderType, isRead, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(msgId, orgId, conversationId, waMessageId, direction, fromNumber, toNumber, text, messageType, senderType, direction === 'outbound' ? 1 : 0)
+
+  // Actualiza el último mensaje de la conversación
+  const lastFrom = direction === 'inbound' ? 'contact' : senderType
+  db.prepare(`
+    UPDATE WhatsAppConversation
+    SET lastMessage = ?, lastMessageAt = datetime('now'), lastMessageFrom = ?, updatedAt = datetime('now')
+    WHERE id = ?
+  `).run(text?.substring(0, 100), lastFrom, conversationId)
+
+  return msgId
+}
+
+function generateId() {
+  return 'c' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8)
+}
+
+// ============ Notas de voz (ASR vía Next.js interno) ============
+// El daemon solo descarga el media (Baileys); la transcripción vive en el
+// servidor Next (POST /api/whatsapp/transcribe con X-Internal-Secret).
+
+async function downloadWaAudio(content) {
+  // audioMessage y pttMessage son tipo 'audio'; documento de audio va como 'document'
+  const mediaType = content.mimetype && !content.mimetype.startsWith('audio/') ? 'document' : 'audio'
+  const stream = await downloadContentFromMessage(content, mediaType)
+  const chunks = []
+  for await (const chunk of stream) chunks.push(chunk)
+  return Buffer.concat(chunks)
+}
+
+async function transcribeViaApi(audioBuffer) {
+  const internalSecret = process.env.INTERNAL_API_SECRET
+  const agentUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
+  const res = await fetch(`${agentUrl}/api/whatsapp/transcribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret },
+    body: JSON.stringify({ audioBase64: audioBuffer.toString('base64'), mime: 'audio/ogg' }),
+    signal: AbortSignal.timeout(90_000),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`transcribe ${res.status}: ${detail.slice(0, 200)}`)
+  }
+  const data = await res.json()
+  return (data.text || '').trim() || null
+}
+
+/**
+ * Reintento de conexión con backoff: 3s, 6s, 9s... hasta 30s.
+ * ANTES: si connectToWhatsApp() lanzaba (sin red / versión inaccesible / auth
+ * corrupta), la promesa quedaba como unhandledRejection y el status quedaba
+ * pegado en 'connecting' para siempre — el usuario veía "Generando QR..."
+ * eternamente y ningún QR llegaba nunca.
+ */
+function scheduleReconnect(reason) {
+  connectRetries++
+  const delay = Math.min(3000 * connectRetries, 30000)
+  if (reason) {
+    lastError = reason
+    console.warn(`[WA] ${reason}`)
+  }
+  console.log(`[WA] Reintento de conexión en ${delay / 1000}s (intento ${connectRetries})...`)
+  setTimeout(() => {
+    connectToWhatsApp().catch(err => console.error('[WA] Error en reintento:', err?.message || err))
+  }, delay)
+}
+
+// ============ WhatsApp Connection ============
+async function connectToWhatsApp() {
+  if (connectInFlight) return
+  connectInFlight = true
+  connectionStatus = 'connecting'
+  lastConnectionUpdate = new Date().toISOString()
+
+  try {
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR) // eslint-disable-line react-hooks/rules-of-hooks
+
+  // Versión de WhatsApp Web: si no se puede consultar (sin salida a internet
+  // momentánea), Baileys sigue con su versión embebida en vez de morir aquí.
+  let version = null
+  try {
+    const fetched = await fetchLatestBaileysVersion()
+    version = fetched.version
+    console.log(`[WA] Using Baileys version: ${version.join('.')}`)
+  } catch (err) {
+    console.warn('[WA] No se pudo consultar la versión de WhatsApp Web; se usa la versión embebida de Baileys:', err?.message || err)
+  }
+
+  // Logger silencioso (Baileys es muy verboso)
+  const silentLogger = { level: 'silent', fatal: () => {}, error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {} }
+  silentLogger.child = () => silentLogger
+
+  sock = makeWASocket({
+    ...(version ? { version } : {}),
+    auth: state,
+    logger: silentLogger,
+    browser: ['CRM ALBRA', 'Chrome', '1.0.0'],
+    connectTimeoutMs: 60000,
+    qrTimeout: 120000,
+  })
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update
+    lastConnectionUpdate = new Date().toISOString()
+
+    if (qr) {
+      connectionStatus = 'waiting_qr'
+      qrCodeText = qr
+
+      try {
+        qrCodeData = await QRCode.toDataURL(qr, {
+          width: 400,
+          margin: 2,
+          color: { dark: '#000000', light: '#ffffff' },
+        })
+      } catch (err) {
+        console.error('[WA] QR generation error:', err)
+      }
+
+      qrcodeTerminal.generate(qr, { small: true })
+      console.log('[WA] QR Code generated - scan with WhatsApp')
+    }
+
+    if (connection === 'close') {
+      const statusCode = lastDisconnect?.error?.output?.statusCode
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+
+      console.log(`[WA] Connection closed. Status: ${statusCode}, Reconnect: ${shouldReconnect}`)
+
+      if (statusCode === DisconnectReason.loggedOut) {
+        connectionStatus = 'disconnected'
+        qrCodeData = null
+        qrCodeText = null
+        connectedPhone = null
+        lastError = null
+        connectRetries = 0
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+        } catch {}
+      } else {
+        connectionStatus = 'disconnected'
+      }
+
+      if (shouldReconnect) {
+        scheduleReconnect(`Conexión cerrada (código ${statusCode ?? 'desconocido'}). Reintentando automáticamente.`)
+      }
+    } else if (connection === 'open') {
+      connectionStatus = 'connected'
+      qrCodeData = null
+      qrCodeText = null
+      lastError = null
+      connectRetries = 0
+      console.log('[WA] Connected successfully!')
+
+      try {
+        const me = sock.user
+        if (me?.id) {
+          connectedPhone = me.id.split(':')[0]
+          console.log(`[WA] Phone: ${connectedPhone}`)
+        }
+      } catch {}
+    }
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+
+  // Registro de mensajes entrantes (dentro del try: si algo falla antes de
+  // llegar aquí, el catch cierra limpio y agenda reintento).
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return
+
+    for (const msg of messages) {
+      try {
+        // Ignora estados y grupos (antes de procesar contenido/media)
+        const from = msg.key.remoteJid
+        if (from === 'status@broadcast' || from.includes('@g.us')) continue
+
+        // FIX auditoría pre-venta #1: mensajes que el DUEÑO envía desde el
+        // teléfono vinculado (msg.key.fromMe). Antes se procesaban como si
+        // fueran del cliente y el bot se auto-respondía frente al cliente
+        // real. Ahora se registran como 'outbound' del vendedor (senderType
+        // 'user', igual que la bandeja) para que queden en el historial que
+        // ve la IA, pero NUNCA disparan auto-respuesta.
+        const isOwner = !!msg.key.fromMe
+
+        const contactPhone = from.split('@')[0]
+        const contactName = isOwner ? contactPhone : (msg.pushName || contactPhone)
+        const waMessageId = msg.key.id
+
+        const orgId = getOrgId()
+        if (!orgId) {
+          console.warn('[WA] Mensaje descartado: la sesión no está vinculada a ninguna organización. Reconecta WhatsApp desde Configuración → WhatsApp para vincularla.')
+          continue
+        }
+
+        let textContent = msg.message?.conversation ||
+                          msg.message?.extendedTextMessage?.text ||
+                          null
+        let messageType = 'text'
+        let voiceTranscribed = false // la IA solo responde a voz con transcripción
+
+        // Notas de voz (audioMessage/ptt/documento de audio): antes se descartaban
+        // silenciosamente. Ahora se descargan, se transcriben vía el endpoint
+        // interno de ASR y se guardan como messageType='voice'.
+        if (!textContent) {
+          const audioContent = msg.message?.audioMessage ||
+                               msg.message?.pttMessage ||
+                               (msg.message?.documentMessage?.mimetype?.startsWith('audio/') ? msg.message.documentMessage : null)
+
+          if (audioContent) {
+            messageType = 'voice'
+            let transcribed = null
+            try {
+              const buf = await downloadWaAudio(audioContent)
+              if (buf && buf.length > 0) transcribed = await transcribeViaApi(buf)
+            } catch (err) {
+              console.error('[WA] Nota de voz sin transcribir:', err?.message || err)
+            }
+            if (transcribed) {
+              textContent = transcribed
+              voiceTranscribed = true
+              console.log(`[WA] Nota de voz transcrita de ${contactPhone}: ${transcribed.substring(0, 50)}...`)
+            } else {
+              // Fail-open a humano: el mensaje NO se pierde; queda visible en la
+              // bandeja para gestión manual y la IA no responde sola.
+              textContent = '🎤 Nota de voz (no se pudo transcribir automáticamente)'
+              console.warn(`[WA] Nota de voz de ${contactPhone} guardada sin transcripción`)
+            }
+          } else {
+            continue // ni texto ni audio: se ignora como antes (stickers, imágenes, etc.)
+          }
+        }
+
+        console.log(`[WA] ${isOwner ? 'Mensaje del dueño hacia' : 'Message from'} ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
+
+        const conv = getOrCreateConversation(orgId, contactPhone, contactName)
+        if (!conv) continue
+
+        saveMessage(
+          conv.id, orgId,
+          isOwner ? 'outbound' : 'inbound',
+          isOwner ? (connectedPhone || '') : contactPhone,
+          contactPhone,
+          textContent,
+          isOwner ? 'user' : 'contact',
+          waMessageId,
+          messageType
+        )
+
+        // Actualiza último contacto del cliente (solo con mensajes del cliente)
+        if (!isOwner && conv.clientId && db) {
+          db.prepare("UPDATE Client SET lastContactAt = datetime('now'), updatedAt = datetime('now') WHERE id = ?").run(conv.clientId)
+        }
+
+        // Auto-respuesta con IA si está habilitada (voz: solo si se transcribió).
+        // JAMÁS para mensajes del dueño (fromMe): el bot no se responde a sí mismo.
+        if (!isOwner && conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed)) {
+          console.log(`[WA] Auto-reply enabled for ${contactPhone}, calling agent...`)
+          triggerAgentReply(orgId, conv, textContent, contactPhone)
+        }
+      } catch (err) {
+        console.error('[WA] Error processing message:', err)
+      }
+    }
+  })
+
+  connectRetries = 0
+  } catch (err) {
+    // Falta de red, auth corrupta, etc.: NUNCA dejar el status en 'connecting'.
+    connectionStatus = 'disconnected'
+    sock = null
+    scheduleReconnect(`No se pudo iniciar la conexión con WhatsApp: ${err?.message || err}`)
+  } finally {
+    connectInFlight = false
+  }
+}
+
+// ============ Auto-Respuesta IA del CRM (workflow de canal) ============
+async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
+  try {
+    const recentMsgs = db.prepare(`
+      SELECT direction, text, senderType FROM WhatsAppMessage
+      WHERE conversationId = ?
+      ORDER BY createdAt DESC LIMIT 20
+    `).all(conv.id).reverse()
+
+    const history = recentMsgs.map(m => ({
+      role: m.direction === 'inbound' ? 'user' : 'assistant',
+      content: m.text || ''
+    }))
+
+    // Llama a la auto-respuesta del CRM (Next.js) con el secreto interno del .env compartido
+    const internalSecret = process.env.INTERNAL_API_SECRET
+    const crmUrl = process.env.NEXT_APP_URL || 'http://localhost:3000'
+    const response = await fetch(`${crmUrl}/api/whatsapp/auto-reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Secret': internalSecret,
+      },
+      body: JSON.stringify({
+        message: messageText,
+        clientId: conv.clientId,
+        conversationHistory: history,
+        source: 'whatsapp',
+      }),
+    })
+
+    if (!response.ok) {
+      console.error('[auto-reply] Error:', response.status)
+      return
+    }
+
+    const data = await response.json()
+    const replyText = data.reply || data.content || data.message
+
+    if (!replyText) return
+
+    await sendWhatsAppMessage(contactPhone, replyText)
+    saveMessage(conv.id, orgId, 'outbound', connectedPhone || '', contactPhone, replyText, 'agent')
+
+    console.log(`[auto-reply] Reply sent to ${contactPhone}: ${replyText.substring(0, 50)}...`)
+  } catch (err) {
+    console.error('[auto-reply] Auto-reply error:', err)
+  }
+}
+
+// ============ Send Message ============
+async function sendWhatsAppMessage(jid, text) {
+  if (!sock || connectionStatus !== 'connected') {
+    throw new Error('WhatsApp not connected')
+  }
+
+  const waJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`
+  const sent = await sock.sendMessage(waJid, { text })
+  return sent
+}
+
+// ============ HTTP API Server ============
+const server = createServer(async (req, res) => {
+  // CORS restringido a mismo origen (el frontend pasa por el proxy de Next)
+  const origin = req.headers.origin || req.headers.referer || ''
+  const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000']
+  const requestHost = req.headers.host || ''
+  if (origin && !allowedOrigins.some(o => origin.startsWith(o)) && !requestHost.startsWith('localhost') && !requestHost.startsWith('127.0.0.1')) {
+    res.writeHead(403, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'Forbidden' }))
+    return
+  }
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes(origin) ? origin : 'http://localhost:3000')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+
+  // SEGURIDAD (auditoría crítica #2/#4): TODOS los métodos exigen el secreto
+  // interno (antes los GET de lectura estaban abiertos y exponían conversaciones).
+  const providedAuth = req.headers.authorization?.replace('Bearer ', '') || ''
+
+  if (req.method !== 'OPTIONS' && providedAuth !== INTERNAL_SECRET) {
+    res.writeHead(401, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'Unauthorized. Provide Authorization: Bearer <INTERNAL_API_SECRET> header' }))
+    return
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200)
+    res.end()
+    return
+  }
+
+  const url = new URL(req.url, `http://localhost:${PORT}`)
+  const path = url.pathname
+
+  try {
+    if (req.method === 'GET' && path === '/status') {
+      // linkedOrgId: permite al proxy verificar que la org del JWT coincide
+      // con la org vinculada al daemon (endpoints internos, protegidos por
+      // INTERNAL_API_SECRET — nunca públicos).
+      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate, orgLinked: !!linkedOrgId, linkedOrgId: linkedOrgId || null, lastError })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/qr') {
+      if (connectionStatus === 'connected') {
+        jsonResponse(res, { status: 'connected', qr: null, phone: connectedPhone })
+      } else if (qrCodeData) {
+        jsonResponse(res, { status: 'waiting_qr', qr: qrCodeData, qrText: qrCodeText })
+      } else {
+        jsonResponse(res, { status: connectionStatus, qr: null })
+      }
+      return
+    }
+
+    if (req.method === 'POST' && path === '/connect') {
+      // Vinculación multi-tenant: el proxy (con sesión JWT de una org) indica a qué
+      // organización pertenece esta sesión de WhatsApp. Se valida contra la BD.
+      const body = await parseBody(req)
+      if (body.orgId) {
+        if (!orgExists(body.orgId)) {
+          jsonResponse(res, { error: 'Organización no encontrada' }, 400)
+          return
+        }
+        // FAIL-CLOSED (auditoría pre-venta P0, defensa en profundidad): si la
+        // sesión ya está vinculada a OTRA organización, el daemon se NIEGA a
+        // re-vincularla aunque llegue un orgId distinto con el secreto interno.
+        // La desvinculación solo ocurre por /disconnect de la org dueña
+        // (verificada por el proxy) o borrando el volumen wa-auth.
+        if (linkedOrgId && linkedOrgId !== body.orgId) {
+          console.warn(`[ORG] REBIND denegado: sesión de ${linkedOrgId}, solicitud de ${body.orgId}`)
+          jsonResponse(res, { error: 'Esta sesión de WhatsApp ya está vinculada a otra organización' }, 403)
+          return
+        }
+        linkedOrgId = body.orgId
+        persistLinkedOrg(linkedOrgId)
+        console.log(`[ORG] Sesión vinculada a organización: ${linkedOrgId}`)
+      } else if (!linkedOrgId) {
+        jsonResponse(res, { error: 'orgId requerido: no se conecta una sesión de WhatsApp sin organización (aislamiento multi-tenant)' }, 400)
+        return
+      }
+      if (connectionStatus === 'connected') {
+        jsonResponse(res, { status: 'connected', phone: connectedPhone, orgLinked: true })
+      } else {
+        connectToWhatsApp()
+        jsonResponse(res, { status: 'connecting', message: 'Iniciando conexión...', orgLinked: true })
+      }
+      return
+    }
+
+    if (req.method === 'POST' && path === '/disconnect') {
+      // logout() lanza si el socket no llegó a abrirse (waiting_qr/connecting):
+      // la limpieza SIEMPRE procede, venga o no el logout.
+      if (sock) {
+        try { await sock.logout() } catch (err) {
+          console.warn('[WA] logout falló (se limpia igualmente):', err?.message || err)
+          try { sock.end() } catch {}
+        }
+        sock = null
+      }
+      connectionStatus = 'disconnected'
+      qrCodeData = null
+      qrCodeText = null
+      connectedPhone = null
+      linkedOrgId = null
+      lastError = null
+      connectRetries = 0
+      try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) } catch {}
+      jsonResponse(res, { status: 'disconnected', message: 'WhatsApp desconectado' })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/send') {
+      const body = await parseBody(req)
+      const { to, text } = body
+
+      if (!to || !text) {
+        jsonResponse(res, { error: 'to y text son requeridos' }, 400)
+        return
+      }
+      if (connectionStatus !== 'connected') {
+        jsonResponse(res, { error: 'WhatsApp no conectado' }, 400)
+        return
+      }
+
+      const sent = await sendWhatsAppMessage(to, text)
+
+      // Persistencia del saliente (P0): las respuestas manuales de la bandeja
+      // deben aparecer en el hilo. Antes /send enviaba y NO guardaba → el
+      // historial quedaba incompleto para el vendedor y para la IA.
+      if (db && linkedOrgId) {
+        try {
+          const digits = String(to).replace(/\D+/g, '')
+          let conv = db.prepare('SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND contactPhone = ?').get(linkedOrgId, to)
+          if (!conv && digits) {
+            conv = db.prepare("SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND REPLACE(REPLACE(REPLACE(REPLACE(contactPhone, ' ', ''), '-', ''), '(', ''), ')', '') = ?").get(linkedOrgId, digits)
+          }
+          if (!conv) {
+            // Conversación/cliente nuevos: misma vía que los entrantes (round-robin NO aplica aquí; queda prospect)
+            const contactName = body.contactName || to
+            conv = getOrCreateConversation(linkedOrgId, to, contactName)
+          }
+          if (conv) {
+            saveMessage(conv.id, linkedOrgId, 'outbound', connectedPhone || '', to, text, 'user', sent?.key?.id || null)
+          }
+        } catch (persistErr) {
+          console.error('[WA] No se pudo persistir el mensaje saliente:', persistErr?.message || persistErr)
+        }
+      }
+
+      jsonResponse(res, { success: true, messageId: sent?.key?.id })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/conversations') {
+      if (!db) {
+        jsonResponse(res, { error: 'DB not available' }, 500)
+        return
+      }
+      const orgId = getOrgId()
+      if (!orgId) {
+        jsonResponse(res, { conversations: [], orgLinked: false })
+        return
+      }
+      const conversations = db.prepare(`
+        SELECT c.*, cl.name as clientName
+        FROM WhatsAppConversation c
+        LEFT JOIN Client cl ON c.clientId = cl.id
+        WHERE c.organizationId = ?
+        ORDER BY c.lastMessageAt DESC
+      `).all(orgId)
+      jsonResponse(res, { conversations })
+      return
+    }
+
+    if (req.method === 'GET' && path.startsWith('/conversations/')) {
+      const convId = path.split('/conversations/')[1]
+      if (!db) {
+        jsonResponse(res, { error: 'DB not available' }, 500)
+        return
+      }
+
+      const conv = db.prepare(`
+        SELECT c.*, cl.name as clientName
+        FROM WhatsAppConversation c
+        LEFT JOIN Client cl ON c.clientId = cl.id
+        WHERE c.id = ? AND c.organizationId = ?
+      `).get(convId, getOrgId())
+
+      if (!conv) {
+        jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
+        return
+      }
+
+      const messages = db.prepare(`
+        SELECT * FROM WhatsAppMessage
+        WHERE conversationId = ?
+        ORDER BY createdAt ASC
+      `).all(convId)
+
+      db.prepare('UPDATE WhatsAppMessage SET isRead = 1 WHERE conversationId = ? AND isRead = 0').run(convId)
+      db.prepare('UPDATE WhatsAppConversation SET unreadCount = 0 WHERE id = ?').run(convId)
+
+      jsonResponse(res, { conversation: { ...conv, messages } })
+      return
+    }
+
+    if (req.method === 'PUT' && path.startsWith('/conversations/')) {
+      const convId = path.split('/conversations/')[1]
+      const body = await parseBody(req)
+
+      if (!db) {
+        jsonResponse(res, { error: 'DB not available' }, 500)
+        return
+      }
+
+      const updates = []
+      const values = []
+      if (body.isAutoReply !== undefined) {
+        updates.push('isAutoReply = ?')
+        values.push(body.isAutoReply ? 1 : 0)
+      }
+      if (body.status !== undefined) {
+        updates.push('status = ?')
+        values.push(body.status)
+      }
+      if (body.transferredTo !== undefined) {
+        updates.push('transferredTo = ?')
+        values.push(body.transferredTo)
+      }
+      if (updates.length > 0) {
+        // Aislamiento multi-tenant (P0): el proxy envía orgId del JWT; el UPDATE
+        // solo toca conversaciones de ESA organización. Sin esto, un usuario de
+        // otra org podía pausar/alterar conversaciones ajenas por id directo.
+        if (!body.orgId) {
+          jsonResponse(res, { error: 'orgId requerido (aislamiento multi-tenant)' }, 400)
+          return
+        }
+        updates.push("updatedAt = datetime('now')")
+        values.push(body.orgId)
+        values.push(convId)
+        const out = db.prepare(`UPDATE WhatsAppConversation SET ${updates.join(', ')} WHERE id = ? AND organizationId = ?`).run(...values)
+        if (!out || out.changes === 0) {
+          jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
+          return
+        }
+      }
+
+      jsonResponse(res, { success: true })
+      return
+    }
+
+    jsonResponse(res, { error: 'Not found' }, 404)
+  } catch (err) {
+    console.error('[HTTP] Error:', err)
+    jsonResponse(res, { error: err.message }, 500)
+  }
+})
+
+function jsonResponse(res, data, statusCode = 200) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(data))
+}
+
+function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {})
+      } catch {
+        resolve({})
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+// ============ Start ============
+server.listen(PORT, () => {
+  console.log(`\n🟢 CRM ALBRA - WhatsApp Daemon`)
+  console.log(`   API: http://localhost:${PORT}`)
+  console.log(`   Status: http://localhost:${PORT}/status`)
+  console.log(`   QR: http://localhost:${PORT}/qr\n`)
+
+  // Auto-conecta si existe sesión previa (restaurando la org vinculada)
+  if (fs.existsSync(AUTH_DIR)) {
+    console.log('[WA] Existing session found, connecting...')
+    loadLinkedOrgFromDisk()
+    if (!linkedOrgId) console.warn('[ORG] Sesión previa SIN organización vinculada — los mensajes entrantes se descartarán hasta reconectar desde la UI')
+    connectToWhatsApp()
+  } else {
+    console.log('[WA] No session found. Waiting for /connect request...')
+    connectionStatus = 'disconnected'
+  }
+})
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n[WA] Shutting down...')
+  if (sock) {
+    sock.end()
+  }
+  if (db) {
+    db.close()
+  }
+  server.close()
+  process.exit(0)
+})
+
+process.on('SIGTERM', () => {
+  console.log('\n[WA] SIGTERM received, shutting down...')
+  if (sock) sock.end()
+  if (db) db.close()
+  server.close()
+  process.exit(0)
+})
