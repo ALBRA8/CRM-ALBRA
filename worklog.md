@@ -1027,3 +1027,21 @@ Work Log:
 
 Stage Summary:
 - DICTAMEN: SYSTEM OPERATIONAL WITH LIMITATIONS. CRM operativo; CRM⇄SEED integrado real; LEADS pipeline determinístico OK; circuito de negocio LEADS→CRM roto (falta receptor webhook+HMAC en CRM). Sin cambios de código en ninguno de los 3 repos.
+
+---
+Task ID: integracion-whatspower-crm-2026-10-27
+Agent: Z.ai (main)
+Task: FASE DE INTEGRACIÓN Y CIERRE — WHATSPOWER + WHATSPOWER-ULTRA + CRM-ALBRA (estudiar → implementar → probar → commit → push → verificar). Scope absoluto: solo 3 repos; AGENTE-LEADS/AGENTE-GENERAL fuera de alcance.
+
+Work Log:
+- Clonados WHATSPOWER (d854749) y WHATSPOWER-ULTRA (b7b5a5d). Estudio: WHATSPOWER=Nivel 2 conversacional (flows/HMAC inbound/crm-actions bridge/stage-triggers/locks); ULTRA=Nivel 3 difusión (spintax/anti-ban/leads-ingest/dispatcher daemon 3002); CRM=Nivel 1 (crm/actions API key, webhook Meta HMAC, daemon /send persiste saliente).
+- Cambios WHATSPOWER (9141484): HttpCrmClient real con CRM_API_KEY (antes SIEMPRE MockCrmClient en producción); secret dual AGENTIC_2A_WEBHOOK_SECRET>WEBHOOK_SECRET; correlationId opcional→eventId (crash 500 por bind SQLite con el payload del README); .env.example; regresión secret 2/2.
+- Cambios ULTRA (4d99204): PNP-01 businessDate fija (test flaky nocturno PAUSED_OFF_HOURS).
+- Cambios CRM-ALBRA (4c01528): lib/whatspower-bridge.ts (inbound HMAC-SHA256 X-Signature-SHA256+X-Timestamp + stage-change, fire-and-forget, WHATSPOWER_ENABLED/WHATSPOWER_WEBHOOK_SECRET), inserciones en whatsapp/webhook y opportunities/[id], 9 tests, tsconfig excluye scripts ad-hoc.
+- E2E 37/37: A WHATSPOWER→CRM 6/6 (flujo→create_client+add_note→persistencia+idempotencia); B CRM→WHATSPOWER 8/8 (Meta firmado→CRM→bridge→persistencia WhatPower; stage-change→trigger con log); C ULTRA 13/13 (ingesta, dedup, anti-ban, dispatch Bearer real a stub fiel, guard :3002, daemon real 401 controlado 45ms); D errores 10/10 (401/400/404/replay/fail-open CRM caído 10ms).
+- Regresión: WHATSPOWER 24/24, ULTRA 19/19, CRM tsc 0 + vitest 386/390 (4 pre-existentes LLM-eco verificados con stash).
+- Hallazgos no modificados: ULTRA POST /api/campaigns sin organizationId → 400 críptico; WHATSPOWER allowlist test huérfano (importa audit_repos inexistente); transport envío WHATSPOWER sigue Mock por diseño; sin contrato CRM→ULTRA (no necesario).
+- PUSH BLOQUEADO en los 3 repos: sin credenciales en el entorno ("could not read Username for 'https://github.com'"); PATs previos revocados. Commits locales: WHATSPOWER 9141484, ULTRA 4d99204, CRM 4c01528 (+5 previos sandbox: 9b30f3e, 9437d54, 0353689, ab23795, 397418d).
+
+Stage Summary:
+- Sistema WHATSPOWER↔CRM↔ULTRA integrado y verificado E2E (37/37) con HMAC, API keys, idempotencia, anti-ban y fail-open; cambios commiteados por repo; push pendiente de PAT válido del usuario.
