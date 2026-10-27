@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    @page { size: 794px 1123px; margin: 0; }
+    :root {
+      --page-bg: #f5f5f4;
+      --header-fill: #4e4732;
+      --border: #c5bfac;
+      --accent: #92761f;
+      --text-primary: #151513;
+      --text-muted: #7e7c74;
+      --c-bg: #f5f5f4;
+      --c-accent: #92761f;
+      --c-text: #151513;
+      --c-muted: #7e7c74;
+      --c-mid: #4e4732;
+    }
+    html, body {
+      margin: 0; padding: 0;
+      width: 794px; height: 1123px;
+      background: var(--c-bg);
+      color: var(--c-text);
+      font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    }
+    @media screen {
+      html { height: auto; display: flex; justify-content: center; min-height: 100vh; background: var(--c-bg); }
+      body { transform-origin: top center; scale: min(1, calc(100vw / 794), calc(100vh / 1123)); margin: 0 auto; box-shadow: 0 0 60px rgba(0,0,0,0.15); }
+    }
+    .cover {
+      width: 794px; height: 1123px;
+      position: relative;
+      border: none; outline: none; box-shadow: none;
+    }
+    /* Layer 1: background grid (2% opacity), clipped */
+    .layer-bg {
+      position: absolute; inset: 0;
+      overflow: hidden;
+      z-index: 1;
+      background-image:
+        repeating-linear-gradient(0deg, rgba(78,71,50,0.02) 0, rgba(78,71,50,0.02) 0.5px, transparent 0.5px, transparent 66px),
+        repeating-linear-gradient(90deg, rgba(78,71,50,0.02) 0, rgba(78,71,50,0.02) 0.5px, transparent 0.5px, transparent 66px);
+    }
+    /* Layer 2: left thick anchor line at x = 0.12*W = 95px, from 0.1*H to 0.9*H */
+    .layer-structure { position: absolute; inset: 0; z-index: 2; }
+    .anchor-line {
+      position: absolute;
+      left: 95px; top: 112px; bottom: 112px;
+      width: 8px;
+      background: var(--c-mid);
+    }
+    /* Layer 3: content, left edge = 95px + 40px = 135px */
+    .layer-content { position: absolute; inset: 0; z-index: 3; }
+    .kicker {
+      position: absolute;
+      left: 145px; top: 168px;
+      font-size: 15pt; font-weight: 400;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--c-accent);
+      opacity: 0.72;
+      max-width: 560px;
+    }
+    .hero {
+      position: absolute;
+      left: 145px; top: 300px;
+      font-size: 42pt; font-weight: 900;
+      line-height: 1.15;
+      color: var(--c-text);
+      max-width: 600px;
+    }
+    .summary {
+      position: absolute;
+      left: 145px; top: 620px;
+      font-size: 16.5px; font-weight: 400;
+      line-height: 1.6;
+      color: var(--c-text);
+      opacity: 0.85;
+      max-width: 476px;
+    }
+    .meta {
+      position: absolute;
+      left: 145px; top: 842px;
+      font-size: 16pt; font-weight: 400;
+      color: var(--c-text);
+      line-height: 1.55;
+    }
+    .meta .muted {
+      color: var(--c-muted);
+      font-size: 13pt;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+  <div class="cover">
+    <div class="layer-bg"></div>
+    <div class="layer-structure">
+      <div class="anchor-line"></div>
+    </div>
+    <div class="layer-content">
+      <div class="kicker">Informe t&eacute;cnico &middot; Fase final de cierre</div>
+      <div class="hero">Cierre de Seguridad<br>y Preparaci&oacute;n para<br>Producci&oacute;n</div>
+      <div class="summary">
+        Verificaci&oacute;n post-publicaci&oacute;n de los tres repositorios del proyecto
+        (CRM-ALBRA, WHATSPOWER y WHATSPOWER-ULTRA), estado del token expuesto,
+        rotaci&oacute;n coordinada de secretos, saneamiento de credenciales locales
+        y plan de despliegue controlado a producci&oacute;n.
+      </div>
+      <div class="meta">
+        Proyecto ALBRA<br>
+        <span class="muted">CRM-ALBRA &middot; WHATSPOWER &middot; WHATSPOWER-ULTRA</span><br>
+        <span class="muted">27 de octubre de 2026</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1168,3 +1168,20 @@ Work Log:
 
 Stage Summary:
 - Push BLOQUEADO por permisos del token (falta Contents: Read and write). Commits f213386/4509b70 siguen listos y verificados. Esperando que el dueño edite el token en GitHub (Permissions → Contents: Read and write; ambos repos en Repository access) y lo confirme → reintento inmediato → shred del token + revocación por el dueño.
+
+---
+Task ID: PRO-02-push-intento-2-2026-10-27
+Agent: Z.ai (main)
+Task: Reintento de push tras edición de permisos del token + checklist del dueño (9 pasos).
+
+Work Log:
+- RECICLAJE TOTAL del entorno detectado: repos-limpio/, secure-rotation/ y download/ (PRO-01-PRO-02-EVIDENCIA y PRO-02-PUSH) desaparecidos. worklog.md intacto. Remotos sin drift (db0d088/08a0bb3/9b32591 verificados).
+- Reconstrucción: clonados los 3 repos (SHAs publicados exactos); token recreado en secure-rotation/.push-token (600) desde el valor en conversación.
+- Token: 401 Bad credentials consistente (copia byte-idéntica a la que autenticó como ALBRA8 horas antes) → el valor fue invalidado en GitHub durante la edición (regeneración/revocación). PUSH BLOQUEADO hasta recibir el valor vigente.
+- Parches re-aplicados íntegramente (8 puntos): WP server.ts x5 (webhookSecret, verifyHmac, /qr/data 503, POST 401, DELETE 401), CP-11 env-based, ULTRA execute-pilot gate <24 exit(1), 2 tests env-based, README placeholder.
+- Commits nuevos: WP a94815d, ULTRA e6ef56d (los SHAs f213386/4509b70 murieron con el reciclaje; contenido equivalente). Barrido: 0 valores publicados / 0 PATs.
+- Regresiones pre-push: WP npm test 22/22 PASS (CP-08 HMAC + CP-11 fail-closed incluidos); ULTRA npm test 19/19 PASS; bajas-circuit (integración con 2A vivo en :3003, stub audit_repos recreado) 5/5 PASS; pilot-safeguards 4/5 — test 5 (OPERATOR_PHONE_MISSING) INCONSISTENCIA PREEXISTENTE: PILOT_SUPERVISED_CONFIG.operatorPhoneCanonical hardcodeado truthy ('573017543786') hace inalcanzable el blocker; demostrado también en worktree prístino 08a0bb3. No introducido por PRO-02.
+- Stub audit_repos/CRM-ALBRA/src/lib/agentic-2a-bridge.ts recreado (contrato registerSuppressionInAgentic2A con fail-closed por env); servidor 2A de pruebas detenido tras las suites; worktree prístino eliminado.
+
+Stage Summary:
+- Todo listo para push (commits a94815d/e6ef56d validados con suites). Único bloqueante: el token editado quedó INVALIDADO (401) — se necesita el valor vigente del fine-grained token con Contents: Read and write. Al recibirlo: probe → push → SHAs → árboles remotos → suites post-push → shred → documentos finales → informe con los 6 entregables.

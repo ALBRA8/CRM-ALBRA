@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    @page { size: 794px 1123px; margin: 0; }
+    :root {
+      --c-bg: #f5f5f4;
+      --c-accent: #92761f;
+      --c-text: #151513;
+      --c-muted: #7e7c74;
+      --c-mid: #4e4732;
+      --c-surface: #ebeae8;
+    }
+    html, body { margin: 0; padding: 0; width: 794px; height: 1123px; background: var(--c-bg); color: var(--c-text); font-family: 'Inter', 'Noto Sans SC', sans-serif; }
+    @media screen {
+      html { height: auto; display: flex; justify-content: center; min-height: 100vh; background: var(--c-bg); }
+      body { transform-origin: top center; scale: min(1, calc(100vw / 794), calc(100vh / 1123)); margin: 0 auto; box-shadow: 0 0 60px rgba(0,0,0,0.15); }
+    }
+    .cover { width: 794px; height: 1123px; position: relative; box-sizing: border-box; border: none; outline: none; box-shadow: none; }
+    /* Layer 1 - fondo retícula (2% opacidad) */
+    .layer1 { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
+    .layer1 .grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(to right, rgba(78,71,50,0.05) 0.5px, transparent 0.5px),
+        linear-gradient(to bottom, rgba(78,71,50,0.05) 0.5px, transparent 0.5px);
+      background-size: 50px 50px;
+    }
+    /* Layer 2 - línea ancla vertical */
+    .layer2 { position: absolute; inset: 0; z-index: 2; }
+    .anchor-line { position: absolute; left: 95px; top: 112px; bottom: 112px; width: 8px; background: var(--c-mid); }
+    /* Layer 3 - contenido */
+    .layer3 { position: absolute; inset: 0; z-index: 3; }
+    .kicker {
+      position: absolute; left: 145px; top: 168px;
+      font-size: 15px; font-weight: 400; letter-spacing: 4px;
+      text-transform: uppercase; color: var(--c-text); opacity: 0.6;
+      max-width: 560px; line-height: 1.7;
+    }
+    .hero {
+      position: absolute; left: 145px; top: 300px;
+      font-size: 84px; font-weight: 900; line-height: 1.0;
+      color: var(--c-text); max-width: 580px; white-space: nowrap;
+    }
+    .hero-sub {
+      position: absolute; left: 145px; top: 412px;
+      font-size: 32px; font-weight: 300; line-height: 1.2;
+      color: var(--c-mid); max-width: 580px; white-space: nowrap;
+    }
+    .summary {
+      position: absolute; left: 145px; top: 545px;
+      font-size: 16px; font-weight: 400; line-height: 1.65;
+      color: var(--c-text); opacity: 0.85; max-width: 470px;
+    }
+    .verdict {
+      position: absolute; left: 145px; top: 730px;
+      display: inline-block; padding: 14px 22px;
+      border: 1.5px solid var(--c-accent); background: var(--c-surface);
+      font-size: 13px; font-weight: 700; letter-spacing: 1.5px;
+      color: var(--c-mid); text-transform: uppercase;
+    }
+    .meta {
+      position: absolute; left: 145px; top: 852px;
+      font-size: 15px; line-height: 1.8; color: var(--c-text); opacity: 0.9;
+    }
+    .meta .sha { color: var(--c-muted); font-weight: 300; letter-spacing: 0.5px; }
+    .footer {
+      position: absolute; left: 145px; bottom: 92px;
+      font-size: 12px; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--c-text); opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="cover">
+    <div class="layer1"><div class="grid"></div></div>
+    <div class="layer2"><div class="anchor-line"></div></div>
+    <div class="layer3">
+      <div class="kicker">Informe ejecutivo &middot; Prueba integral definitiva de cierre</div>
+      <div class="hero">ALBRA</div>
+      <div class="hero-sub">Seguridad &amp; Producci&oacute;n</div>
+      <div class="summary">
+        Verificaci&oacute;n integral de la integraci&oacute;n entre CRM-ALBRA, WHATSPOWER y
+        WHATSPOWER-ULTRA: reproducibilidad de los commits publicados, pruebas E2E
+        bidireccionales con instancias reales, seguridad funcional, auditor&iacute;a de
+        credenciales e historial Git, backup y recuperaci&oacute;n, y preparaci&oacute;n de producci&oacute;n.
+      </div>
+      <div class="verdict">Integration verified &mdash; Production blocked</div>
+      <div class="meta">
+        CRM-ALBRA <span class="sha">9b32591</span> &middot; WHATSPOWER <span class="sha">db0d088</span> &middot; WHATSPOWER-ULTRA <span class="sha">08a0bb3</span><br>
+        38 pruebas E2E superadas &middot; 390/390 vitest &middot; 41/41 suites nativas<br>
+        27 de octubre de 2026
+      </div>
+      <div class="footer">ALBRA8 &middot; Campa&ntilde;a de prueba integral &middot; Sandbox aislado</div>
+    </div>
+  </div>
+</body>
+</html>
