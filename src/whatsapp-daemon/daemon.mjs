@@ -359,7 +359,16 @@ async function connectToWhatsApp() {
         // ve la IA, pero NUNCA disparan auto-respuesta.
         const isOwner = !!msg.key.fromMe
 
-        const contactPhone = from.split('@')[0]
+        // FIX BARRERA 3 (GO explícito del operador, 2026-10-28): WhatsApp moderno
+        // puede remitir chats 1:1 con un JID interno @lid en remoteJid. Responder a
+        // LID@s.whatsapp.net apunta a una dirección inexistente y el envío se pierde
+        // silenciosamente (log "Reply sent" sin entrega real). En mensajes entrantes
+        // msg.key.senderPn trae el JID telefónico real del remitente: se usa como
+        // destinatario. Fallback: remoteJid (comportamiento previo). Los mensajes del
+        // dueño (fromMe) no cambian: su remitente es el propio negocio, no el contacto.
+        const contactPhone = isOwner
+          ? from.split('@')[0]
+          : (msg.key.senderPn || from).split('@')[0]
         const contactName = isOwner ? contactPhone : (msg.pushName || contactPhone)
         const waMessageId = msg.key.id
 
@@ -432,7 +441,13 @@ async function connectToWhatsApp() {
         // JAMÁS para mensajes del dueño (fromMe): el bot no se responde a sí mismo.
         if (!isOwner && conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed)) {
           console.log(`[WA] Auto-reply enabled for ${contactPhone}, calling agent...`)
-          triggerAgentReply(orgId, conv, textContent, contactPhone)
+          // FIX BARRERA 3 complemento (mismo GO): WhatsApp no siempre incluye
+          // senderPn en el key del mensaje (verificado con mensaje real 19:49 UTC).
+          // El destinatario de la respuesta es entonces el JID ORIGINAL del
+          // remitente (p. ej. ...@lid): la dirección exacta por la que WhatsApp
+          // entregó el mensaje y sobre la que ya existe sesión cifrada.
+          // senderPn (JID telefónico completo) mantiene prioridad si está presente.
+          triggerAgentReply(orgId, conv, textContent, msg.key.senderPn || from)
         }
       } catch (err) {
         console.error('[WA] Error processing message:', err)
@@ -452,7 +467,7 @@ async function connectToWhatsApp() {
 }
 
 // ============ Auto-Respuesta IA del CRM (workflow de canal) ============
-async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
+async function triggerAgentReply(orgId, conv, messageText, replyJid) {
   try {
     const recentMsgs = db.prepare(`
       SELECT direction, text, senderType FROM WhatsAppMessage
@@ -492,10 +507,10 @@ async function triggerAgentReply(orgId, conv, messageText, contactPhone) {
 
     if (!replyText) return
 
-    await sendWhatsAppMessage(contactPhone, replyText)
-    saveMessage(conv.id, orgId, 'outbound', connectedPhone || '', contactPhone, replyText, 'agent')
+    await sendWhatsAppMessage(replyJid, replyText)
+    saveMessage(conv.id, orgId, 'outbound', connectedPhone || '', replyJid.split('@')[0], replyText, 'agent')
 
-    console.log(`[auto-reply] Reply sent to ${contactPhone}: ${replyText.substring(0, 50)}...`)
+    console.log(`[auto-reply] Reply sent to ${replyJid}: ${replyText.substring(0, 50)}...`)
   } catch (err) {
     console.error('[auto-reply] Auto-reply error:', err)
   }
