@@ -1045,3 +1045,21 @@ Work Log:
 
 Stage Summary:
 - Sistema WHATSPOWER↔CRM↔ULTRA integrado y verificado E2E (37/37) con HMAC, API keys, idempotencia, anti-ban y fail-open; cambios commiteados por repo; push pendiente de PAT válido del usuario.
+
+---
+Task ID: publicacion-selectiva-whatspower-2026-10-27
+Agent: Z.ai (main)
+Task: REGLA CRÍTICA — Publicación selectiva y organización por repositorio (WHATSPOWER + WHATSPOWER-ULTRA + CRM-ALBRA)
+
+Work Log:
+- Clasificados los 7 commits pendientes de CRM-ALBRA: 5 sandbox/ajenos (9b30f3e, 9437d54, 0353689 = worklog; ab23795 = scripts e2e misión LEADS con credenciales e2e-token/apikey; 397418d = schema AgentLeadEvent/agentLeadsSecretEnc sin refs en src) y 2 de misión (4c01528 código; 541d9b2 informe + e2e-wp con credenciales).
+- Creada rama selectiva selective/whatspower-crm: cherry-pick de 4c01528 sobre db95a5b (=origin/main) → commit limpio 9b32591 con SOLO 5 archivos de misión (FF puro, sin force, sin perder trabajo previo).
+- Auditoría de secretos: WHATSPOWER 9141484 LIMPIO (.env.example solo placeholders), ULTRA 4d99204 LIMPIO, CRM 9b32591 LIMPIO. Ficheros e2e-*-token/key/apikey confirmados con credenciales reales → excluidos.
+- Pruebas en árbol selectivo: tsc 0 errores, bridge 9/9, vitest 386/390 (línea base idéntica, 4 fallos pre-existentes LLM-eco). WHATSPOWER 24/24 (22+2 secret-config). ULTRA 19/19.
+- Pushes intentados y BLOQUEADOS en los 3 repos: "could not read Username" (sin PAT válido; helper/ssh/netrc/gh inexistentes).
+- Verificación remota ls-remote: WHATSPOWER d854749, ULTRA b7b5a5d, CRM main db95a5b (4 heads remotos, ramas ajenas intocadas).
+- Sandbox restaurado a main (541d9b2); backup local/sandbox-main-541d9b2 creado; prisma client regenerado para schema de main.
+- Informe: download/INFORME-FINAL-TRAZABILIDAD-PUBLICACION.md (comandos exactos de publicación con PAT).
+
+Stage Summary:
+- Publicación selectiva 100% preparada: 3 repos, 3 commits de misión aislados y probados (9141484 / 4d99204 / 9b32591), cero trabajo ajeno, cero secretos; push pendiente exclusivamente de un PAT válido del usuario.
