@@ -1009,3 +1009,21 @@ Work Log:
 Stage Summary:
 - Sistema de 3 piezas coherente: SEED (DNA Python) ← bridge opcional → CRM (conversión) ← webhook (faltante) ← LEADS (prospección).
 - Único hueco real: receptor de webhooks de LEADS en CRM-ALBRA (validación HMAC + creación de Cliente/Oportunidad).
+
+---
+Task ID: e2e-integral-3-repos-2026-10-27
+Agent: Z.ai (main)
+Task: PRUEBA INTEGRAL END-TO-END de CRM-ALBRA + AGENTE-GENERAL + AGENTE-LEADS como un solo sistema (sin modificar código; CRM frozen)
+
+Work Log:
+- Servicios levantados: CRM:3000 (pid 1151, código db95a5b), SEED:9000 (uvicorn render_app:app, APP_ENV=dev, venv en /home/z/venvs/albra-seed), LEADS como proceso Node+tsx (bun incompatible con better-sqlite3).
+- CRM: auth/CRUD/pipeline/timeline/crm-actions/MCP JSON-RPC PASS; API key org creada vía /api/settings/api-keys (albra_a93b9…); writes de host persistidos con trazabilidad de canal.
+- CRM→SEED: bridge health online:true (6ms); executeAgentQuery vía /api/whatsapp/auto-reply → POST /api/v1/execution 200 con policy allow, engine:albra-agent (contenido eco por provider mock core_only).
+- SEED: health/readiness/agent/info/execution 200; entry-point CLI roto (cli_entry ImportError); audit log vacío en core_only.
+- LEADS: suite 149 pass / 8 archivos colapsan por throw de import en config/nvidia.ts (NVIDIA_API_KEY ausente = CONFIGURATION BLOCKER); pipeline real completo con mocks: discovery→research→validation→dedup→scoring(25/100)→intelligence(403 degradado)→storage(2 leads,26 evidencias)→report→trace(10 pasos success).
+- LEADS→CRM: hooks sent=0 failed=3; POST webhook → 401 (sin receptor; /api/agent-leads/webhook → 404; validación HMAC no existe).
+- Batería errores A-F: 401/404/400/422 controlados; bridge graceful offline + recuperación; auto-reply degrada a local-llm real; timeout controlado (69ms).
+- Informe final: /home/z/my-project/download/INFORME-PRUEBA-INTEGRAL-E2E-V1.0.md
+
+Stage Summary:
+- DICTAMEN: SYSTEM OPERATIONAL WITH LIMITATIONS. CRM operativo; CRM⇄SEED integrado real; LEADS pipeline determinístico OK; circuito de negocio LEADS→CRM roto (falta receptor webhook+HMAC en CRM). Sin cambios de código en ninguno de los 3 repos.

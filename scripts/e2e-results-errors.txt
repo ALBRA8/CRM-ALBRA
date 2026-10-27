@@ -1,0 +1,34 @@
+[2026-10-27T01:43:36Z] === A. CREDENCIAL INVÁLIDA ===
+[2026-10-27T01:43:36Z] A1 CRM login demo-password mala:
+{"error":"Credenciales inválidas"}
+[2026-10-27T01:43:37Z] A2 MCP con API key falsa:
+{"error":"API key inválida o revocada"}
+[2026-10-27T01:43:37Z] A3 Seed con token falso:
+{"detail":"authenticated principal required"}
+[2026-10-27T01:43:37Z] === B. ENDPOINT INEXISTENTE ===
+[2026-10-27T01:43:37Z] B1 CRM /api/no-existe:
+  HTTP 404
+[2026-10-27T01:43:37Z] B2 Seed /api/v1/no-existe:
+  HTTP 404
+[2026-10-27T01:43:37Z] B3 MCP tool inexistente:
+{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Herramienta desconocida: herramienta_fantasma","data":{"available":["list_clients","create_c
+[2026-10-27T01:43:37Z] === C. PAYLOAD INVÁLIDO ===
+[2026-10-27T01:43:37Z] C1 CRM cliente sin name:
+{"error":"Campos requeridos faltantes: name"}
+[2026-10-27T01:43:37Z] C2 crm-actions acción desconocida:
+{"error":"Acción desconocida: borrar_todo","available":["create_client","create_opportunity","schedule_reservation","add_note","quote_summa
+[2026-10-27T01:43:37Z] C3 Seed execution body inválido:
+{"detail":[{"loc":["body",0],"msg":"JSON decode error","type":"json_invalid"}]}
+[2026-10-27T01:43:37Z] === D. SERVICIO NO DISPONIBLE (bridge con seed caído) ===
+[2026-10-27T01:43:39Z] D1 seed detenido (pid 2594) → bridge:
+{"enabled":true,"bridge":"albra-agent-seed-v1.0","agent":{"online":false,"url":"http://localhost:9000","lastChecked":"2026-10-27T01:43:39.492Z","latencyMs":3,"error":"fetch failed"}}
+[2026-10-27T01:43:39Z] D2 auto-reply con seed caído (debe degradar a LLM local o fallar controlado):
+engine: local-llm | reply len: 139
+[2026-10-27T01:43:47Z] D3 seed reiniciado → bridge:
+{"enabled":true,"bridge":"albra-agent-seed-v1.0","agent":{"online":true,"url":"http://localhost:9000","status":"healthy","lastChecked":"2026-10-27T01:43:47.540Z","latencyMs":16}}
+[2026-10-27T01:43:47Z] === E. HMAC INVÁLIDO (LEADS→CRM) ===
+[2026-10-27T01:43:47Z] E1 webhook con firma HMAC inválida → CRM (no existe receptor; auth rechaza antes):
+{"error":"Token de autorización requerido"}
+[2026-10-27T01:43:47Z] === F. TIMEOUT (bridge con host colgado) ===
+Node.js v24.21.0
+[2026-10-27T01:43:48Z] === FIN BATERÍA ERRORES ===

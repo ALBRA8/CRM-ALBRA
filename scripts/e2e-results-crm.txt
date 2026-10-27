@@ -1,0 +1,23 @@
+[2026-10-27T01:22:13Z] === T2.1 AUTH demo ===
+[2026-10-27T01:22:13Z] PASS auth/demo: token emitido (264 chars)
+[2026-10-27T01:22:13Z] === T2.2 GET /api/clients ===
+[2026-10-27T01:22:14Z] HTTP 200 — clientes: 8
+[2026-10-27T01:22:14Z] === T2.3 POST /api/clients (crear E2E-ALBRA-2026-10-27-cliente) ===
+[2026-10-27T01:22:14Z] HTTP 201 — clientId: cmvq038pp003gp5vzpbp02hxb
+[2026-10-27T01:22:14Z] === T2.4 GET /api/clients/cmvq038pp003gp5vzpbp02hxb ===
+[2026-10-27T01:22:15Z] HTTP 200 — name: E2E-ALBRA-2026-10-27 Cliente Prueba
+[2026-10-27T01:22:15Z] === T2.5 POST /api/opportunities ===
+[2026-10-27T01:22:15Z] HTTP 201 — opportunityId: cmvq039j9003mp5vzl7mozm1u
+[2026-10-27T01:22:15Z] === T2.6 GET /api/opportunities ===
+[2026-10-27T01:22:15Z] HTTP 200
+[2026-10-27T01:22:15Z] === T2.7 GET /api/pipeline ===
+[2026-10-27T01:22:15Z] HTTP 200 — etapas: 6
+[2026-10-27T01:22:15Z] === T2.8 GET /api/timeline ===
+[2026-10-27T01:22:15Z] HTTP 200
+[2026-10-27T01:22:15Z] === T2.9 GET /api/crm/actions ===
+[2026-10-27T01:22:16Z] HTTP 200 — {"contract":"crm-actions/v1","description":"Acciones de negocio del CRM ejecutables por un host autorizado (chaleco CRM).","actions":[{"name":"create_
+[2026-10-27T01:22:16Z] === T2.10 GET /api/mcp ===
+[2026-10-27T01:22:16Z] HTTP 405 — {"error":"Método no permitido: este endpoint MCP solo acepta POST (JSON-RPC 2.0)"}
+[2026-10-27T01:22:16Z] === T2.11 GET /api/agent-general/status (bridge) ===
+[2026-10-27T01:22:16Z] HTTP 200 — {"enabled":true,"bridge":"albra-agent-seed-v1.0","agent":{"online":false,"url":"http://localhost:9000","lastChecked":"2026-10-27T01:22:16.845Z","latencyMs":8,"error":"fetch failed"}}
+[2026-10-27T01:22:16Z] === FIN batería CRM ===

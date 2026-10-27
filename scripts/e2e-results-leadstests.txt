@@ -1,0 +1,31 @@
+PASS (0) tests/crm_contract.test.ts
+PASS (8) tests/dedup.test.ts
+PASS (6) tests/discovery.test.ts
+FAIL (0 pass / 1 fail) tests/doctor.test.ts
+PASS (5) tests/duckduckgo_discovery.test.ts
+PASS (0) tests/e2e-llm.test.ts
+FAIL (0 pass / 1 fail) tests/e2e.test.ts
+PASS (17) tests/errors.test.ts
+PASS (8) tests/evidence.test.ts
+PASS (7) tests/execution.test.ts
+PASS (0) tests/feedback.test.ts
+FAIL (0 pass / 1 fail) tests/health.test.ts
+FAIL (0 pass / 1 fail) tests/intelligence.test.ts
+PASS (9) tests/lead.test.ts
+PASS (0) tests/memory.test.ts
+FAIL (0 pass / 1 fail) tests/outreach.test.ts
+FAIL (0 pass / 1 fail) tests/outreach_idempotency.test.ts
+PASS (5) tests/overpass_discovery.test.ts
+PASS (12) tests/providers.test.ts
+PASS (6) tests/quality.test.ts
+FAIL (0 pass / 1 fail) tests/quality_persistence.test.ts
+PASS (13) tests/report.test.ts
+PASS (9) tests/research.test.ts
+PASS (12) tests/scoring.test.ts
+FAIL (0 pass / 1 fail) tests/security.test.ts
+PASS (0) tests/skills.test.ts
+PASS (12) tests/storage.test.ts
+PASS (8) tests/telegram_helpers.test.ts
+PASS (4) tests/tool_contract.test.ts
+PASS (8) tests/validation.test.ts
+=== RESUMEN: 22 archivos OK, 8 con fallos | tests pass=149 fail=8 ===
