@@ -975,3 +975,21 @@ Work Log:
 
 Stage Summary:
 - Repo sincronizado y sano (381/381); estrategia comercial activa en todos los canales; GATEs del chaleco en verde
+
+---
+Task ID: sync-3-repos-2026-10-26
+Agent: Z.ai (main)
+Task: Ponerse al día con los 3 repos ALBRA8: CRM-ALBRA, AGENTE-GENERAL, AGENTE-LEADS
+
+Work Log:
+- CRM-ALBRA: fetch de origin/main → remoto en db95a5b (estrategia comercial consultiva), local en 9b30f3e (1 commit adelante: solo worklog). Sin divergencia.
+- PAT ghp_8OTE...CMeV inválido para push ("Invalid username or token"); PAT ghp_Icm0...UQRO también revocado. Push del worklog pendiente de un PAT nuevo.
+- Clonados en /home/z/repos/: AGENTE-GENERAL (69c79da) y AGENTE-LEADS (e1c0d5f).
+- AGENTE-GENERAL = ALBRA AGENT SEED V1.0 (Python): DNA universal de 8 pilares, 106 entradas DNA, 40 sondas audit-matrix, clean-room 17/17, A2A protocol, especialización YouTube (albra_specialization), dashboard Next.js + WhatsApp daemon, multi-provider Groq+NVIDIA.
+- AGENTE-LEADS = agente TypeScript de prospección B2B vía Telegram (GLM 5.3 Flash / NVIDIA NIM): pipeline determinístico de 10 etapas (discovery→research→validation→evidence→dedup→scoring→intelligence→storage→report→CRM hook), Apify/Scrapling/SendGrid/WhatsApp Cloud API, dashboard Next.js+Prisma, harness LIPO fases 0-10 (adapters/bridges/knowledge-registry). Último commit e1c0d5f: catálogo JVZoo + deep-linking + cierre automatizado.
+- Verificado: sales-strategy.ts implementado en CRM-ALBRA e inyectado en channel-agent.ts, channel-autoresponder.ts, telegram/webhook, whatsapp/auto-reply, con tests en tests/integration/sales-strategy-injection.test.ts.
+- Punto de integración clave: src/agent/pipelines/crm_albra_hooks.ts en AGENTE-LEADS dispara webhooks (lead.created/scored/intelligenced/outreach_sent/execution.completed) hacia CRM-ALBRA.
+
+Stage Summary:
+- Los 3 repos al día localmente. Ecosistema: SEED (GENERAL) especializa agentes → LEADS genera y puntúa leads → hook webhook → CRM-ALBRA los recibe y convierte con el agente comercial consultivo.
+- Bloqueo: sin PAT válido para pushear el commit 9b30f3e (solo worklog) de CRM-ALBRA.
