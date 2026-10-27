@@ -1253,3 +1253,19 @@ Work Log:
 
 Stage Summary:
 - Ventana del operador abierta y verificada: login demo OK, daemon-proxy OK, daemon esperando vinculación QR. Pendiente del operador: entrar al preview → INICIAR DEMO (o demo@crmalbra.com / contraseña demo) → sección WhatsApp → Conectar → escanear QR con el teléfono del negocio 573163301286 → avisar para verificación E2E (1 mensaje real desde 573017543786 → recepción → CRM → procesamiento → respuesta → trazabilidad 0→N).
+
+---
+Task ID: GO-LIVE-restore-postreboot-2026-10-28
+Agent: Z.ai (main)
+Task: Operador no ve el dashboard — diagnóstico y restauración tras reinicio del VM.
+
+Work Log:
+- Causa raíz: el VM se reinició (uptime 1 min) → todos los procesos murieron (:3000/:3002/:3003 HTTP 000). El preview (Caddy :81 → localhost:3000) no tenía app detrás. Además repos-limpio/ y secure-rotation/ desaparecieron de nuevo; my-project sobrevivió (CRM, node_modules, db/custom.db con usuario demo y password vigentes, scripts golive-*).
+- .env del CRM regenerado parcialmente por ensure-env del boot: INTERNAL_API_SECRET nuevo aleatorio (canónico sandbox ahora; valor jamás impreso) + WHATSAPP_DAEMON_URL; faltaban claves WHATSPOWER_*.
+- Restauración (scripts/golive-reboot-restore.sh): WP re-clonado de remoto (HEAD a94815d intacto), npm install OK, claves WHATSPOWER_* re-añadidas al .env CRM, WEBHOOK_SECRET nuevo emparejado CRM↔WP (sandbox runtime), WP .env (600) escrito con el MISMO INTERNAL_API_SECRET del CRM, daemon :3002 + WP :3003 arrancados. CRM :3000 ya sube con el boot.
+- Verificación completa de la cadena del operador: CRM 200 / WP 200 / daemon 401 sin auth, 200 con auth / POST /api/auth/demo → 200 token (oculto) / daemon-proxy ?path=/status con sesión demo → {"status":"disconnected",...,"orgLinked":false} — listo para QR.
+- URL de preview: candidatos DNS (*.space-z.ai resuelven) dan 404 — el bot-id real no es discoverable desde el sandbox (config del driver no legible). El operador debe usar el botón/panel de preview de la interfaz web.
+- Robustez documentada: tras una vinculación QR exitosa, .wa-auth persiste en my-project (sobrevive reinicios) y el daemon reconecta sin QR; para reventanas solo re-ejecutar golive-reboot-restore.sh (~1 min).
+
+Stage Summary:
+- Ventana del operador restaurada y verificada post-reinicio (WP a94815d + daemon + CRM :3000, cadena login→proxy→daemon 100%). Pendiente operador: abrir preview desde la UI, INICIAR DEMO (demo@crmalbra.com/AlbraDemo2026), WhatsApp→Conectar→QR con 573163301286, luego 1 mensaje real desde 573017543786 y confirmación para verificación E2E (0→N en WhatsAppMessage).
