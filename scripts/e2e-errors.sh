@@ -12,7 +12,7 @@ log "=== A. CREDENCIAL INVÁLIDA ==="
 log "A1 CRM login demo-password mala:"
 curl -s -o /tmp/e1.json -w "  HTTP %{http_code} — " -X POST $BASE/api/auth/login -H "Content-Type: application/json" -d '{"email":"demo@crmalbra.com","password":"E2E-password-erronea"}' 2>/dev/null; head -c 120 /tmp/e1.json | tee -a "$OUT"; echo | tee -a "$OUT"
 log "A2 MCP con API key falsa:"
-curl -s -o /tmp/e2.json -w "  HTTP %{http_code} — " -X POST $BASE/api/mcp -H "Authorization: Bearer albra_FAKEE2E000000000" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'; head -c 120 /tmp/e2.json | tee -a "$OUT"; echo | tee -a "$OUT"
+curl -s -o /tmp/e2.json -w "  HTTP %{http_code} — " -X POST $BASE/api/mcp -H "Authorization: Bearer REDACTED-ROTATE-ME" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'; head -c 120 /tmp/e2.json | tee -a "$OUT"; echo | tee -a "$OUT"
 log "A3 Seed con token falso:"
 curl -s -o /tmp/e3.json -w "  HTTP %{http_code} — " -X POST $SEED/api/v1/execution -H "Authorization: Bearer token-E2E-falso" -H "Content-Type: application/json" -d '{"input":"x"}'; head -c 100 /tmp/e3.json | tee -a "$OUT"; echo | tee -a "$OUT"
 
