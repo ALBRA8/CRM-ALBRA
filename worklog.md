@@ -1081,3 +1081,23 @@ Work Log:
 
 Stage Summary:
 - MISIÓN COMPLETADA: 3 repos publicados selectivamente y verificados en GitHub (WHATSPOWER db0d088, ULTRA 08a0bb3, CRM 9b32591). Cero trabajo ajeno, cero secretos publicados. Pendiente usuario: revocar el PAT pegado en chat.
+
+---
+Task ID: seguridad-postpublicacion-2026-10-27
+Agent: Z.ai (main)
+Task: FASE FINAL DE SEGURIDAD Y VERIFICACIÓN POST-PUBLICACIÓN (3 repos ALBRA8)
+
+Work Log:
+- Fase A (credenciales): PAT sigue ACTIVO (revocación pendiente usuario; no persistido en ningún sitio — verificado). 8 artefactos e2e-* con credenciales redactados + commit local de saneamiento (NO publicado). BD actual con 0 API keys (claves de artefactos muertas). .env no versionado; remoto sin ficheros de secretos (1049 ficheros escaneados vía API GitHub).
+- Fase B (GitHub API): SHAs y contenido remoto verificados exactos: CRM 9b32591 (5 archivos), WHATSPOWER db0d088 (5), ULTRA 08a0bb3 (1). Ramas ajenas intactas.
+- Fase C (funcional E2E post-publicación, evidencia en download/e2e-postpub/):
+  A WHATSPOWER→CRM 8/8 (flujo firmado→cliente source=crm-api+historial; idempotencia deduplicated; 401 firma/replay, 400 incompleto; duplicado de teléfono rechazado controlado).
+  B CRM→WHATSPOWER 8/8 (webhook Meta firmado por org; bridge entrega y persiste en inbox_messages; stage-change→trigger PROPUESTA_ENVIADA con outbound persistido sin envío real; fail-open con WP caído; multi-tenancy real org B bloqueada; 401/401/400 auth).
+  C ULTRA→daemon 9/9 (guard :3002 DISPATCH_BLOCKED; daemon real 401/400-no conectado; campaña dedup 3→2, SENT/SENT/COMPLETED contra stub fiel con Bearer verificado; PAUSED_OFF_HOURS nocturno; ingesta válida/inválida/persistida).
+  D fail-open WHATSPOWER→CRM 4/4 (CRM caído: 200 crmSynced=false 26ms, proceso vivo; recuperación: crmSynced=true + cliente persistido; control estricto de PIDs tras detectar carrera de procesos).
+- Hallazgos de diagnóstico corregidos durante pruebas: demo org idempotente (B6 falso positivo), trigger notifica al teléfono del cliente de la oportunidad (B4), secret daemon con comillas en .env (C2), carrera kill/spawn (D v2).
+- Limpieza: download/.e2e-creds.sh (600, gitignored) eliminado; logs sin secretos; servicios de prueba con datos ficticios E2E-WHATSPOWER-CRM-2026.
+- Informe: download/INFORME-SEGURIDAD-POSTPUBLICACION.md (9 secciones, dictamen honesto: sandbox verificado, producción NO declarada).
+
+Stage Summary:
+- Seguridad y verificación post-publicación COMPLETAS: remoto íntegro, artefactos saneados, 25+ pruebas funcionales PASS con controles activos, cero mensajes reales. Pendiente usuario: revocar PAT y rotar INTERNAL_API_SECRET/APP_ENCRYPTION_KEY antes de producción.
