@@ -1395,3 +1395,18 @@ Stage Summary:
 - RESULTADO: BARRERA 3 FIX FORMALIZADO Y PUBLICADO — remoto main = ea87cc2, contenido verificado byte a byte contra el runtime validado.
 - El repo CRM-ALBRA ya reproduce el comportamiento validado en sandbox: respuestas WhatsApp al JID real (senderPn || from).
 - Pendiente crítico del operador: REVOCAR el token usado (expuesto en chat) + los 2 PAT previos filtrados. ULTRA (e6ef56d) y WHATSPOWER (a94815d) intactos; sin campañas ni despacho real; STOP.
+
+---
+Task ID: puente-agente-desconexion-2026-10-31
+Agent: Z.ai (main)
+Task: Antes del GO de canales — auditoría de conectores existentes y desconexión (sin borrado) del puente de agente externo, por decisión del usuario.
+
+Work Log:
+- Auditoría: CRM-ALBRA nunca tuvo receptor de webhooks de AGENTE-LEADS (verificado E2E 2026-10-27: 404/401; hoy re-verificado: 0 referencias en src a agentLeadEvent/agentLeadsSecretEnc). Solo sobrevive el modelo de schema AgentLeadEvent + Integration.agentLeadsSecretEnc, dormido, sin refs y nunca publicado → se CONSERVA sin tocar, excluido de publicaciones.
+- Único conector externo activable: albra-agent-bridge.ts (AGENTE-GENERAL/SEED Python, default localhost:9000). Verificado que nada escucha en :9000 (fallback local-LLM de facto).
+- Desconexión explícita sin borrar código: ALBRA_AGENT_ENABLED=false en .env + reinicio limpio del CRM vía scripts/start-dev-detached.mjs (launch doble-fork; los nohup directos mueren con el reciclaje del sandbox).
+- Verificación en vivo: /api/health 200; auth demo 200; /api/agent-general/status → {"enabled":false,...,"online":false}; daemon :3002 → 401 (vivo, guardia intacta, fix BARRERA 3 activo). auto-reply ahora salta el SEED y va directo a LLM local.
+- Reconexión documentada: quitar la línea ALBRA_AGENT_ENABLED=false (o poner true) + levantar SEED en :9000. Receptor AGENTE-LEADS (si algún día se quiere): construir endpoint webhook + HMAC — pendiente histórico, NUNCA existió.
+
+Stage Summary:
+- Inventario auditado: nada activo daña; puente GENERAL desconectado y verificable (enabled:false); conector LEADS inerte por diseño (no existe cable); round-robin de leads (interno) se mantiene ACTIVO para el inbox unificado. Sandbox listo para GO de canales.
