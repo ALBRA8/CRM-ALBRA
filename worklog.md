@@ -1429,3 +1429,11 @@ Work Log:
 
 Stage Summary:
 - CRM listo para comunicarse: WhatsApp activo (fix publicado), Telegram recibe HOY sin dominio vía poller, Instagram/Facebook construidos+probados a la espera de (a) credenciales en Ajustes y (b) dominio HTTPS para sus webhooks. Rama verificada lista para push.
+
+## Task ID: dashboard-preview-2026-10-31
+Sandbox reciclado → los 3 servicios cayeron. Restauración completa + 2 fixes para que el usuario vea el dashboard vía preview.
+1. Restauración: CRM :3000 (start-dev-detached.mjs), daemon :3002 (fix3-start-daemon.sh, ok=1), WP :3003 (golive-reboot-restore.sh, WP HEAD f4f7fc9, RESULTADO_RESTAURE WP=1 DAEMON=1 CRM=1). WhatsApp daemon: disconnected (QR pendiente, normal tras reciclaje).
+2. Fix login demo (HTTP 500): drift de esquema — DB sin columna User.leadCount y con columna legacy Quote.items. Backup db/custom.db.backup-20261031T050153Z; Python sqlite3 renombró Quote.items→legacyItems (1 fila preservada, el esquema ya define legacyItems como columna deprecada); prisma db push --accept-data-loss → DB en sync, POST /api/auth/demo 200.
+3. Preview URL de ESTA sesión operativa: https://preview-chat-408845f2-f84a-4bc5-9733-5119c5821069.space-z.ai/ (construida con el chat_id del gateway IM; /api/health 200). En sesiones previas no fue construible — ahora el metadata del chat lo permite.
+4. Fix bucle /dashboard: el gateway del preview hace 301 /dashboard→/dashboard/ (body Caddy) y Next 308 /dashboard/→/dashboard → bucle infinito, página inalcanzable. Fix quirúrgico en next.config.ts: skipTrailingSlashRedirect:true + rewrite /dashboard/→/dashboard. Sin redirects en /api/* (webhooks TG/Meta seguros). Verificado: /dashboard con cookie vía preview → 200 "Dashboard · CRM ALBRA"; sin cookie → landing (guardia middleware intacta); /api/opportunities 200 vía preview.
+Pendiente publicación: cambio de next.config.ts local, entra en el próximo lote GO gate.

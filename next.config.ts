@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
   reactStrictMode: false,
   // Oculta el indicador "N" de Next.js DevTools (flotante abajo-izquierda)
   devIndicators: false,
+  // El gateway del preview redirige /dashboard -> /dashboard/ (301). Desactivamos
+  // el redirect automático de Next y servimos /dashboard/ vía rewrite: se rompe
+  // el bucle 301/308 del dashboard SIN redirigir las rutas /api (los webhooks de
+  // Telegram/Meta no siguen redirects).
+  skipTrailingSlashRedirect: true,
+  async rewrites() {
+    return [{ source: '/dashboard/', destination: '/dashboard' }];
+  },
 };
 
 export default nextConfig;
