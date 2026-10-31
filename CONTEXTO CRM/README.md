@@ -7,6 +7,7 @@ Memoria documental del repositorio **ALBRA8/CRM-ALBRA**. Esta carpeta pertenece 
 - [Arquitectura](ARQUITECTURA.md)
 - [Decisiones](DECISIONES.md)
 - [Plan maestro SaaS](PLAN_MAESTRO_SAAS.md)
+- [Roadmap resumido](ROADMAP.md)
 - [Historial](HISTORIAL_CAMBIOS.md)
 - [Auditorías](AUDITORIAS.md)
 - [Pendientes](PENDIENTES.md)
