@@ -77,6 +77,41 @@ export function encodeInstagramState(state: InstagramState): string | null {
   return encryptSecret(JSON.stringify(state))
 }
 
+/**
+ * Estado de Facebook guardado como JSON cifrado en facebookTokenEnc:
+ * { pageToken, webhookVerifyToken }. El App Secret de Meta (HMAC del webhook)
+ * vive cifrado en metaAppSecretEnc y se comparte con Instagram (misma app).
+ */
+export interface FacebookState {
+  pageToken?: string
+  webhookVerifyToken?: string
+}
+
+export function parseFacebookState(enc: string | null | undefined): FacebookState {
+  const raw = decryptSecret(enc)
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as FacebookState
+    if (typeof parsed === 'object' && parsed !== null) return parsed
+    return { pageToken: raw }
+  } catch {
+    return { pageToken: raw }
+  }
+}
+
+export function encodeFacebookState(state: FacebookState): string | null {
+  return encryptSecret(JSON.stringify(state))
+}
+
+/**
+ * Base URL de la Graph API de Meta. Override SOLO para pruebas E2E con mock local
+ * (META_GRAPH_BASE); en producción siempre la oficial.
+ */
+function metaGraphBase(): string {
+  const base = (process.env.META_GRAPH_BASE || 'https://graph.facebook.com').replace(/\/+$/, '')
+  return base
+}
+
 /** Comparación estricta en tiempo constante */
 export function safeEquals(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false
@@ -154,7 +189,7 @@ export async function sendWhatsAppCloud(opts: {
   text: string
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(opts.phoneId)}/messages`, {
+    const res = await fetch(`${metaGraphBase()}/v21.0/${encodeURIComponent(opts.phoneId)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.token}` },
       body: JSON.stringify({
@@ -181,7 +216,10 @@ export async function sendTelegramBotMessage(opts: {
   text: string
 }): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`https://api.telegram.org/bot${opts.token}/sendMessage`, {
+    // TELEGRAM_API_BASE: override SOLO para pruebas E2E con mock local; en producción
+    // siempre la oficial (https://api.telegram.org).
+    const apiBase = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '')
+    const res = await fetch(`${apiBase}/bot${opts.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: opts.chatId, text: opts.text.slice(0, 4096) }),
@@ -203,11 +241,37 @@ export async function sendInstagramGraphMessage(opts: {
   text: string
 }): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/me/messages`, {
+    const res = await fetch(`${metaGraphBase()}/v21.0/me/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.token}` },
       body: JSON.stringify({
         recipient: { id: opts.recipientId },
+        message: { text: opts.text.slice(0, 2000) },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } }
+    if (res.ok) return { ok: true }
+    return { ok: false, error: data?.error?.message || `HTTP ${res.status}` }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Envío vía Facebook Messenger (Graph API de la Página). Requiere pageToken + pageId. */
+export async function sendFacebookGraphMessage(opts: {
+  token: string
+  pageId: string
+  recipientId: string
+  text: string
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${metaGraphBase()}/v21.0/${encodeURIComponent(opts.pageId)}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.token}` },
+      body: JSON.stringify({
+        recipient: { id: opts.recipientId },
+        messaging_type: 'RESPONSE',
         message: { text: opts.text.slice(0, 2000) },
       }),
       signal: AbortSignal.timeout(10_000),

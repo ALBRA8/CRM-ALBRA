@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2, Mic } from 'lucide-react'
+import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, Facebook, RefreshCw, Loader2, Mic } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import type { InboxConversation, InboxMessage } from '@/lib/inbox'
 
 /**
- * Bandeja omnicanal (Fase 4): WhatsApp + Telegram + Instagram en una sola vista.
+ * Bandeja omnicanal (Fase 4): WhatsApp + Telegram + Instagram + Facebook en una sola vista.
  * Dos paneles (lista + hilo) en desktop; en móvil se alterna lista/hilo.
  * Polling cada 12s; envío por el canal de cada conversación vía /api/inbox/send.
  */
@@ -19,12 +19,14 @@ const CHANNEL_ICON = {
   whatsapp: MessageCircle,
   telegram: SendIcon,
   instagram: Instagram,
+  facebook: Facebook,
 } as const
 
 const CHANNEL_BADGE = {
   whatsapp: 'bg-emerald-100 text-emerald-700',
   telegram: 'bg-sky-100 text-sky-700',
   instagram: 'bg-pink-100 text-pink-700',
+  facebook: 'bg-blue-100 text-blue-700',
 } as const
 
 type ChannelFilter = 'all' | InboxConversation['channel']
@@ -154,6 +156,7 @@ export function InboxPage() {
     { id: 'whatsapp', label: 'WhatsApp' },
     { id: 'telegram', label: 'Telegram' },
     { id: 'instagram', label: 'Instagram' },
+    { id: 'facebook', label: 'Facebook' },
   ]
 
   return (

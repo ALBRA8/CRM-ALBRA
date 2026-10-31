@@ -357,6 +357,28 @@ class ApiClient {
     return this.request('/instagram/send', { method: 'POST', body: JSON.stringify(data) })
   }
 
+  // Facebook
+  async getFacebookConfig() {
+    return this.request('/facebook/config')
+  }
+
+  async saveFacebookConfig(data: Record<string, unknown>) {
+    return this.request('/facebook/config', { method: 'PUT', body: JSON.stringify(data) })
+  }
+
+  async disconnectFacebook() {
+    return this.request('/facebook/config', { method: 'DELETE' })
+  }
+
+  async sendFacebookMessage(data: Record<string, unknown>) {
+    return this.request('/facebook/send', { method: 'POST', body: JSON.stringify(data) })
+  }
+
+  // Chat del agente (página Chat)
+  async sendChatMessage(data: { message: string; clientId?: string }) {
+    return this.request('/chat', { method: 'POST', body: JSON.stringify(data) })
+  }
+
   async getInstagramConversations() {
     return this.request('/instagram/conversations')
   }

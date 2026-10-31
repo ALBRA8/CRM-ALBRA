@@ -187,7 +187,9 @@ export async function POST(req: NextRequest) {
 
 /** Descarga un archivo (nota de voz) del Bot API de Telegram vía getFile. */
 async function downloadTelegramFile({ token, fileId }: { token: string; fileId: string }): Promise<Buffer> {
-  const metaRes = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
+  // TELEGRAM_API_BASE: override SOLO para pruebas E2E con mock local.
+  const apiBase = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '')
+  const metaRes = await fetch(`${apiBase}/bot${token}/getFile`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file_id: fileId }),
@@ -198,7 +200,7 @@ async function downloadTelegramFile({ token, fileId }: { token: string; fileId: 
   const filePath = meta.result?.file_path
   if (!filePath) throw new Error('getFile sin file_path')
 
-  const binRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, {
+  const binRes = await fetch(`${apiBase}/file/bot${token}/${filePath}`, {
     signal: AbortSignal.timeout(30_000),
   })
   if (!binRes.ok) throw new Error(`descarga de audio ${binRes.status}`)

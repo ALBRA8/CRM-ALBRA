@@ -617,9 +617,15 @@ model Integration {
   whatsappPhoneId       String?
   whatsappCloudTokenEnc String?
   agentLeadsSecretEnc   String?      // Secret HMAC-SHA256 del webhook AGENTE-LEADS (cifrado AES-256-GCM)
+  // Facebook (Messenger de la Página). Token de página como blob cifrado:
+  // { pageToken, webhookVerifyToken }. El App Secret de Meta vive en metaAppSecretEnc
+  // (compartido con Instagram: misma app de Meta).
+  facebookTokenEnc      String?
+  facebookPageId        String?
   enableWhatsApp        Boolean      @default(false)
   enableTelegram        Boolean      @default(false)
   enableInstagram       Boolean      @default(false)
+  enableFacebook        Boolean      @default(false)
   enableGoogle          Boolean      @default(false)
   updatedAt             DateTime     @updatedAt
 }

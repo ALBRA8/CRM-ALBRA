@@ -1410,3 +1410,22 @@ Work Log:
 
 Stage Summary:
 - Inventario auditado: nada activo daña; puente GENERAL desconectado y verificable (enabled:false); conector LEADS inerte por diseño (no existe cable); round-robin de leads (interno) se mantiene ACTIVO para el inbox unificado. Sandbox listo para GO de canales.
+
+---
+Task ID: canal-multired-social-2026-10-31
+Agent: Z.ai (main)
+Task: GO del usuario — "arregla todo lo que esté mal y deja el CRM listo para hablar y comunicarse en las redes sociales".
+
+Work Log:
+- WHATSPOWER :3003 restaurado (repo @ f4f7fc9; .env local 600 gitignored con AGENTIC_2A_WEBHOOK_SECRET generado; CRM ↔ WP puente cableado con WHATSPOWER_ENABLED=true + secret compartido, valores nunca impresos). Verificado 200.
+- Telegram sin dominio: src/telegram-poller/poller.mjs (getUpdates long-poll por org → entrega al MISMO webhook /api/telegram/webhook con su secret; offsets en db/telegram-poller-state.json, cooldown 409 ante webhook activo, reintentos acotados, cero secretos en logs) + scripts/start-tg-poller.mjs. Poller de producción activo (API oficial).
+- Overrides de prueba TELEGRAM_API_BASE / META_GRAPH_BASE (default URLs oficiales; añade env + retirados del .env tras el E2E).
+- Facebook Messenger completo: schema (+facebookTokenEnc/facebookPageId/enableFacebook; db push), rutas config|webhook|send (hub.challenge + X-Hub-Signature-256 contra metaAppSecretEnc, aislamiento por facebookPageId), tab Facebook en Ajustes, canal 'facebook' en bandeja/envío/canales-por-cliente, api.ts métodos.
+- Bug pre-existente corregido de paso: api.ts carecía de sendChatMessage que chat-page.tsx ya invocaba (drift de sesión anterior).
+- E2E multi-canal (scripts/e2e-canales-2026-10-31.mjs) contra mocks locales de Telegram/Graph con el código real del CRM: 15/15 PASS (poller→webhook→IA real→envío; verify+HMAC IG/FB; rechazo de firmas/secret inválidos; timeline de 3 canales poblado). Hallazgo clave durante el E2E: el entorno del sandbox exporta APP_ENCRYPTION_KEY y tiene precedencia sobre .env — los procesos cifran/descifran con la del entorno (documentado; los tests del E2E usan la misma fuente). Org E2E y sondas eliminadas (cascade).
+- Regresión vitest: 396 tests, 391 PASS. Corregidos: inbox.test (fb ahora canal válido; roundtrip 4 canales) y albra-agent-bridge.test (env explícito con vi.stubEnv+resetModules; +caso "puente deshabilitado → fallback sin fetch"). 5 fallos PRE-EXISTENTES documentados (drift no publicado del chat: harness GATE-A/B ×2 + chat-whatsapp ×3); la rama publicable NO incluye ese drift y ahí dan 392/392.
+- Publicación preparada: rama canal-multired-social (edbd81e, padre ea87cc2=origin/main) en /home/z/repos-limpio/CRM-ALBRA — 15 ficheros (1068+/51-), sin AgentLeadEvent ni drift del chat, tsc 0, vitest 392/392, escaneo de secretos limpio. Push pendiente de credenciales (regla: nunca por chat).
+- Guía para el usuario: download/GUIA-CONEXION-REDES-SOCIALES.md (dónde pegar cada credencial; dominio HTTPS requerido solo para IG/FB webhook; Telegram vivo ya).
+
+Stage Summary:
+- CRM listo para comunicarse: WhatsApp activo (fix publicado), Telegram recibe HOY sin dominio vía poller, Instagram/Facebook construidos+probados a la espera de (a) credenciales en Ajustes y (b) dominio HTTPS para sus webhooks. Rama verificada lista para push.

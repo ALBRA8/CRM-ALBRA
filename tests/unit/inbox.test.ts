@@ -3,16 +3,17 @@ import { makeInboxKey, parseInboxKey, timelineToMessages, type InboxConversation
 
 /**
  * Funciones puras de la bandeja omnicanal (Fase 4):
- *  - Keys estables "wa:<id>" | "tg:<id>" | "ig:<id>" con parseo fail-closed.
+ *  - Keys estables "wa:<id>" | "tg:<id>" | "ig:<id>" | "fb:<id>" con parseo fail-closed.
  *  - Normalización de TimelineEvent → InboxMessage (dirección, remitente, orden).
  *  - Merge determinista de listas por actividad reciente.
  */
 
 describe('makeInboxKey / parseInboxKey', () => {
-  it('hace roundtrip por los 3 canales', () => {
+  it('hace roundtrip por los 4 canales', () => {
     expect(parseInboxKey(makeInboxKey('whatsapp', 'conv-1'))).toEqual({ channel: 'whatsapp', id: 'conv-1' })
     expect(parseInboxKey(makeInboxKey('telegram', 'client-2'))).toEqual({ channel: 'telegram', id: 'client-2' })
     expect(parseInboxKey(makeInboxKey('instagram', 'client-3'))).toEqual({ channel: 'instagram', id: 'client-3' })
+    expect(parseInboxKey(makeInboxKey('facebook', 'client-4'))).toEqual({ channel: 'facebook', id: 'client-4' })
   })
 
   it('acepta ids con caracteres de cuid, teléfono y chat id negativo', () => {
@@ -26,7 +27,7 @@ describe('makeInboxKey / parseInboxKey', () => {
     expect(parseInboxKey('wa')).toBeNull()
     expect(parseInboxKey(':sin-prefix')).toBeNull()
     expect(parseInboxKey('wa:')).toBeNull()
-    expect(parseInboxKey('fb:algo')).toBeNull()
+    expect(parseInboxKey('xx:prefijo-desconocido')).toBeNull()
     expect(parseInboxKey('wa:con espacio')).toBeNull()
     expect(parseInboxKey('wa:' + 'x'.repeat(300))).toBeNull()
     expect(parseInboxKey(null as unknown as string)).toBeNull()

@@ -1,15 +1,16 @@
 import { db } from './db'
 import { decryptSecret } from './crypto'
-import { sendTelegramBotMessage, sendInstagramGraphMessage, getIntegration, parseTelegramState, parseInstagramState } from './integrations'
+import { sendTelegramBotMessage, sendInstagramGraphMessage, sendFacebookGraphMessage, getIntegration, parseTelegramState, parseInstagramState, parseFacebookState } from './integrations'
 import { recordTimelineEvent } from './timeline'
 
 /**
  * Bandeja omnicanal (Fase 4 del plan maestro).
  *
- * Unifica en una sola lista las conversaciones de los 3 canales:
+ * Unifica en una sola lista las conversaciones de los 4 canales:
  *   - WhatsApp (daemon Baileys) → tabla WhatsAppConversation/WhatsAppMessage
  *   - Telegram  → TimelineEvent type="telegram" agrupado por cliente
  *   - Instagram → TimelineEvent type="instagram" agrupado por cliente
+ *   - Facebook  → TimelineEvent type="facebook" agrupado por cliente (Messenger de la Página)
  *
  * Decisiones de diseño:
  *  - Cada conversación tiene una `key` estable: "wa:<convId>" | "tg:<clientId>" | "ig:<clientId>".
@@ -23,12 +24,12 @@ import { recordTimelineEvent } from './timeline'
  *  - Nunca lanza: si un canal falla, se degrada a lista vacía de ese canal.
  */
 
-export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram'
+export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram' | 'facebook'
 
 export interface InboxConversation {
   key: string
   channel: InboxChannel
-  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram'
+  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Facebook'
   contactName: string
   /** Handle real para ENVIAR: teléfono WA / chatId TG / recipientId IG. */
   contactHandle: string
@@ -55,6 +56,7 @@ const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = 
   whatsapp: 'WhatsApp',
   telegram: 'Telegram',
   instagram: 'Instagram',
+  facebook: 'Facebook',
 }
 
 /** Prefijo de la key del canal WhatsApp directo (sin conversación previa). */
@@ -87,7 +89,7 @@ export function parseWaNewKey(key: string): string | null {
 // ---------- helpers de key (puros, testeables) ----------
 
 export function makeInboxKey(channel: InboxChannel, id: string): string {
-  const prefix = channel === 'whatsapp' ? 'wa' : channel === 'telegram' ? 'tg' : 'ig'
+  const prefix = channel === 'whatsapp' ? 'wa' : channel === 'telegram' ? 'tg' : channel === 'instagram' ? 'ig' : 'fb'
   return `${prefix}:${id}`
 }
 
@@ -102,6 +104,7 @@ export function parseInboxKey(key: string): { channel: InboxChannel; id: string 
   if (prefix === 'wa') return { channel: 'whatsapp', id }
   if (prefix === 'tg') return { channel: 'telegram', id }
   if (prefix === 'ig') return { channel: 'instagram', id }
+  if (prefix === 'fb') return { channel: 'facebook', id }
   return null
 }
 
@@ -185,7 +188,7 @@ async function listWhatsAppConversations(orgId: string, limit: number): Promise<
  */
 async function listTimelineConversations(
   orgId: string,
-  channel: 'telegram' | 'instagram',
+  channel: 'telegram' | 'instagram' | 'facebook',
   limit: number
 ): Promise<InboxConversation[]> {
   try {
@@ -246,12 +249,13 @@ async function listTimelineConversations(
 
 /** Lista unificada, ordenada por actividad reciente. */
 export async function listInbox(orgId: string, limit = 100): Promise<InboxConversation[]> {
-  const [wa, tg, ig] = await Promise.all([
+  const [wa, tg, ig, fb] = await Promise.all([
     listWhatsAppConversations(orgId, limit),
     listTimelineConversations(orgId, 'telegram', limit),
     listTimelineConversations(orgId, 'instagram', limit),
+    listTimelineConversations(orgId, 'facebook', limit),
   ])
-  return [...wa, ...tg, ...ig]
+  return [...wa, ...tg, ...ig, ...fb]
     .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
     .slice(0, limit)
 }
@@ -316,7 +320,7 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
   }
   try {
     const events = await db.timelineEvent.findMany({
-      where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram'] } },
+      where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram', 'facebook'] } },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: { type: true, metadata: true },
@@ -340,6 +344,19 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
         key: makeInboxKey('instagram', clientId),
         channel: 'instagram',
         channelLabel: 'Instagram',
+        contactHandle: String(m.senderId || m.recipientId),
+      })
+    }
+    const fb = events.find((e) => {
+      const m = safeMetadata(e.metadata)
+      return e.type === 'facebook' && !!(m.senderId || m.recipientId)
+    })
+    if (fb) {
+      const m = safeMetadata(fb.metadata)
+      options.push({
+        key: makeInboxKey('facebook', clientId),
+        channel: 'facebook',
+        channelLabel: 'Facebook',
         contactHandle: String(m.senderId || m.recipientId),
       })
     }
@@ -552,26 +569,57 @@ export async function sendInboxMessage(opts: {
     }
 
     // Instagram
-    const igState = parseInstagramState(integration.instagramTokenEnc)
-    if (!igState.token) return { ok: false, error: 'Instagram no configurado. Guarda el Access Token en Configuración → Instagram.' }
-    const result = await sendInstagramGraphMessage({
-      token: igState.token,
-      accountId: integration.instagramAccountId || '',
-      recipientId: opts.contactHandle,
-      text,
-    })
-    if (!result.ok) return { ok: false, error: `Instagram no pudo enviar: ${result.error}` }
-    await recordTimelineEvent({
-      orgId: opts.orgId,
-      clientId: opts.clientId || null,
-      type: 'instagram',
-      title: 'Mensaje enviado por Instagram',
-      description: text.slice(0, 300),
-      metadata: { recipientId: String(opts.contactHandle), direction: 'out' },
-      source: 'manual',
-      userId: opts.userId,
-    })
-    return { ok: true }
+    if (parsed.channel === 'instagram') {
+      const igState = parseInstagramState(integration.instagramTokenEnc)
+      if (!igState.token) return { ok: false, error: 'Instagram no configurado. Guarda el Access Token en Configuración → Instagram.' }
+      const result = await sendInstagramGraphMessage({
+        token: igState.token,
+        accountId: integration.instagramAccountId || '',
+        recipientId: opts.contactHandle,
+        text,
+      })
+      if (!result.ok) return { ok: false, error: `Instagram no pudo enviar: ${result.error}` }
+      await recordTimelineEvent({
+        orgId: opts.orgId,
+        clientId: opts.clientId || null,
+        type: 'instagram',
+        title: 'Mensaje enviado por Instagram',
+        description: text.slice(0, 300),
+        metadata: { recipientId: String(opts.contactHandle), direction: 'out' },
+        source: 'manual',
+        userId: opts.userId,
+      })
+      return { ok: true }
+    }
+
+    // Facebook (Messenger de la Página)
+    if (parsed.channel === 'facebook') {
+      const fbState = parseFacebookState(integration.facebookTokenEnc)
+      if (!fbState.pageToken || !integration.facebookPageId) {
+        return { ok: false, error: 'Facebook no configurado. Guarda el Page Token y el Page ID en Configuración → Facebook.' }
+      }
+      const result = await sendFacebookGraphMessage({
+        token: fbState.pageToken,
+        pageId: integration.facebookPageId,
+        recipientId: opts.contactHandle,
+        text,
+      })
+      if (!result.ok) return { ok: false, error: `Facebook no pudo enviar: ${result.error}` }
+      await recordTimelineEvent({
+        orgId: opts.orgId,
+        clientId: opts.clientId || null,
+        type: 'facebook',
+        title: 'Mensaje enviado por Facebook',
+        description: text.slice(0, 300),
+        metadata: { recipientId: String(opts.contactHandle), direction: 'out' },
+        source: 'manual',
+        userId: opts.userId,
+      })
+      return { ok: true }
+    }
+
+    // Canal desconocido (parseInboxKey solo produce los 4 de arriba; fail-closed)
+    return { ok: false, error: 'Canal no soportado' }
   } catch (err) {
     console.error('[inbox] sendInboxMessage falló', err)
     return { ok: false, error: 'No se pudo enviar el mensaje. Intenta de nuevo.' }

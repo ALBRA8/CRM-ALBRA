@@ -60,6 +60,7 @@ import {
   Download,
   Upload,
   Instagram,
+  Facebook,
   Search,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
@@ -68,6 +69,7 @@ import { TemplatesTab } from './templates-tab'
 import { CustomFieldsTab } from './custom-fields-tab'
 import { CurrencySelector } from './currency-selector'
 import { InstagramTab } from './instagram-tab'
+import { FacebookTab } from './facebook-tab'
 import { PushNotificationsCard } from './push-notifications-card'
 import { KnowledgeCard } from './knowledge-card'
 // Force recompile trigger
@@ -983,6 +985,9 @@ export function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="telegram" className="gap-1.5 text-xs">
             <Send className="w-3.5 h-3.5" /> Telegram
+          </TabsTrigger>
+          <TabsTrigger value="facebook" className="gap-1.5 text-xs">
+            <Facebook className="w-3.5 h-3.5" /> Facebook
           </TabsTrigger>
           <TabsTrigger value="email" className="gap-1.5 text-xs">
             <Mail className="w-3.5 h-3.5" /> Email SMTP
@@ -1958,6 +1963,13 @@ export function SettingsPage() {
         <TabsContent value="instagram" className="space-y-6 mt-4">
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
             <InstagramTab />
+          </motion.div>
+        </TabsContent>
+
+        {/* ============ TAB: Facebook ============ */}
+        <TabsContent value="facebook" className="space-y-6 mt-4">
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+            <FacebookTab />
           </motion.div>
         </TabsContent>
 
