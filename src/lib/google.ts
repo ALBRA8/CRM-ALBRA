@@ -18,6 +18,9 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/spreadsheets.readonly',
+  'https://www.googleapis.com/auth/drive.file',
+  'openid',
+  'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
 ]
 
@@ -65,11 +68,37 @@ export async function saveGoogleRefreshToken(orgId: string, refreshToken: string
   })
 }
 
+/** Email de la cuenta conectada (userinfo al terminar el OAuth). Se muestra en Ajustes. */
+export async function saveGoogleEmail(orgId: string, email: string): Promise<void> {
+  await db.integration.upsert({
+    where: { organizationId: orgId },
+    update: { googleEmail: email },
+    create: { organizationId: orgId, googleEmail: email },
+  })
+}
+
 export async function clearGoogleConnection(orgId: string): Promise<void> {
   await db.integration.updateMany({
     where: { organizationId: orgId },
-    data: { googleRefreshTokenEnc: null, enableGoogle: false },
+    data: { googleRefreshTokenEnc: null, googleEmail: null, enableGoogle: false },
   })
+}
+
+/**
+ * Bases de Google. Override SOLO para pruebas E2E con mock local
+ * (GOOGLE_AUTH_BASE / GOOGLE_TOKEN_BASE / GOOGLE_USERINFO_BASE);
+ * en producción siempre las oficiales.
+ */
+export function googleAuthBase(): string {
+  return (process.env.GOOGLE_AUTH_BASE || 'https://accounts.google.com').replace(/\/+$/, '')
+}
+
+export function googleTokenBase(): string {
+  return (process.env.GOOGLE_TOKEN_BASE || 'https://oauth2.googleapis.com').replace(/\/+$/, '')
+}
+
+export function googleUserinfoBase(): string {
+  return (process.env.GOOGLE_USERINFO_BASE || 'https://openidconnect.googleapis.com').replace(/\/+$/, '')
 }
 
 /** Intercambia el refresh token por un access token (60 min). */
@@ -78,7 +107,7 @@ export async function getAccessToken(orgId: string): Promise<string | null> {
   const refreshToken = await getGoogleRefreshToken(orgId)
   if (!client || !refreshToken) return null
   try {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
+    const res = await fetch(`${googleTokenBase()}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -97,12 +126,20 @@ export async function getAccessToken(orgId: string): Promise<string | null> {
   }
 }
 
-/** Intercambia un authorization code (callback OAuth) por tokens y guarda el refresh. */
-export async function exchangeCodeForTokens(orgId: string, code: string, redirectUri: string): Promise<boolean> {
+/**
+ * Intercambia un authorization code (callback OAuth) por tokens, guarda el
+ * refresh token y resuelve el email de la cuenta (userinfo). Devuelve un
+ * resultado estructurado con el email para mostrarlo en Ajustes.
+ */
+export async function exchangeCodeForTokens(
+  orgId: string,
+  code: string,
+  redirectUri: string
+): Promise<{ ok: boolean; email?: string; error?: string }> {
   const client = await getGoogleClientConfig(orgId)
-  if (!client) return false
+  if (!client) return { ok: false, error: 'no_client_config' }
   try {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
+    const res = await fetch(`${googleTokenBase()}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -114,13 +151,34 @@ export async function exchangeCodeForTokens(orgId: string, code: string, redirec
       }),
       signal: AbortSignal.timeout(10_000),
     })
-    if (!res.ok) return false
-    const data = (await res.json()) as { refresh_token?: string }
-    if (!data.refresh_token) return false
+    if (!res.ok) {
+      await res.text().catch(() => '')
+      return { ok: false, error: 'token_endpoint_reject' }
+    }
+    const data = (await res.json()) as { refresh_token?: string; access_token?: string }
+    if (!data.refresh_token) return { ok: false, error: 'no_refresh_token' }
     await saveGoogleRefreshToken(orgId, data.refresh_token)
-    return true
+
+    // Identidad de la cuenta (email) — best-effort: si falla, la conexión sigue válida
+    let email: string | undefined
+    try {
+      const uiRes = await fetch(`${googleUserinfoBase()}/v1/userinfo`, {
+        headers: { Authorization: `Bearer ${data.access_token || ''}` },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (uiRes.ok) {
+        const ui = (await uiRes.json()) as { email?: string }
+        if (ui.email) {
+          email = ui.email
+          await saveGoogleEmail(orgId, ui.email)
+        }
+      }
+    } catch {
+      // sin email no se rompe la conexión
+    }
+    return { ok: true, email }
   } catch {
-    return false
+    return { ok: false, error: 'token_exchange_failed' }
   }
 }
 
@@ -154,7 +212,7 @@ export function buildOAuthUrl(clientId: string, redirectUri: string, state: stri
     include_granted_scopes: 'true',
     state,
   })
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+  return `${googleAuthBase()}/o/oauth2/v2/auth?${params.toString()}`
 }
 
 /** Construye un mensaje RFC822 simple y lo envía por Gmail API. */

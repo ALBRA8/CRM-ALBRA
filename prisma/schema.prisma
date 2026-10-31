@@ -613,6 +613,7 @@ model Integration {
   instagramAccountId    String?
   googleRefreshTokenEnc String?
   googleClientJsonEnc   String?
+  googleEmail           String?   // cuenta conectada vía OAuth ("Conectar con Google")
   metaAppSecretEnc      String?
   whatsappPhoneId       String?
   whatsappCloudTokenEnc String?

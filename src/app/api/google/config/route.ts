@@ -16,10 +16,11 @@ export async function GET(req: NextRequest) {
     const auth = requireAdmin(req)
     const client = await getGoogleClientConfig(auth.orgId)
     const refreshToken = await getGoogleRefreshToken(auth.orgId)
-    const integration = await db.integration.findUnique({ where: { organizationId: auth.orgId }, select: { enableGoogle: true } })
+    const integration = await db.integration.findUnique({ where: { organizationId: auth.orgId }, select: { enableGoogle: true, googleEmail: true } })
     return json({
       configured: !!client,
       connected: !!refreshToken,
+      googleEmail: integration?.googleEmail || null,
       config: client
         ? {
             clientId: client.clientId,

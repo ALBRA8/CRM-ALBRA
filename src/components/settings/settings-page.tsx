@@ -401,8 +401,11 @@ export function SettingsPage() {
   const [googleClientId, setGoogleClientId] = useState('')
   const [googleClientSecret, setGoogleClientSecret] = useState('')
   const [googleConnected, setGoogleConnected] = useState(false)
+  const [googleEmail, setGoogleEmail] = useState('')
   const [googleScopes, setGoogleScopes] = useState<string[]>([])
   const [googleLoading, setGoogleLoading] = useState(false)
+  // URI de retorno registrable en Google Cloud (Credenciales → URIs autorizadas)
+  const [googleRedirectUri, setGoogleRedirectUri] = useState('/api/google/auth')
 
   // Inventory state
   const [invSpreadsheetId, setInvSpreadsheetId] = useState('')
@@ -686,8 +689,9 @@ export function SettingsPage() {
   // ============ Google handlers ============
   const loadGoogleConfig = async () => {
     try {
-      const data = await api.getGoogleConfig() as { configured: boolean; connected: boolean; config?: { scopes?: string[] } }
+      const data = await api.getGoogleConfig() as { configured: boolean; connected: boolean; googleEmail?: string | null; config?: { scopes?: string[] } }
       setGoogleConnected(data.connected)
+      setGoogleEmail(data.googleEmail || '')
       if (data.config?.scopes) {
         setGoogleScopes(data.config.scopes)
       }
@@ -695,6 +699,31 @@ export function SettingsPage() {
       // Not configured yet
     }
   }
+
+  // Retorno del OAuth de Google (?google_connected=<email> | ?google_error=<código>)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('google_connected')
+    const error = params.get('google_error')
+    if (!connected && !error) return
+    if (connected) {
+      toast.success(connected !== '1' ? `Google conectado: ${connected}` : 'Google Workspace conectado')
+    } else {
+      const msgs: Record<string, string> = {
+        csrf_invalid: 'Sesión OAuth inválida: vuelve a pulsar “Conectar con Google”.',
+        csrf_expired: 'La autorización expiró (10 min): inténtalo de nuevo.',
+        user_cancel: 'Conexión cancelada en Google.',
+        missing_app_credentials: 'Falta el Client ID o el Client Secret de Google.',
+        token_endpoint_reject: 'Google rechazó el código: verifica el Client Secret y la URI de retorno.',
+        no_refresh_token: 'Google no devolvió refresh token: quita el acceso de la app en myaccount.google.com/permissions y reintenta.',
+        provider_error: 'Google reportó un error durante la autorización.',
+      }
+      toast.error(msgs[error || ''] || `Error de conexión con Google (${error})`)
+    }
+    window.history.replaceState({}, '', '/settings?tab=google')
+    void loadGoogleConfig()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleGoogleSaveAndConnect = async () => {
     if (!googleClientId.trim() || !googleClientSecret.trim()) {
@@ -717,6 +746,7 @@ export function SettingsPage() {
     try {
       await api.disconnectGoogle()
       setGoogleConnected(false)
+      setGoogleEmail('')
       setGoogleScopes([])
       toast.success('Cuenta de Google desconectada')
     } catch {
@@ -725,6 +755,16 @@ export function SettingsPage() {
       setGoogleLoading(false)
     }
   }
+
+  // Logo "G" multicolor oficial de Google (SVG inline, sin dependencias)
+  const GoogleG = ({ className = 'w-4 h-4' }: { className?: string }) => (
+    <svg className={className} viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
+      <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
+      <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z" />
+      <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
+    </svg>
+  )
 
   // ============ Inventory handlers ============
   const loadInventoryConfig = async () => {
@@ -2008,14 +2048,17 @@ export function SettingsPage() {
                     </h3>
                     <p className={`text-sm mt-1 ${googleConnected ? 'text-emerald-700' : 'text-slate-500'}`}>
                       {googleConnected
-                        ? 'Tu cuenta de Google está vinculada. Puedes usar Gmail, Calendar y Sheets.'
-                        : 'Conecta tu cuenta de Google para habilitar Gmail, Calendar y sincronización de Sheets.'}
+                        ? googleEmail
+                          ? `Conectado como ${googleEmail}. Gmail, Calendar, Sheets y Drive están activos.`
+                          : 'Tu cuenta de Google está vinculada. Puedes usar Gmail, Calendar, Sheets y Drive.'
+                        : 'Conecta tu cuenta de Google para habilitar Gmail, Calendar, Sheets y Drive.'}
                     </p>
                     {googleScopes.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {googleScopes.some(s => s.includes('gmail')) && <Badge variant="outline" className="text-[10px] border-emerald-200 text-emerald-700">Gmail</Badge>}
                         {googleScopes.some(s => s.includes('calendar')) && <Badge variant="outline" className="text-[10px] border-emerald-200 text-emerald-700">Calendar</Badge>}
                         {googleScopes.some(s => s.includes('sheets')) && <Badge variant="outline" className="text-[10px] border-emerald-200 text-emerald-700">Sheets</Badge>}
+                        {googleScopes.some(s => s.includes('drive')) && <Badge variant="outline" className="text-[10px] border-emerald-200 text-emerald-700">Drive</Badge>}
                       </div>
                     )}
                   </div>
@@ -2047,7 +2090,9 @@ export function SettingsPage() {
                     <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
                       <CheckCircle className="w-8 h-8 text-emerald-600" />
                     </div>
-                    <p className="text-sm text-emerald-700 mb-4">Cuenta de Google vinculada correctamente</p>
+                    <p className="text-sm text-emerald-700 mb-1">Cuenta de Google vinculada correctamente</p>
+                    {googleEmail && <p className="text-xs font-mono text-slate-500 mb-4">{googleEmail}</p>}
+                    {!googleEmail && <div className="mb-4" />}
                     <Button variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 gap-2" onClick={handleGoogleDisconnect} disabled={googleLoading}>
                       <Unplug className="w-4 h-4" /> Desconectar Google
                     </Button>
@@ -2076,15 +2121,35 @@ export function SettingsPage() {
                         placeholder="GOCSPX-xxxx"
                         className="font-mono text-sm"
                       />
+                      <p className="text-xs text-slate-500">
+                        El Client Secret queda cifrado con AES-256-GCM y nunca vuelve al navegador.
+                      </p>
                     </div>
+                    <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+                      <div className="flex items-center gap-2 text-xs text-slate-600 mb-1">
+                        <Send className="w-3 h-3" />
+                        <span className="font-semibold">URI de redirección autorizada (regístrala en Google Cloud)</span>
+                      </div>
+                      <code className="text-xs text-slate-800 break-all">
+                        {typeof window !== 'undefined' ? `${window.location.origin}/api/google/auth` : googleRedirectUri}
+                      </code>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Google Cloud Console → APIs y servicios → Credenciales → tu OAuth Client → “URIs de redirección autorizadas”.
+                      </p>
+                    </div>
+                    {/* Botón estilo GitHub/ManyChat: blanco con la G multicolor */}
                     <Button
                       onClick={handleGoogleSaveAndConnect}
                       disabled={googleLoading || !googleClientId.trim() || !googleClientSecret.trim()}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-500/25 gap-2 w-full"
+                      className="w-full h-11 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 shadow-sm font-medium"
+                      variant="outline"
                     >
-                      {googleLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
-                      Conectar Cuenta de Google
+                      {googleLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <GoogleG className="w-4 h-4" />}
+                      Conectar con Google
                     </Button>
+                    <p className="text-xs text-slate-500 text-center">
+                      Te llevará a Google para elegir tu cuenta (igual que “Continuar con Google” de GitHub) y volverás aquí solo.
+                    </p>
                   </>
                 )}
               </CardContent>
@@ -2096,7 +2161,7 @@ export function SettingsPage() {
             <Card className="border-0 shadow-sm">
               <CardContent className="p-5">
                 <h4 className="font-semibold text-sm text-slate-900 mb-3">Funciones de Google Workspace</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="bg-emerald-50 rounded-xl p-3">
                     <Mail className="w-5 h-5 text-emerald-600 mb-1.5" />
                     <p className="text-xs font-semibold text-slate-700">Gmail</p>
@@ -2111,6 +2176,11 @@ export function SettingsPage() {
                     <Table className="w-5 h-5 text-violet-500 mb-1.5" />
                     <p className="text-xs font-semibold text-slate-700">Sheets</p>
                     <p className="text-[11px] text-slate-500 mt-0.5">Sincroniza inventario desde hojas</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-xl p-3">
+                    <Cloud className="w-5 h-5 text-blue-500 mb-1.5" />
+                    <p className="text-xs font-semibold text-slate-700">Drive</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Guarda cotizaciones y archivos</p>
                   </div>
                 </div>
               </CardContent>
