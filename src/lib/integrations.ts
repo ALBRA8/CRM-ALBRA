@@ -342,3 +342,113 @@ export async function getHandoffKeywords(orgId: string): Promise<string[]> {
 export function generateWebhookSecret(): string {
   return randomBytes(24).toString('hex')
 }
+
+// ==================== TIKTOK (wiring-ready) ====================
+// Los DMs por API de TikTok (Business Messaging API) están vetados al programa
+// de socios (TikTok Marketing Partner). Este bloque deja el canal COMPLETO:
+// OAuth Login Kit + config cifrada + webhook con verificación + envío por
+// endpoint configurable. Se activa sin cambios de código cuando TikTok
+// apruebe la app de la organización y se registre sendEndpoint.
+
+export interface TikTokState {
+  /** Token de acceso Login Kit (corto ~24h; renovar con refreshToken) */
+  accessToken?: string
+  refreshToken?: string
+  openId?: string
+  displayName?: string
+  /** client_key público de la app de TikTok */
+  appKey?: string
+  appSecret?: string
+  webhookVerifyToken?: string
+  /** Scopes extra aprobados por TikTok (además de user_info.basic) */
+  extraScopes?: string
+  /** Endpoint de envío del Business Messaging API (lo asigna TikTok al aprobar) */
+  sendEndpoint?: string
+}
+
+export function parseTikTokState(enc: string | null | undefined): TikTokState {
+  const raw = decryptSecret(enc)
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as TikTokState
+    if (typeof parsed === 'object' && parsed !== null) return parsed
+    return { accessToken: raw }
+  } catch {
+    return { accessToken: raw }
+  }
+}
+
+export function encodeTikTokState(state: TikTokState): string | null {
+  return encryptSecret(JSON.stringify(state))
+}
+
+/** Base del Login Kit / autorización de TikTok. Override SOLO para tests con mock. */
+export function tiktokAuthBase(): string {
+  return (process.env.TIKTOK_AUTH_BASE || 'https://www.tiktok.com').replace(/\/+$/, '')
+}
+
+/** Base de la Open API de TikTok. Override SOLO para tests con mock. */
+export function tiktokApiBase(): string {
+  return (process.env.TIKTOK_API_BASE || 'https://open.tiktokapis.com').replace(/\/+$/, '')
+}
+
+/**
+ * Envía un DM por el Business Messaging API de TikTok. Requiere que la
+ * organización tenga asignado sendEndpoint (lo provee TikTok al aprobar el
+ * acceso de socio). Sin él, devuelve un error estructurado — nunca inventa rutas.
+ */
+export async function sendTikTokBusinessMessage(opts: {
+  state: TikTokState
+  recipientId: string
+  text: string
+}): Promise<{ ok: boolean; error?: string; notAuthorized?: boolean }> {
+  const { state } = opts
+  if (!state.accessToken || !state.sendEndpoint) {
+    return {
+      ok: false,
+      notAuthorized: true,
+      error:
+        'TikTok Business Messaging no autorizado aún: requiere aprobación de la app en el programa de socios de TikTok y registrar el endpoint de envío en Ajustes → TikTok.',
+    }
+  }
+  try {
+    const res = await fetch(`${tiktokApiBase()}${state.sendEndpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.accessToken}`,
+      },
+      body: JSON.stringify({
+        conversation_id: opts.recipientId,
+        content: { text: opts.text.slice(0, 1000) },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } }
+    if (res.ok) return { ok: true }
+    return { ok: false, error: data?.error?.message || `HTTP ${res.status}` }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Verifica la firma X-TikTok-Signature del webhook de TikTok. TikTok ha usado
+ * variantes (secret sobre body, o sobre timestamp+body): se aceptan ambas en
+ * tiempo constante. Devuelve true si alguna coincide.
+ */
+export function verifyTikTokSignature(
+  rawBody: string,
+  appSecret: string,
+  signature: string | null,
+  timestamp: string | null,
+): boolean {
+  if (!signature) return false
+  const candidates: string[] = [rawBody]
+  if (timestamp) candidates.push(`${timestamp}${rawBody}`, `${timestamp}.${rawBody}`)
+  for (const msg of candidates) {
+    const mac = createHmac('sha256', appSecret).update(msg).digest('hex')
+    if (safeEquals(mac, signature)) return true
+  }
+  return false
+}

@@ -357,6 +357,23 @@ class ApiClient {
     return this.request('/instagram/send', { method: 'POST', body: JSON.stringify(data) })
   }
 
+  // TikTok
+  async getTikTokConfig() {
+    return this.request('/tiktok/config')
+  }
+
+  async saveTikTokConfig(data: Record<string, unknown>) {
+    return this.request('/tiktok/config', { method: 'PUT', body: JSON.stringify(data) })
+  }
+
+  async disconnectTikTok() {
+    return this.request('/tiktok/config', { method: 'DELETE' })
+  }
+
+  async sendTikTokMessage(data: Record<string, unknown>) {
+    return this.request('/tiktok/send', { method: 'POST', body: JSON.stringify(data) })
+  }
+
   // Facebook
   async getFacebookConfig() {
     return this.request('/facebook/config')

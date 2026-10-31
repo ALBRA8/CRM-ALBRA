@@ -622,10 +622,16 @@ model Integration {
   // (compartido con Instagram: misma app de Meta).
   facebookTokenEnc      String?
   facebookPageId        String?
+  // TikTok. Blob cifrado: { accessToken, refreshToken?, openId?, displayName?,
+  // appKey?, appSecret?, webhookVerifyToken?, extraScopes?, sendEndpoint? }.
+  // Los DMs por API exigen acceso Business Messaging (programa de socios de TikTok):
+  // el canal queda cableado y se activa cuando TikTok apruebe la app.
+  tiktokTokenEnc        String?
   enableWhatsApp        Boolean      @default(false)
   enableTelegram        Boolean      @default(false)
   enableInstagram       Boolean      @default(false)
   enableFacebook        Boolean      @default(false)
+  enableTikTok          Boolean      @default(false)
   enableGoogle          Boolean      @default(false)
   updatedAt             DateTime     @updatedAt
 }
