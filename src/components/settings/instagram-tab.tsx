@@ -35,6 +35,7 @@ interface IgConfig {
   hasWebhookSecret: boolean
   isActive: boolean
   hasAccessToken: boolean
+  metaAppId: string
 }
 
 interface IgStatus {
@@ -53,6 +54,8 @@ export function InstagramTab() {
   const [accessToken, setAccessToken] = useState('')
   const [webhookVerifyToken, setWebhookVerifyToken] = useState('')
   const [webhookSecret, setWebhookSecret] = useState('')
+  const [metaAppId, setMetaAppId] = useState('')
+  const [connecting, setConnecting] = useState(false)
 
   const loadConfig = useCallback(async () => {
     setLoading(true)
@@ -63,6 +66,7 @@ export function InstagramTab() {
         setIgAccountId(data.config.igAccountId || '')
         setAccessToken(data.config.accessToken || '')
         setWebhookVerifyToken(data.config.webhookVerifyToken || '')
+        setMetaAppId(data.config.metaAppId || '')
       }
     } catch {
       // Sin config aún
@@ -75,6 +79,37 @@ export function InstagramTab() {
     void loadConfig()
   }, [loadConfig])
 
+  // Retorno del OAuth de Meta: /settings?tab=instagram&ig_connected=... | ig_error=...
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('ig_connected')
+    const igError = params.get('ig_error')
+    if (!connected && !igError) return
+    if (connected) {
+      toast.success(`Instagram @${connected} conectado mediante Meta`)
+      void loadConfig()
+    }
+    if (igError) {
+      const msgs: Record<string, string> = {
+        missing_app_credentials:
+          'Falta el App ID o el App Secret de tu app de Meta. Complétalos aquí y vuelve a intentar.',
+        user_cancel: 'Autorización cancelada en Meta.',
+        access_denied: 'Meta denegó el acceso. Revisa los permisos de tu app.',
+        csrf_invalid: 'Sesión de autorización inválida. Vuelve a pulsar «Conectar mediante Meta».',
+        csrf_expired: 'La autorización expiró (10 min). Vuelve a pulsar «Conectar mediante Meta».',
+        token_exchange_failed:
+          'Meta rechazó el código. Verifica App ID, App Secret y que la URL de redirección esté registrada en tu app.',
+        long_lived_token_failed: 'No se pudo extender el token. Revisa el App Secret.',
+        pages_fetch_failed: 'No se pudieron listar tus páginas de Facebook.',
+        no_ig_business_linked:
+          'Ninguna Página de Facebook tiene una cuenta de Instagram Business/Creator vinculada.',
+      }
+      toast.error(msgs[igError] || `Error de conexión con Meta: ${igError}`)
+    }
+    window.history.replaceState({}, '', '/settings?tab=instagram')
+  }, [loadConfig])
+
   const handleSave = async () => {
     setSaving(true)
     try {
@@ -83,6 +118,7 @@ export function InstagramTab() {
         accessToken: accessToken.startsWith('••••') ? undefined : accessToken,
         webhookVerifyToken,
         webhookSecret: webhookSecret || undefined,
+        metaAppId,
       })
       toast.success('Configuración de Instagram guardada')
       await loadConfig()
@@ -109,10 +145,30 @@ export function InstagramTab() {
     }
   }
 
+  // Flujo ManyChat: navegador → /api/instagram/oauth/start → diálogo de Meta.
+  // No es una llamada fetch: Meta exige navegación superior para mostrar el diálogo.
+  const handleMetaConnect = () => {
+    if (!metaAppId.trim()) {
+      toast.error('Primero guarda el App ID de tu app de Meta (campo de abajo).')
+      return
+    }
+    if (!status.config?.hasWebhookSecret) {
+      toast.error('Primero guarda el App Secret de tu app de Meta (campo «App Secret (HMAC)»).')
+      return
+    }
+    setConnecting(true)
+    window.location.href = '/api/instagram/oauth/start'
+  }
+
   const webhookUrl =
     typeof window !== 'undefined'
       ? `${window.location.origin}/api/instagram/webhook`
       : '/api/instagram/webhook'
+
+  const oauthCallbackUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/api/instagram/oauth/callback`
+      : '/api/instagram/oauth/callback'
 
   if (loading) {
     return (
@@ -124,6 +180,92 @@ export function InstagramTab() {
 
   return (
     <div className="space-y-6">
+      {/* ============ Conexión automática estilo ManyChat (OAuth Meta) ============ */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-fuchsia-500 via-rose-500 to-amber-500 rounded-lg flex items-center justify-center">
+                <Instagram className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  Canal de Instagram
+                  {status.config?.isActive && (
+                    <Badge className="bg-emerald-100 text-emerald-700">Conectado</Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Comienza a comunicarte con tus clientes mediante mensajes de Instagram
+                </CardDescription>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="ig-meta-app-id">App ID de tu app de Meta</Label>
+            <div className="flex gap-2">
+              <Input
+                id="ig-meta-app-id"
+                value={metaAppId}
+                onChange={(e) => setMetaAppId(e.target.value)}
+                placeholder="1234567890123456"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleSave}
+                disabled={saving || !metaAppId}
+                className="shrink-0"
+              >
+                {saving ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4 mr-2" />
+                )}
+                Guardar
+              </Button>
+            </div>
+            <p className="text-xs text-slate-500">
+              El App ID es público (Meta Developers &gt; Tu app &gt; Configuración básica). El App
+              Secret va cifrado en el campo «App Secret (HMAC)» de la configuración manual de abajo.
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+            <div className="flex items-center gap-2 text-xs text-slate-600 mb-1">
+              <Send className="w-3 h-3" />
+              <span className="font-semibold">URL de redirección OAuth (regístrala en tu app de Meta)</span>
+            </div>
+            <code className="text-xs text-slate-800 break-all">{oauthCallbackUrl}</code>
+            <p className="text-xs text-slate-500 mt-1">
+              Meta Developers &gt; Tu app &gt; Facebook Login &gt; Configuración &gt; URI de
+              redirección OAuth válidos. Debe coincidir exactamente.
+            </p>
+          </div>
+
+          <Button
+            onClick={handleMetaConnect}
+            disabled={connecting || !metaAppId}
+            className="w-full h-11 text-white font-semibold bg-[#1877F2] hover:bg-[#166fe5]"
+          >
+            {connecting ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Instagram className="w-4 h-4 mr-2" />
+            )}
+            Conectar mediante Meta
+          </Button>
+          <p className="text-xs text-slate-500 -mt-2">
+            Igual que ManyChat: te llevamos a Meta para autorizar la cuenta y volvemos con el token
+            guardado cifrado (AES-256-GCM). Tu app de Meta debe tener tu cuenta como administrador
+            o desarrollador — así no necesitas revisión de Meta para empezar.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* ============ Configuración manual (avanzada) ============ */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -139,7 +281,7 @@ export function InstagramTab() {
                   )}
                 </CardTitle>
                 <CardDescription>
-                  Recibe y envía mensajes directos de Instagram con auto-respuesta IA
+                  Configuración manual (avanzada) — token y webhook sin OAuth
                 </CardDescription>
               </div>
             </div>

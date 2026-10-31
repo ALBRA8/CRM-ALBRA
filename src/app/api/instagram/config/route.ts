@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
         hasWebhookSecret: !!state.webhookSecret,
         isActive: integration.enableInstagram && !!state.token,
         hasAccessToken: !!state.token,
+        metaAppId: state.metaAppId || '',
       },
     })
   })
@@ -35,6 +36,7 @@ interface InstagramConfigBody {
   accessToken?: string
   webhookVerifyToken?: string
   webhookSecret?: string
+  metaAppId?: string
 }
 
 export async function PUT(req: NextRequest) {
@@ -50,6 +52,7 @@ export async function PUT(req: NextRequest) {
     }
     if (body.webhookVerifyToken !== undefined) next.webhookVerifyToken = String(body.webhookVerifyToken).trim() || undefined
     if (body.webhookSecret !== undefined && body.webhookSecret !== '') next.webhookSecret = String(body.webhookSecret).trim()
+    if (body.metaAppId !== undefined) next.metaAppId = String(body.metaAppId).trim() || undefined
 
     await db.integration.update({
       where: { organizationId: auth.orgId },
@@ -76,6 +79,7 @@ export async function PUT(req: NextRequest) {
         hasAccessToken: !!next.token,
         hasWebhookSecret: !!next.webhookSecret,
         isActive: !!next.token,
+        metaAppId: next.metaAppId || '',
       },
     })
   })

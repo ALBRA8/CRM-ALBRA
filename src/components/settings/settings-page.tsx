@@ -337,6 +337,13 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  // Tab inicial desde URL (?tab=instagram tras volver del OAuth de Meta)
+  const [initialTab, setInitialTab] = useState('negocio')
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    if (t) setInitialTab(t)
+  }, [])
+
   // Form state - LLM
   const [apiKey, setApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
@@ -966,7 +973,7 @@ export function SettingsPage() {
           3. Google (Calendar/Gmail)
           4. Canales de comunicación: WhatsApp → Instagram → Telegram → Email
           5. Operativas: Inventario → Plantillas → Campos Custom → Equipo → Respaldo */}
-      <Tabs defaultValue="negocio" className="w-full">
+      <Tabs key={initialTab} defaultValue={initialTab} className="w-full">
         <TabsList className="bg-slate-100 h-10">
           <TabsTrigger value="negocio" className="gap-1.5 text-xs">
             <Building2 className="w-3.5 h-3.5" /> Negocio

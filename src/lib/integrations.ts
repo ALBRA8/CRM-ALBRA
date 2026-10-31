@@ -53,12 +53,15 @@ export function encodeTelegramState(state: TelegramState): string | null {
 
 /**
  * Estado de Instagram guardado como JSON cifrado en instagramTokenEnc:
- * { token, webhookVerifyToken, webhookSecret }
+ * { token, webhookVerifyToken, webhookSecret, metaAppId }
  */
 export interface InstagramState {
   token?: string
   webhookVerifyToken?: string
+  /** App Secret de Meta: HMAC del webhook y client_secret del OAuth */
   webhookSecret?: string
+  /** App ID público de la app de Meta (client_id del OAuth "Conectar mediante Meta") */
+  metaAppId?: string
 }
 
 export function parseInstagramState(enc: string | null | undefined): InstagramState {
@@ -107,10 +110,22 @@ export function encodeFacebookState(state: FacebookState): string | null {
  * Base URL de la Graph API de Meta. Override SOLO para pruebas E2E con mock local
  * (META_GRAPH_BASE); en producción siempre la oficial.
  */
-function metaGraphBase(): string {
+export function metaGraphBase(): string {
   const base = (process.env.META_GRAPH_BASE || 'https://graph.facebook.com').replace(/\/+$/, '')
   return base
 }
+
+/**
+ * Base URL del diálogo OAuth de Meta. Override SOLO para pruebas E2E con mock
+ * local (META_DIALOG_BASE); en producción siempre la oficial.
+ */
+export function metaDialogBase(): string {
+  const base = (process.env.META_DIALOG_BASE || 'https://www.facebook.com').replace(/\/+$/, '')
+  return base
+}
+
+/** Versión de la Graph API usada por todas las llamadas Meta del CRM. */
+export const META_GRAPH_VERSION = 'v21.0'
 
 /** Comparación estricta en tiempo constante */
 export function safeEquals(a: string | null | undefined, b: string | null | undefined): boolean {
