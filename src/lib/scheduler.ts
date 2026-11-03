@@ -16,7 +16,14 @@ let running = false
 /** Umbral de huérfanos: un 'running' más viejo que esto se considera muerto. */
 export const STALE_RUNNING_MS = 10 * 60_000
 
-export async function runDueJobs(): Promise<{ processed: number; results: unknown[] }> {
+/**
+ * @param opts.orgId  Scope de tenant (plan v1.0 ARC-03 / P-03): cuando se
+ *   define, SOLO se procesan automatizaciones y runs de esa organización.
+ *   El cron externo con CRON_SECRET (operador del sistema) corre global;
+ *   una sesión de admin de un tenant NUNCA debe disparar trabajo global.
+ */
+export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed: number; results: unknown[] }> {
+  const orgId = opts?.orgId
   if (running) return { processed: 0, results: [] } // un solo worker a la vez
   running = true
   const results: unknown[] = []
@@ -27,7 +34,11 @@ export async function runDueJobs(): Promise<{ processed: number; results: unknow
     //    → 'failed' determinista. Sin esto quedaban atascados para siempre.
     try {
       const orphaned = await db.automationRun.updateMany({
-        where: { status: 'running', startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } },
+        where: {
+          status: 'running',
+          startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) },
+          ...(orgId ? { organizationId: orgId } : {}),
+        },
         data: { status: 'failed', error: 'interrumpido (interrupted): proceso reiniciado a mitad del run (sweeper)', finishedAt: new Date() },
       })
       if (orphaned.count > 0) console.warn(`[scheduler] runs huérfanos marcados failed: ${orphaned.count}`)
@@ -39,15 +50,20 @@ export async function runDueJobs(): Promise<{ processed: number; results: unknow
     let resumed = 0
     try {
       const { resumeWaitingRuns } = await import('./workflow-engine')
-      resumed = await resumeWaitingRuns()
+      resumed = await resumeWaitingRuns(orgId ? { orgId } : undefined)
       if (resumed > 0) console.log(`[scheduler] runs reanudados: ${resumed}`)
     } catch (err) {
       console.error('[scheduler] fallo reanudando runs en espera', err)
     }
 
-    // 2) Automatizaciones programadas vencidas
+    // 2) Automatizaciones programadas vencidas (scope de tenant si aplica)
     const due = await db.automation.findMany({
-      where: { isActive: true, triggerType: 'schedule', nextRunAt: { lte: now } },
+      where: {
+        isActive: true,
+        triggerType: 'schedule',
+        nextRunAt: { lte: now },
+        ...(orgId ? { organizationId: orgId } : {}),
+      },
       take: 25,
     })
 

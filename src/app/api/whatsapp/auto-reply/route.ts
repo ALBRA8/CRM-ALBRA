@@ -32,22 +32,9 @@ import { notifyOrganization } from '@/lib/push'
  *    vacío; nada del historial puede inyectar instrucciones de sistema).
  */
 
-const MAX_HISTORY = 20
-
 /** Sanea el historial del daemon: solo user/assistant con contenido útil. */
-export function sanitizeHistory(raw: unknown): Array<{ role: 'user' | 'assistant'; content: string }> {
-  if (!Array.isArray(raw)) return []
-  return raw
-    .filter(
-      (m): m is { role: string; content: string } =>
-        !!m && typeof m === 'object' &&
-        ((m as { role?: unknown }).role === 'user' || (m as { role?: unknown }).role === 'assistant') &&
-        typeof (m as { content?: unknown }).content === 'string' &&
-        (m as { content: string }).content.trim().length > 0
-    )
-    .slice(-MAX_HISTORY)
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content.trim().slice(0, 2000) }))
-}
+export { sanitizeHistory } from '@/lib/sanitize-history'
+import { sanitizeHistory } from '@/lib/sanitize-history'
 
 export async function POST(req: NextRequest) {
   return handle(async () => {

@@ -391,11 +391,6 @@ class ApiClient {
     return this.request('/facebook/send', { method: 'POST', body: JSON.stringify(data) })
   }
 
-  // Chat del agente (página Chat)
-  async sendChatMessage(data: { message: string; clientId?: string }) {
-    return this.request('/chat', { method: 'POST', body: JSON.stringify(data) })
-  }
-
   async getInstagramConversations() {
     return this.request('/instagram/conversations')
   }

@@ -12,12 +12,14 @@ import { auditAndTimeline } from '@/lib/api-helpers'
  *                     runWorkflowsForTrigger es un run real con su estado
  *                     (success | skipped | waiting | failed); skipped/waiting
  *                     cuentan en runsTriggered pero ni como éxito ni fallo.
+ * SCOPE DE TENANT (plan v1.0 P-03): al dispararse con sesión de un tenant,
+ * runDueJobs SOLO procesa las automatizaciones de la org de la sesión.
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: disparar el scheduler manualmente es operación administrativa
     const auth = requirePermission(req, 'automations.run')
-    const { processed, results } = await runDueJobs()
+    const { processed, results } = await runDueJobs({ orgId: auth.orgId })
 
     // Contadores honestos: se cuentan los runs REALES ejecutados en esta
     // invocación, con el estado que reporta el motor de workflows.

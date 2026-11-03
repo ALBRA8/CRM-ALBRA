@@ -468,11 +468,17 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
  * Reanuda los runs en espera cuyo resumeAt venció (invocado por el scheduler).
  * Continúa desde currentStep con el payload original guardado en run.input.
  * Devuelve cuántos runs se completaron o re-pausaron.
+ * @param scope.orgId Scope de tenant (plan v1.0 P-03): cuando se define,
+ *   solo se reanudan runs de esa organización.
  */
-export async function resumeWaitingRuns(): Promise<number> {
+export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<number> {
   const now = new Date()
   const waiting = await db.automationRun.findMany({
-    where: { status: 'waiting', resumeAt: { lte: now } },
+    where: {
+      status: 'waiting',
+      resumeAt: { lte: now },
+      ...(scope?.orgId ? { organizationId: scope.orgId } : {}),
+    },
     orderBy: { resumeAt: 'asc' },
     take: 25,
   })
