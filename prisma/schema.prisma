@@ -623,6 +623,9 @@ model Integration {
   // (compartido con Instagram: misma app de Meta).
   facebookTokenEnc      String?
   facebookPageId        String?
+  // Metadatos del OAuth "Conectar mediante Meta" (página elegida + cuenta que autorizó)
+  facebookPageName      String?
+  facebookUserEmail     String?
   // TikTok. Blob cifrado: { accessToken, refreshToken?, openId?, displayName?,
   // appKey?, appSecret?, webhookVerifyToken?, extraScopes?, sendEndpoint? }.
   // Los DMs por API exigen acceso Business Messaging (programa de socios de TikTok):

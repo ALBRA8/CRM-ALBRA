@@ -391,6 +391,24 @@ class ApiClient {
     return this.request('/facebook/send', { method: 'POST', body: JSON.stringify(data) })
   }
 
+  /**
+   * OAuth Messenger (flujo ManyChat) en modo JSON: devuelve { url, redirectUri }
+   * del diálogo de Meta SIN redirigir (misma conducta que /api/google/auth).
+   * Requiere App ID + App Secret de Meta guardados (los comparte con Instagram).
+   */
+  async startFacebookOAuth(): Promise<{ url: string; redirectUri: string; appId?: string; scope?: string }> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+    }
+    const res = await fetch(`${API_BASE}/facebook/oauth/start`, { headers })
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: 'Error de conexión' }))
+      throw new Error(error.error || `Error ${res.status}`)
+    }
+    return res.json()
+  }
+
   async getInstagramConversations() {
     return this.request('/instagram/conversations')
   }

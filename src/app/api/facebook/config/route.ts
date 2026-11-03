@@ -7,7 +7,8 @@ import { maskSecret, decryptSecret } from '@/lib/crypto'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
 /**
- * GET    /api/facebook/config — { configured, config: { pageId, pageToken(enmascarado), webhookVerifyToken, hasAppSecret, isActive, hasPageToken } }
+ * GET    /api/facebook/config — { configured, config: { pageId, pageName, userEmail, pageToken(enmascarado), webhookVerifyToken, hasAppSecret, isActive, hasPageToken } }
+ *        pageName/userEmail los llena el OAuth «Conectar mediante Meta» (columnas facebook*).
  * PUT    /api/facebook/config — (admin) guarda pageToken/verifyToken (blob AES-256-GCM en facebookTokenEnc)
  *                               y el App Secret de Meta (AES-256-GCM en metaAppSecretEnc, compartido con Instagram/WhatsApp).
  * DELETE /api/facebook/config — (admin) desconecta Facebook (conserva el App Secret: es de la app de Meta).
@@ -21,6 +22,8 @@ export async function GET(req: NextRequest) {
       configured: !!(state.pageToken || integration.facebookPageId),
       config: {
         pageId: integration.facebookPageId || '',
+        pageName: integration.facebookPageName || '',
+        userEmail: integration.facebookUserEmail || '',
         pageToken: maskSecret(state.pageToken),
         webhookVerifyToken: state.webhookVerifyToken || '',
         hasAppSecret: !!integration.metaAppSecretEnc,
@@ -96,7 +99,13 @@ export async function DELETE(req: NextRequest) {
     const auth = requireAdmin(req)
     await db.integration.update({
       where: { organizationId: auth.orgId },
-      data: { facebookTokenEnc: null, facebookPageId: null, enableFacebook: false },
+      data: {
+        facebookTokenEnc: null,
+        facebookPageId: null,
+        facebookPageName: null,
+        facebookUserEmail: null,
+        enableFacebook: false,
+      },
     })
     await auditAndTimeline({
       orgId: auth.orgId,

@@ -9,6 +9,7 @@
  *  4. Detección y normalización de acciones / tool-calling para la BD de Prisma.
  */
 
+import { createHmac } from 'crypto'
 import { extractJson } from './ai'
 
 export interface AgentExecutionResult {
@@ -31,11 +32,21 @@ export interface AgentHealthStatus {
   error?: string
 }
 
-// Configuración desde variables de entorno
+// Configuración desde variables de entorno.
+// P-01 (plan v1.0): NINGUNA credencial por defecto. El viejo fallback
+// 'albra-dev-token' fue eliminado — una credencial de desarrollo jamás debe
+// colarse en producción. Sin ALBRA_AGENT_API_KEY la EJECUCIÓN es fail-closed
+// (el health probe sigue permitido: endpoint no autenticado, solo estado).
 const AGENT_URL = (process.env.ALBRA_AGENT_URL || 'http://localhost:9000').replace(/\/+$/, '')
-const AGENT_API_KEY = (process.env.ALBRA_AGENT_API_KEY || process.env.ALBRA_API_KEY || 'albra-dev-token').trim()
+const AGENT_API_KEY = (process.env.ALBRA_AGENT_API_KEY || process.env.ALBRA_API_KEY || '').trim()
+const AGENT_SIGNING_KEY = (process.env.ALBRA_AGENT_SIGNING_KEY || '').trim()
 const AGENT_ENABLED = process.env.ALBRA_AGENT_ENABLED !== 'false'
 const TIMEOUT_MS = Number(process.env.ALBRA_AGENT_TIMEOUT_MS || 25000)
+
+/** Indica si hay credencial de servicio configurada (contrato P-01). */
+export function agentCredentialConfigured(): boolean {
+  return AGENT_API_KEY.length > 0
+}
 
 // Caché de salud (30 segundos)
 let cachedHealth: { online: boolean; checkedAt: number; error?: string } | null = null
@@ -106,10 +117,21 @@ export function isAgentBridgeEnabled(): boolean {
 
 /**
  * Ejecuta una consulta cognitiva en el Agente General (POST /api/v1/execution).
+ *
+ * Contrato P-01/P-02 (plan v1.0):
+ *  - Fail-closed sin credencial de servicio (nunca credenciales dev en prod).
+ *  - Propagación de tenant OBLIGATORIA: organization_id en el body y cabecera
+ *    X-Albra-Org; el Agente debe aislar memoria/sesiones por org (P-02).
+ *  - La sesión se NOMBREA con namespace de org (`<orgId>:<sessionId>`) como
+ *    defensa en profundidad aunque el Agente aún no filtre por organization_id.
+ *  - Si ALBRA_AGENT_SIGNING_KEY está definida, cada request se firma
+ *    (X-Albra-Timestamp + X-Albra-Signature = HMAC-SHA256("<ts>.<body>")):
+ *    el Agente verifica timing-safe y rechaza timestamps con más de 5 min.
  */
 export async function executeAgentQuery(params: {
   input: string
   sessionId?: string
+  orgId?: string
   timeoutSeconds?: number
 }): Promise<AgentExecutionResult> {
   if (!isAgentBridgeEnabled()) {
@@ -118,6 +140,16 @@ export async function executeAgentQuery(params: {
       content: '',
       source: 'local-fallback',
       error: 'Agente General deshabilitado por configuración',
+    }
+  }
+
+  // P-01: sin credencial de servicio no hay ejecución (fail-closed, sin fetch).
+  if (!agentCredentialConfigured()) {
+    return {
+      ok: false,
+      content: '',
+      source: 'local-fallback',
+      error: 'Credencial de servicio no configurada (ALBRA_AGENT_API_KEY) — contrato P-01',
     }
   }
 
@@ -138,18 +170,36 @@ export async function executeAgentQuery(params: {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
+  // P-02: propagación de tenant en body + cabecera + namespace de sesión.
+  const orgId = (params.orgId || '').trim()
+  const sessionId = params.sessionId
+    ? orgId
+      ? `${orgId}:${params.sessionId}`
+      : params.sessionId
+    : undefined
+
   try {
+    const body = JSON.stringify({
+      input: params.input,
+      session_id: sessionId || undefined,
+      organization_id: orgId || undefined,
+      timeout_seconds: Math.round(timeoutMs / 1000),
+    })
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${AGENT_API_KEY}`,
+    }
+    if (orgId) headers['X-Albra-Org'] = orgId
+    if (AGENT_SIGNING_KEY) {
+      const ts = Date.now().toString()
+      headers['X-Albra-Timestamp'] = ts
+      headers['X-Albra-Signature'] = createHmac('sha256', AGENT_SIGNING_KEY).update(`${ts}.${body}`).digest('hex')
+    }
+
     const res = await fetch(`${AGENT_URL}/api/v1/execution`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${AGENT_API_KEY}`,
-      },
-      body: JSON.stringify({
-        input: params.input,
-        session_id: params.sessionId || undefined,
-        timeout_seconds: Math.round(timeoutMs / 1000),
-      }),
+      headers,
+      body,
       signal: controller.signal,
     }).finally(() => clearTimeout(timer))
 

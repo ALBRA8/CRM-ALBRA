@@ -725,6 +725,35 @@ export function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Retorno del OAuth de Messenger (?facebook_connected=<página> | ?facebook_error=<código> | ?facebook_warning=subscribe_failed)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('facebook_connected')
+    const error = params.get('facebook_error')
+    const warning = params.get('facebook_warning')
+    if (!connected && !error && !warning) return
+    if (connected) {
+      toast.success(`Messenger conectado: Página «${connected}»`)
+    }
+    if (error) {
+      const msgs: Record<string, string> = {
+        csrf_invalid: 'Sesión OAuth inválida: vuelve a pulsar “Conectar mediante Meta”.',
+        csrf_expired: 'La autorización expiró (10 min): inténtalo de nuevo.',
+        user_cancel: 'Conexión cancelada en Meta.',
+        missing_app_credentials: 'Falta el App ID o el App Secret de tu app de Meta.',
+        token_endpoint_reject: 'Meta rechazó el código: verifica el App Secret y la URI de redirección registrada.',
+        no_pages: 'Meta no devolvió ninguna Página de Facebook para esta cuenta.',
+        subscribe_failed: 'No se pudo suscribir el webhook de la Página en Meta.',
+        provider_error: 'Meta reportó un error durante la autorización.',
+      }
+      toast.error(msgs[error] || `Error de conexión con Meta (${error})`)
+    }
+    if (warning === 'subscribe_failed') {
+      toast.warning('Página conectada, pero la suscripción al webhook falló: revisa los permisos de la app en Meta Developers.')
+    }
+    window.history.replaceState({}, '', '/settings?tab=facebook')
+  }, [])
+
   const handleGoogleSaveAndConnect = async () => {
     if (!googleClientId.trim() || !googleClientSecret.trim()) {
       toast.error('Ingresa Client ID y Client Secret')

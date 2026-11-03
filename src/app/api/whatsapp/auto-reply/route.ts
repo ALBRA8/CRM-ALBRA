@@ -148,6 +148,7 @@ Responde solo con el texto del mensaje; sin comillas ni prefijos.`
         const agentRes = await executeAgentQuery({
           input: fullPrompt,
           sessionId: clientId,
+          orgId,
           timeoutSeconds: 20,
         })
         if (agentRes.ok && agentRes.content) {

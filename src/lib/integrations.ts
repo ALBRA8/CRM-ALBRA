@@ -82,12 +82,18 @@ export function encodeInstagramState(state: InstagramState): string | null {
 
 /**
  * Estado de Facebook guardado como JSON cifrado en facebookTokenEnc:
- * { pageToken, webhookVerifyToken }. El App Secret de Meta (HMAC del webhook)
- * vive cifrado en metaAppSecretEnc y se comparte con Instagram (misma app).
+ * { pageToken, webhookVerifyToken, pageId?, pageName?, userEmail? }.
+ * El App Secret de Meta (HMAC del webhook) vive cifrado en metaAppSecretEnc y se
+ * comparte con Instagram (misma app). pageId/pageName/userEmail los registra el
+ * OAuth "Conectar mediante Meta" (quedan como base de un futuro selector de
+ * Página multi-página; la activa siempre la primera).
  */
 export interface FacebookState {
   pageToken?: string
   webhookVerifyToken?: string
+  pageId?: string
+  pageName?: string
+  userEmail?: string
 }
 
 export function parseFacebookState(enc: string | null | undefined): FacebookState {
