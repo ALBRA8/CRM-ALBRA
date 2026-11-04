@@ -90,3 +90,6 @@ agent-ctx/
 .agents/
 skills-lock.json
 AUDITORIA*.txt
+
+# Repos hermanos clonados (proyecto modular ALBRA) - no son parte de este repo
+repos/
