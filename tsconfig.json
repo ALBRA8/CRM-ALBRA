@@ -44,6 +44,6 @@
     "mini-services",
     "crm_albra_recovered",
     "crm_albra_mirrored",
-    "scripts"
-  ]
+    "scripts",
+    "repos"]
 }
