@@ -1489,3 +1489,9 @@ Usuario frustrado por reciclajes del sandbox → pregunta si toca rehacer trabaj
 3. Servicios: WHATSPOWER ARRIBA :3003 (HTTP 200, .env sandbox con secretos de prueba, CRM_API_KEY vacío = puente fail-closed hasta GO). ULTRA listo :3004 pendiente GO (línea roja). AGENTE-GENERAL 69c79da clonado (Python, PRs #67/#68 YouTube Harness) — desbloquea P-01/P-02 agent-side.
 4. Divergencia CRM: remoto main avanzó a d770706 con docs(contexto-crm) SaaS (ARQUITECTURA/DECISIONES/PLAN_MAESTRO_SAAS/HISTORIAL_CAMBIOS/AUDITORIAS/PENDIENTES/roadmap); local main ce2914d adelantado con GO gates (multiusuario + OAuth 4 canales + P-01/P-02 CRM-side). Merge-base db95a5b. Al llegar PAT: rebase local sobre origin/main (docs vs código, sin conflictos esperados) y push.
 Pendiente: PAT fresco (push CRM), P-01/P-02 agent-side ahora desbloqueado, conectar org CRM↔WP, GO para ULTRA.
+
+## Task ID: scope-correction-agent-in-crm-2026-11-05
+CORRECCIÓN DE ALCANCE del usuario (molesto por repetición del error): "CRM ALBRA tiene al AGENTE GENERAL INCLUIDO en el repo de CRM-ALBRA; WHATSPOWER en su repo y WHATSPOWER-ULTRA en el suyo".
+1. El repo github.com/ALBRA8/AGENTE-GENERAL NO forma parte del mundo modular de esta campaña (es otro proyecto). Los cambios P-01/P-02 que había hecho en ese clon fueron DESCARTADOS (git restore) y el clon retirado de repos/. El trabajo P-01/P-02 real ya está hecho y vive en el REPO CRM: src/lib/albra-agent-bridge.ts (fail-closed sin credencial, firma HMAC X-Albra-Timestamp/X-Albra-Signature, propagación organization_id + X-Albra-Org + session namespace) — commit ce2914d, 12/12 tests.
+2. Regla reforzada: solo existen 3 repos en alcance — CRM-ALBRA (incluye su agente), WHATSPOWER, WHATSPOWER-ULTRA. En repos/ solo se conservan los clones de WP y ULTRA (persistencia sandbox).
+3. Pendiente correcto: conexión CRM↔WP en vivo (env, sin código), reconciliación+push del CRM, ULTRA esperando GO.
