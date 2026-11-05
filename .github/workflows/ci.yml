@@ -15,7 +15,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Instalar dependencias
-        run: npm ci
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
       - name: Escáner de secretos (CP-Sec-01)
         run: npm run security:scan
       - name: Generar cliente Prisma
