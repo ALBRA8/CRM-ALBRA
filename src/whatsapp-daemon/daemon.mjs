@@ -46,9 +46,23 @@ try {
 
 // SEGURIDAD (auditoría crítica #2/#4): sin secreto interno no arranca.
 // Evita que el daemon quede expuesto con una clave hardcodeada conocida.
+// P0.4: además de longitud, RECHAZA valores de ejemplo/dummy conocidos
+// (plantilla .env.example, marcadores REPLACE_WITH_*, dummies de CI).
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET
 if (!INTERNAL_SECRET || INTERNAL_SECRET.length < 24) {
   console.error('[ENV] INTERNAL_API_SECRET no configurado (mínimo 24 caracteres). El daemon no arranca por seguridad.')
+  process.exit(1)
+}
+const KNOWN_INSECURE_SECRETS = new Set([
+  'cambia-esto-secreto-interno-daemon',
+  'replace_with_strong_random_secret',
+  'changeme',
+  'change-me',
+  'ci-dummy-internal-test-only-0123456789abcdef',
+  'albra-dev-token',
+])
+if (KNOWN_INSECURE_SECRETS.has(INTERNAL_SECRET.trim().toLowerCase())) {
+  console.error('[ENV] INTERNAL_API_SECRET es un valor de ejemplo/dummy conocido. El daemon no arranca: genera uno con `openssl rand -hex 32`.')
   process.exit(1)
 }
 
