@@ -8,6 +8,11 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      # Secretos CI-only (≥24 chars) para el arranque fail-fast de la batería (P0.4)
+      APP_SECRET: ci-only-app-secret-for-tests-000000000000000
+      APP_ENCRYPTION_KEY: ci-only-encryption-key-for-tests-00000000000
+      INTERNAL_API_SECRET: ci-only-internal-secret-for-tests-000000000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,7 +34,3 @@ jobs:
         run: npx vitest run
       - name: Build de producción
         run: npm run build
-        env:
-          APP_SECRET: ci-only-secret-for-build-0000000000000000
-          APP_ENCRYPTION_KEY: ci-only-encryption-key-000000000000000
-          INTERNAL_API_SECRET: ci-only-internal-secret-0000000000000000
