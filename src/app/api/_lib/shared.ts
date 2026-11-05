@@ -120,11 +120,18 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
     const status = (err as { status?: unknown })?.status
     const message = (err as { message?: unknown })?.message
     if (err instanceof HttpErrorLike || (typeof status === 'number' && typeof message === 'string')) {
-      return NextResponse.json({ error: message }, { status: typeof status === 'number' ? status : 500 })
+      // Los HttpError 5xx tampoco filtran el mensaje interno al cliente.
+      const st = typeof status === 'number' ? status : 500
+      if (st >= 500) {
+        console.error('[api]', err)
+        return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
+      }
+      return NextResponse.json({ error: message }, { status: st })
     }
-    const fallback = err instanceof Error ? err.message : 'Error interno del servidor'
+    // B6: los 500 genéricos JAMÁS devuelven err.message al cliente (filtraría
+    // detalles de Prisma/sistema). El detalle queda SOLO en el log del servidor.
     console.error('[api]', err)
-    return NextResponse.json({ error: fallback }, { status: 500 })
+    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
   }
 }
 
