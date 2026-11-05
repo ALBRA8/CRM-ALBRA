@@ -27,6 +27,7 @@ const viewTitles: Record<string, { title: string; subtitle: string }> = {
   team: { title: 'Equipo', subtitle: 'Gestiona miembros y permisos' },
   activity: { title: 'Actividad', subtitle: 'Registro de acciones del sistema' },
   settings: { title: 'Configuración', subtitle: 'Configura APIs y servicios' },
+  super: { title: 'Super Admin', subtitle: 'Plataforma multiusuario: organizaciones, usuarios clave y salud del sistema' },
 }
 
 export function AppLayout({ children }: { children: React.ReactNode }) {

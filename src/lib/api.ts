@@ -42,6 +42,11 @@ class ApiClient {
     return this.request('/auth/me')
   }
 
+  // Super Admin (plano de control multi-organización; el servidor exige rol superadmin)
+  async getSuperOverview() {
+    return this.request('/super/overview')
+  }
+
   async demoLogin() {
     return this.request('/auth/demo', { method: 'POST' })
   }

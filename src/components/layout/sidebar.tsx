@@ -22,6 +22,7 @@ import {
   MessageCircle,
   Inbox,
   Shield,
+  ShieldCheck,
   Clock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -57,6 +58,8 @@ const navItems = [
   { id: 'team', label: 'Equipo', icon: Shield, perm: 'team.manage' },
   { id: 'activity', label: 'Actividad', icon: Clock, perm: 'activity.read' },
   { id: 'settings', label: 'Configuración', icon: Settings, perm: 'settings.read' },
+  // Plano de control multi-organización: solo visible con rol superadmin.
+  { id: 'super', label: 'Super Admin', icon: ShieldCheck, perm: 'platform.read' },
 ]
 
 export function Sidebar() {

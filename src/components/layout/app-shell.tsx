@@ -24,6 +24,7 @@ import { PushManager } from '@/components/pwa/push-manager'
 import { TeamPage } from '@/components/team/team-page'
 import { ActivityPage } from '@/components/activity/activity-page'
 import { ReportsPage } from '@/components/reports/reports-page'
+import { SuperPage } from '@/components/super/super-page'
 import { Card, CardContent } from '@/components/ui/card'
 import { ShieldAlert } from 'lucide-react'
 import { Toaster } from 'sonner'
@@ -208,6 +209,10 @@ function renderView(view: string): ReactNode {
       return <ActivityPage />
     case 'settings':
       return <SettingsPage />
+    case 'super':
+      // Plano de control multi-organización (solo rol superadmin; el AppShell
+      // ya aplicó la guarda VIEW_PERMISSIONS['super'] = 'platform.read').
+      return <SuperPage />
     default:
       return <DashboardPage />
   }

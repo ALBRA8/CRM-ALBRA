@@ -14,6 +14,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       select: { id: true, name: true, email: true, role: true, isActive: true },
     })
     if (!member) throw new HttpError(404, 'Miembro no encontrado')
+    // Blindaje de plataforma: el rol superadmin no se degrada ni se desactiva
+    // por API (su ciclo de vida es solo scripts/promote-superadmin.mjs).
+    if (member.role === 'superadmin') {
+      throw new HttpError(403, 'El superadmin de plataforma no se gestiona por API de equipo')
+    }
     const body = await readBody(req)
 
     const data: Record<string, unknown> = {}
@@ -60,6 +65,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     })
     if (!member) throw new HttpError(404, 'Miembro no encontrado')
     if (member.role === 'owner') throw new HttpError(400, 'No se puede desactivar al propietario')
+    if (member.role === 'superadmin') {
+      throw new HttpError(403, 'El superadmin de plataforma no se desactiva por API de equipo')
+    }
     if (member.id === auth.userId) throw new HttpError(400, 'No puedes desactivarte a ti mismo')
 
     await db.user.update({ where: { id }, data: { isActive: false } })

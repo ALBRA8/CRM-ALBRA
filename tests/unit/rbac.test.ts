@@ -9,15 +9,17 @@ import { VIEW_PERMISSIONS } from '@/lib/views'
  */
 
 describe('normalizeRole', () => {
-  it('acepta los 4 roles conocidos en cualquier caja', () => {
+  it('acepta los 5 roles conocidos en cualquier caja', () => {
     expect(normalizeRole('owner')).toBe('owner')
     expect(normalizeRole('ADMIN')).toBe('admin')
     expect(normalizeRole('Agent')).toBe('agent')
     expect(normalizeRole('member')).toBe('member')
+    expect(normalizeRole('SUPERADMIN')).toBe('superadmin') // rol de plataforma
   })
 
   it('fail-closed: rol desconocido, vacío o null → member', () => {
-    expect(normalizeRole('superadmin')).toBe('member')
+    expect(normalizeRole('root')).toBe('member')
+    expect(normalizeRole('super-admin')).toBe('member')
     expect(normalizeRole('')).toBe('member')
     expect(normalizeRole(null)).toBe('member')
     expect(normalizeRole(undefined)).toBe('member')

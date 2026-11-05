@@ -32,6 +32,7 @@ const STATIC_VIEW_PATH: Record<string, string> = {
   team: '/team',
   activity: '/activity',
   settings: '/settings',
+  super: '/super',
 }
 
 /** Ruta inversa (path → view), generada para nunca divergir. */
@@ -58,6 +59,9 @@ export const VIEW_PERMISSIONS: Record<string, string> = {
   team: 'team.manage',
   activity: 'activity.read',
   settings: 'settings.read',
+  // Plano de control multi-organización: solo el rol de plataforma superadmin
+  // tiene 'platform.read' (ver ROLE_PERMISSIONS en rbac.ts).
+  super: 'platform.read',
 }
 
 /** Construye la URL canónica de una vista (con sus ids de detalle si aplica). */

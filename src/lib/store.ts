@@ -38,7 +38,7 @@ export const useAppStore = create<AppState>()(
       view: 'landing',
       setView: (view) => set({ view }),
       user: null,
-      setUser: (user) => set({ user, isAdmin: user?.role === 'owner' || user?.role === 'admin' }),
+      setUser: (user) => set({ user, isAdmin: user?.role === 'owner' || user?.role === 'admin' || user?.role === 'superadmin' }),
       token: null,
       setToken: (token) => set({ token }),
       sidebarCollapsed: false,

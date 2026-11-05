@@ -31,5 +31,6 @@ export const config = {
     '/settings/:path*',
     '/whatsapp/:path*',
     '/activity/:path*',
+    '/super/:path*',
   ],
 }

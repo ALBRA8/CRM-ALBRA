@@ -114,7 +114,9 @@ export function getAuth(req: NextRequest): AuthContext | null {
     orgId: session.orgId,
     role: session.role,
     email: session.email,
-    isAdmin: session.role === 'owner' || session.role === 'admin',
+    // superadmin es administrador también DENTRO de su organización
+    // (superconjunto de owner), además de su rol de plataforma.
+    isAdmin: session.role === 'owner' || session.role === 'admin' || session.role === 'superadmin',
   }
 }
 
@@ -137,6 +139,24 @@ export function requireAuth(req: NextRequest): AuthContext {
 export function requireAdmin(req: NextRequest): AuthContext {
   const auth = requireAuth(req)
   if (!auth.isAdmin) throw new HttpError(403, 'Se requieren permisos de administrador')
+  return auth
+}
+
+/**
+ * Requiere el rol de plataforma `superadmin` (plano de control multi-organización).
+ *
+ * Distinto de requireAdmin: un owner de UNA organización no ve las demás.
+ * La autoridad cross-org vive SOLO aquí; las rutas /api/super/* son las únicas
+ * que consultan la base de datos SIN filtrar por organizationId, y siempre
+ * detrás de esta guardia. Nadie puede adquirir el rol por API (el ciclo de
+ * vida de usuarios prohibe crear/promover superadmin): solo existe por
+ * promoción directa en BD (scripts/promote-superadmin.mjs).
+ */
+export function requireSuperAdmin(req: NextRequest): AuthContext {
+  const auth = requireAuth(req)
+  if (auth.role !== 'superadmin') {
+    throw new HttpError(403, 'Se requiere rol de superadministrador de plataforma')
+  }
   return auth
 }
 

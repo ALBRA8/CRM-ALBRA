@@ -55,15 +55,29 @@ export const ADMIN_EXTRA_PERMISSIONS = [
   'permissions.read',
 ] as const
 
+/**
+ * Capacidades del plano de control (solo superadmin): visión multi-organización
+ * que NINGÚN rol dentro de una organización puede ejercer. El servidor solo las
+ * concede en las rutas /api/super/* vía requireSuperAdmin.
+ */
+export const PLATFORM_PERMISSIONS = [
+  'platform.read',
+  'platform.manage',
+] as const
+
 /** Mapa de capacidades por rol (contrato de GET /api/permissions). */
 export const ROLE_PERMISSIONS: Record<string, string[]> = {
+  // superadmin = superconjunto de owner + plano de control multi-organización.
+  // Vive FUERA del alcance de /api/team (nadie puede crear/promover uno;
+  // solo promoción directa en BD vía scripts/promote-superadmin.mjs).
+  superadmin: [...AGENT_PERMISSIONS, ...ADMIN_EXTRA_PERMISSIONS, ...PLATFORM_PERMISSIONS],
   owner: [...AGENT_PERMISSIONS, ...ADMIN_EXTRA_PERMISSIONS],
   admin: [...AGENT_PERMISSIONS, ...ADMIN_EXTRA_PERMISSIONS],
   agent: [...AGENT_PERMISSIONS],
   member: [...AGENT_PERMISSIONS],
 }
 
-export const KNOWN_ROLES = ['owner', 'admin', 'agent', 'member'] as const
+export const KNOWN_ROLES = ['owner', 'admin', 'agent', 'member', 'superadmin'] as const
 
 /** Normaliza roles legados/desconocidos al nivel menos privilegiado. */
 export function normalizeRole(role: string | null | undefined): string {
@@ -86,5 +100,5 @@ export function can(role: string | null | undefined, capability: string): boolea
 /** ¿Es rol administrador (owner/admin)? Equivalente a isAdmin del JWT. */
 export function isAdminRole(role: string | null | undefined): boolean {
   const r = normalizeRole(role)
-  return r === 'owner' || r === 'admin'
+  return r === 'owner' || r === 'admin' || r === 'superadmin'
 }
