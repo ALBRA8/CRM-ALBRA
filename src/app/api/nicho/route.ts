@@ -1,15 +1,40 @@
 import type { NextRequest } from 'next/server'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, getAuth } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
-import { auditAndTimeline } from '@/lib/api-helpers'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
+import { logSecurityEvent } from '@/lib/security-log'
 
 /**
- * GET /api/nicho — PÚBLICO. Solo campos de branding (sin secretos, sin raw completo).
- *   Devuelve alias snake_case + camelCase porque el frontend lee `branding_name`.
- *   Incluye además terminology / reglas_oro / negociacion (config no sensible del
- *   agente) porque el formulario "Negocio" de settings-page.tsx los muestra.
- * PUT /api/nicho — requireAdmin (cierra el fallo P0 de la auditoría: antes cualquiera podía escribir).
+ * GET /api/nicho — configuración "Negocio" del nicho.
+ *
+ * CONTRATO P0.3 (selección de organización):
+ *
+ * 1) SOLICITUD AUTENTICADA (cualquier rol con sesión válida):
+ *    La organización viene EXCLUSIVAMENTE del JWT. Cualquier `?org=`/slug/
+ *    organizationId enviado por el cliente se IGNORA y se registra como evento
+ *    de seguridad (la UI legítima nunca los envía). Devuelve la configuración
+ *    COMPLETA de la propia org (branding, terminology, reglas_oro, negociacion,
+ *    servicios, faqs) — son sus datos, jamás los de otra organización.
+ *    LECTURA PURA: GET nunca crea filas.
+ *
+ * 2) SOLICITUD ANÓNIMA (pública legítima, alcance estrictamente limitado):
+ *    SOLO con identificador público explícito `?org=<slug>` (formato validado).
+ *    Expone ÚNICAMENTE los campos de marca pública autorizados:
+ *    brandingName, rubro, tone, workingHours, terminology, services, faqs.
+ *    NO expone: personality, autoReplyEnabled, handoffKeywords (config interna
+ *    del agente), reglas_oro y negociacion (táctica comercial sensible: tope de
+ *    descuento, estrategia), ni el raw completo.
+ *    - Rate limit 30 req/min por IP (anti-enumeración de slugs) → 429.
+ *    - Slug inválido → 400; slug desconocido u org inactiva → 404 genérico
+ *      (sin oráculo de existencia); ambos registrados como eventos de seguridad.
+ *    - Sin `?org=` → 401 (se eliminó el fallback "primera organización activa"
+ *      que exponía el tenant equivocado a anónimos).
+ *    - JAMÁS escribe en BD (antes un GET anónimo podía CREAR NichoConfig).
+ *
+ * PUT /api/nicho — escritura: requireAdmin. La organización viene del JWT;
+ * los identificadores de org en el body se ignoran por construcción (el
+ * handler jamás los lee) y se registran si aparecen.
  */
 
 const DEFAULT_RAW = {
@@ -18,11 +43,12 @@ const DEFAULT_RAW = {
   negociacion: { descuento_maximo: 10, estrategia: '' },
 }
 
-async function loadOrCreate(orgId: string) {
-  const config = await db.nichoConfig.findUnique({ where: { organizationId: orgId } })
-  if (config) return config
-  return db.nichoConfig.create({ data: { organizationId: orgId } })
-}
+/** Slug público válido (mismo vocabulario que genera slugify). */
+const PUBLIC_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/
+const PUBLIC_RATE_LIMIT = 30
+const PUBLIC_RATE_WINDOW_MS = 60_000
+
+const NO_STORE = { 'Cache-Control': 'no-store' } as const
 
 function parseRaw(raw: string | null): Record<string, unknown> {
   if (!raw) return { ...DEFAULT_RAW }
@@ -39,40 +65,115 @@ function parseRaw(raw: string | null): Record<string, unknown> {
   }
 }
 
+function parseJsonArray(input: string | null | undefined): unknown[] {
+  if (!input) return []
+  try {
+    const parsed = JSON.parse(input)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+/** Payload COMPLETO para la organización autenticada (sus propios datos). */
+function fullPayload(config: {
+  brandingName: string
+  rubro: string
+  personality: string
+  tone: string | null
+  workingHours: string | null
+  autoReplyEnabled: boolean
+  services: string | null
+  faqs: string | null
+  raw: string | null
+} | null) {
+  const raw = parseRaw(config?.raw ?? null)
+  return {
+    brandingName: config?.brandingName ?? 'CRM ALBRA',
+    branding_name: config?.brandingName ?? 'CRM ALBRA',
+    rubro: config?.rubro ?? 'Servicios Profesionales',
+    personality: config?.personality ?? '',
+    tone: config?.tone,
+    tone_label: config?.tone,
+    workingHours: config?.workingHours,
+    working_hours: config?.workingHours,
+    autoReplyEnabled: config?.autoReplyEnabled ?? true,
+    auto_reply: config?.autoReplyEnabled ?? true,
+    services: config?.services,
+    faqs: config?.faqs,
+    terminology: raw.terminology,
+    reglas_oro: raw.reglas_oro,
+    negociacion: raw.negociacion,
+  }
+}
+
+/** Payload PÚBLICO anónimo: solo marca autorizada (sin táctica comercial ni config interna). */
+function publicPayload(config: {
+  brandingName: string
+  rubro: string
+  tone: string | null
+  workingHours: string | null
+  services: string | null
+  faqs: string | null
+  raw: string | null
+} | null) {
+  const raw = parseRaw(config?.raw ?? null)
+  return {
+    brandingName: config?.brandingName ?? 'CRM ALBRA',
+    branding_name: config?.brandingName ?? 'CRM ALBRA',
+    rubro: config?.rubro ?? 'Servicios Profesionales',
+    tone: config?.tone,
+    tone_label: config?.tone,
+    workingHours: config?.workingHours,
+    working_hours: config?.workingHours,
+    terminology: raw.terminology,
+    services: parseJsonArray(config?.services),
+    faqs: parseJsonArray(config?.faqs),
+  }
+}
+
 export async function GET(req: NextRequest) {
   return handle(async () => {
     const url = new URL(req.url)
-    const slug = url.searchParams.get('org') // opcional: resolver org por slug (multi-tenant público)
-    const org = slug
-      ? await db.organization.findUnique({ where: { slug }, select: { id: true } })
-      : null
-    // Sin sesión y sin slug: sirve la primera organización activa (preview single-tenant)
-    const orgId =
-      org?.id ||
-      (await db.organization.findFirst({ where: { isActive: true }, orderBy: { createdAt: 'asc' }, select: { id: true } }))?.id
-    if (!orgId) return json({ error: 'Organización no encontrada' }, { status: 404 })
+    const slugParam = url.searchParams.get('org')
+    const auth = getAuth(req)
 
-    const config = await loadOrCreate(orgId)
-    const raw = parseRaw(config.raw)
+    // ---------- 1) Autenticado: la organización SOLO del JWT ----------
+    if (auth) {
+      if (slugParam) {
+        // Parámetro controlado por el cliente → ignorado SIEMPRE; se deja constancia.
+        logSecurityEvent('nicho.org_param_ignorado', { userId: auth.userId, orgId: auth.orgId, solicitado: slugParam })
+      }
+      const config = await db.nichoConfig.findUnique({ where: { organizationId: auth.orgId } })
+      return json(fullPayload(config), { headers: NO_STORE })
+    }
 
-    // SOLO branding público + config no sensible del agente (nunca secrets ni raw completo)
-    return json({
-      brandingName: config.brandingName,
-      branding_name: config.brandingName,
-      rubro: config.rubro,
-      personality: config.personality,
-      tone: config.tone,
-      tone_label: config.tone,
-      workingHours: config.workingHours,
-      working_hours: config.workingHours,
-      autoReplyEnabled: config.autoReplyEnabled,
-      auto_reply: config.autoReplyEnabled,
-      services: config.services,
-      faqs: config.faqs,
-      terminology: raw.terminology,
-      reglas_oro: raw.reglas_oro,
-      negociacion: raw.negociacion,
-    })
+    // ---------- 2) Anónimo: identificador público explícito, rate-limited ----------
+    const ip = clientIp(req)
+    const rl = rateLimit(`nicho:${ip}`, PUBLIC_RATE_LIMIT, PUBLIC_RATE_WINDOW_MS)
+    if (!rl.ok) {
+      logSecurityEvent('nicho.rate_limit_alcanzado', { ip })
+      return json({ error: 'Demasiadas solicitudes. Intenta más tarde.' }, { status: 429, headers: { ...NO_STORE, 'Retry-After': String(rl.retryAfter) } })
+    }
+
+    if (!slugParam) {
+      return json({ error: 'Sesión requerida. Para datos públicos de marca usa ?org=<slug>.' }, { status: 401, headers: NO_STORE })
+    }
+    if (!PUBLIC_SLUG_RE.test(slugParam)) {
+      logSecurityEvent('nicho.slug_invalido', { ip, valor: slugParam })
+      return json({ error: 'Parámetro org inválido' }, { status: 400, headers: NO_STORE })
+    }
+
+    const org = await db.organization.findUnique({ where: { slug: slugParam }, select: { id: true, isActive: true } })
+    if (!org?.isActive) {
+      // 404 genérico: sin diferencia entre "no existe" e "inactiva" (sin oráculo).
+      logSecurityEvent('nicho.slug_desconocido', { ip, slug: slugParam })
+      return json({ error: 'Organización no encontrada' }, { status: 404, headers: NO_STORE })
+    }
+
+    // LECTURA pura: el GET anónimo jamás crea filas (antes podía crear NichoConfig).
+    const config = await db.nichoConfig.findUnique({ where: { organizationId: org.id } })
+    return json(publicPayload(config), { headers: NO_STORE })
   })
 }
 
@@ -94,6 +195,7 @@ interface NichoBody {
   reglas_oro?: string[]
   negociacion?: Record<string, unknown>
   extra?: Record<string, unknown>
+  [key: string]: unknown
 }
 
 function toJsonArrayString(input: unknown): string | null {
@@ -114,9 +216,14 @@ function toJsonArrayString(input: unknown): string | null {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req) // P0: escritura solo para admins/owner
+    const auth = requireAdmin(req) // P0: escritura solo para admins/owner; org SOLO del JWT
     const body = (await req.json().catch(() => ({}))) as NichoBody
-    await loadOrCreate(auth.orgId)
+
+    // P0.3: identificadores de organización enviados por el cliente no se leen
+    // nunca; si aparecen, se registra y se ignora.
+    if ('organizationId' in body || 'org' in body || 'slug' in body) {
+      logSecurityEvent('nicho.org_param_en_put_ignorado', { userId: auth.userId, orgId: auth.orgId })
+    }
 
     const current = await db.nichoConfig.findUnique({ where: { organizationId: auth.orgId } })
     const raw = parseRaw(current?.raw || null)
@@ -166,6 +273,7 @@ export async function PUT(req: NextRequest) {
       },
     })
 
+    const { auditAndTimeline } = await import('@/lib/api-helpers')
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,
