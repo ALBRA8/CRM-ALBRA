@@ -14,7 +14,7 @@ const b64url = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url
 const makeJwt = () => [b64url({ alg: 'HS256', typ: 'JWT' }), b64url({ sub: '1234567890' }), 'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'].join('.')
 const makeGithubPat = () => `ghp_${'AbCdEfGhIjKlMnOpQrStUv'.slice(0, 22)}`
 const makeAwsKey = () => `AKIA${'IOSFODNN7EXAMPLE'.slice(0, 16)}`
-const makeSlackToken = () => ['xox', 'b-123456789012', 'ABCDEFGHIJKL'].join('-')
+const makeSlackToken = () => ['xoxb', '-123456789012', '-ABCDEFGHIJKL'].join('')
 const makeGoogleKey = () => `AIza${'SyD-9tJaake9m6Y8gFDKUsWHGXrFnM21sE'.slice(0, 33)}`
 const makeAlbraKey = () => `albra_orga123-${'4f9c2b8d7e1a45c6'.slice(0, 16)}`
 const makePemHeader = () => `-----BEGIN ${'RSA '}PRIVATE KEY-----`
