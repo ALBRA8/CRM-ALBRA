@@ -3,6 +3,7 @@ import { lookupApiKey } from '@/lib/api-keys'
 import { handleMcpPost, SUPPORTED_PROTOCOL_VERSIONS } from '@/lib/mcp/protocol'
 import { CRM_TOOLS } from '@/lib/mcp/tools'
 import { db } from '@/lib/db'
+import { rateLimit, rateLimited } from '@/lib/rate-limit'
 
 /**
  * POST /api/mcp — Servidor MCP de CRM ALBRA (Task 27, Opción B).
@@ -41,6 +42,11 @@ export async function POST(req: NextRequest) {
   if (!key || !key.orgActive) {
     return Response.json({ error: 'API key inválida o revocada' }, { status: 401 })
   }
+
+  // 1b) Rate limit 60/min por API key (reparación integral B2). El bucket por
+  // IP no protege a un host legítimo compartido; la cuota es de la clave.
+  const rl = rateLimit(`mcp:key:${key.id}`, 60, 60_000)
+  if (!rl.ok) return rateLimited(rl)
 
   // 2) Versión del protocolo declarada por el cliente (opcional).
   const declared = req.headers.get('mcp-protocol-version')

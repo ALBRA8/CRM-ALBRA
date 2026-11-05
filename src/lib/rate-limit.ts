@@ -11,6 +11,8 @@
  *   test empiece con la ventana limpia); en producción es inocuo.
  */
 
+import { NextResponse } from 'next/server'
+
 interface Bucket {
   count: number
   resetAt: number
@@ -62,4 +64,17 @@ export function clientIp(req: Request): string {
   const fwd = req.headers.get('x-forwarded-for')
   if (fwd) return fwd.split(',')[0].trim().slice(0, 64)
   return req.headers.get('x-real-ip')?.slice(0, 64) || 'local'
+}
+
+/**
+ * Respuesta 429 estándar cuando el límite se agota (reparación integral B2).
+ * Mensaje GENÉRICO (no revela si el email existe ni el estado de la cuenta) y
+ * cabecera Retry-After con los segundos que faltan para reintentar.
+ * NextResponse para encajar en los `handle()` de las rutas API.
+ */
+export function rateLimited(result: RateLimitResult): NextResponse {
+  return NextResponse.json(
+    { error: 'Demasiadas solicitudes. Inténtalo de nuevo más tarde.' },
+    { status: 429, headers: { 'Retry-After': String(Math.max(1, result.retryAfter)) } }
+  )
 }

@@ -5,6 +5,7 @@ import { lookupApiKey } from '@/lib/api-keys'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { CRM_ACTIONS, crmActionsCatalog, executeCrmAction } from '@/lib/capabilities/crm-actions'
+import { rateLimit, rateLimited } from '@/lib/rate-limit'
 
 /**
  * POST /api/crm/actions — CONTRATO DEL CHALECO CRM para hosts (REST).
@@ -32,7 +33,7 @@ function bearerOf(req: NextRequest): string | null {
 }
 
 /** Resuelve { orgId, userId, role } desde JWT de usuario o API key de org. */
-async function resolveCaller(req: NextRequest): Promise<{ orgId: string; userId: string | null; role: string } | null> {
+async function resolveCaller(req: NextRequest): Promise<{ orgId: string; userId: string | null; role: string; keyId?: string } | null> {
   const bearer = bearerOf(req)
   if (!bearer) return null
 
@@ -45,7 +46,7 @@ async function resolveCaller(req: NextRequest): Promise<{ orgId: string; userId:
     } catch {
       // telemetría best-effort
     }
-    return { orgId: key.organizationId, userId: null, role: 'api-key' }
+    return { orgId: key.organizationId, userId: null, role: 'api-key', keyId: key.id }
   }
 
   // 2) JWT de usuario de la app
@@ -76,6 +77,12 @@ export async function POST(req: NextRequest) {
 
     const caller = await resolveCaller(req)
     if (!caller) return json({ error: 'No autenticado' }, { status: 401 })
+
+    // Rate limit 120/min por identidad (reparación integral B2): userId para
+    // sesiones, id de la API key para hosts programáticos.
+    const identity = caller.userId ?? `apikey:${caller.keyId ?? caller.orgId}`
+    const rl = rateLimit(`crm-actions:${identity}`, 120, 60_000)
+    if (!rl.ok) return rateLimited(rl)
 
     const action = String(body.action)
     const meta = CRM_ACTIONS[action]

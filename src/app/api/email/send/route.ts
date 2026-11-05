@@ -1,12 +1,16 @@
 import type { NextRequest } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { getSmtpConfig, trySendSmtp } from '@/lib/mail'
+import { rateLimit, rateLimited } from '@/lib/rate-limit'
 
 /**
  * POST /api/email/send — envío de correo.
+ * Reparación integral B2: exige permiso admin 'settings.write' (enviar correo
+ * con la cuenta de la organización NO es una acción de rol comercial) y rate
+ * limit 20/hora por organización (anti-spam y abuso de la cuota SMTP).
  * 1) Si hay SMTP configurado (Settings o variables de entorno SMTP_*) intenta nodemailer.
  * 2) Si no hay SMTP (o falla), registra el mensaje en el timeline y responde
  *    { queued: true, note } SIN error 500 (degradación elegante).
@@ -24,7 +28,13 @@ interface EmailBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = requirePermission(req, 'settings.write')
+
+    // Cuota de envío por organización (20/hora): la org, no la IP, es la que
+    // gasta reputación SMTP.
+    const rl = rateLimit(`email-send:org:${auth.orgId}`, 20, 3_600_000)
+    if (!rl.ok) return rateLimited(rl)
+
     const body = (await req.json().catch(() => ({}))) as EmailBody
     requireFields(body as unknown as Record<string, unknown>, ['to', 'subject'])
     const to = String(body.to).trim()

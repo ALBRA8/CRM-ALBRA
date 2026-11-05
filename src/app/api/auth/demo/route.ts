@@ -3,10 +3,18 @@ import { db } from '@/lib/db'
 import { signToken } from '@/lib/auth'
 import { handle, json, jsonWithSession } from '../../_lib/shared'
 import { ensureDemoOrganization } from '../../_lib/demo-seed'
+import { rateLimit, rateLimited, clientIp } from '@/lib/rate-limit'
 
-/** POST /api/auth/demo — crea o reutiliza la organización demo y devuelve sesión. */
-export async function POST(_req: NextRequest) {
+/**
+ * POST /api/auth/demo — crea o reutiliza la organización demo y devuelve sesión.
+ * Reparación integral B2: rate limit 5/hora por IP (el endpoint es anónimo y
+ * semilla datos: sin límite es una vía barata de hinchado de BD).
+ */
+export async function POST(req: NextRequest) {
   return handle(async () => {
+    const rl = rateLimit(`demo:${clientIp(req)}`, 5, 3_600_000)
+    if (!rl.ok) return rateLimited(rl)
+
     const demo = await ensureDemoOrganization()
     const user = await db.user.findUnique({ where: { id: demo.userId } })
     if (!user) {

@@ -3,10 +3,18 @@ import { db } from '@/lib/db'
 import { hashPassword, HttpError } from '@/lib/auth'
 import { handle, json, readBody, requireFields, str } from '../../_lib/shared'
 import { auditAndTimeline } from '@/lib/api-helpers'
+import { rateLimit, rateLimited, clientIp } from '@/lib/rate-limit'
 
-/** POST /api/auth/reset-password — valida token+exp y actualiza la contraseña. */
+/**
+ * POST /api/auth/reset-password — valida token+exp y actualiza la contraseña.
+ * Reparación integral B2: rate limit 10/15min por IP (el endpoint recibe
+ * tokens secretos: acotar reintentos online).
+ */
 export async function POST(req: NextRequest) {
   return handle(async () => {
+    const rl = rateLimit(`reset-pw:${clientIp(req)}`, 10, 15 * 60_000)
+    if (!rl.ok) return rateLimited(rl)
+
     const body = await readBody(req)
     requireFields(body, ['token', 'password'])
     const token = str(body.token) as string
