@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { requireAdmin } from '@/lib/auth'
-import { handle, json } from '@/lib/api-helpers'
+import { handle, json, auditAndTimeline } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { APP_VERSION } from '@/lib/version'
 
@@ -8,13 +8,26 @@ import { APP_VERSION } from '@/lib/version'
  * GET /api/doctor — AUDIT → DIAGNOSE → VERIFY → REPORT del sistema (owner/admin).
  *
  * Comprueba: BD, esquema Prisma sincronizado, daemon WhatsApp (alcanzable,
- * vinculado y a la org correcta), proveedor IA, memoria (counts),
+ * sesión de SU organización), proveedor IA, memoria (counts),
  * automatizaciones (fallidas 24h, waiting, huérfanas, scheduler atrasado),
  * integraciones configuradas (booleans, NUNCA valores de secretos) y seguridad
  * de configuración.
  *
  * ?fix=1 → aplica ÚNICAMENTE fixes deterministas y seguros (hoy: marcar runs
  * 'running' huérfanos como failed). NUNCA toca datos comerciales.
+ *
+ * P0.2 (aislamiento multi-tenant de ejecuciones):
+ * - orgId viene EXCLUSIVAMENTE del JWT (requireAdmin); body/query/params del
+ *   cliente no pueden influir en el alcance.
+ * - TODAS las consultas y escrituras sobre automationRun filtran por
+ *   organizationId propio del run (el modelo lo tiene). Antes, el conteo de
+ *   huérfanos y el fix determinista operaban sobre TODAS las organizaciones:
+ *   un admin de A podía marcar failed ejecuciones de B (lectura y escritura
+ *   cross-tenant). Ahora es imposible por construcción.
+ * - El barrido global de huérfanos sigue existiendo SOLO en el scheduler
+ *   (proceso de plataforma, sin origen humano) — ver src/lib/scheduler.ts.
+ * - El check del daemon usa sessions[] (P0.1): reporta la sesión de ESTA
+ *   organización, nunca la de otra.
  */
 
 interface Check {
@@ -62,8 +75,9 @@ export async function GET(req: NextRequest) {
       data: { cronSecretCustom: !!process.env.CRON_SECRET },
     })
 
-    // ---------- 4) Daemon WhatsApp ----------
-    type DaemonStatus = { reachable: boolean; status?: string; linkedOrgId?: string | null }
+    // ---------- 4) Daemon WhatsApp (P0.1: sesiones por organización) ----------
+    type DaemonSession = { orgId: string; status: string; phone?: string | null; lastError?: string | null }
+    type DaemonStatus = { reachable: boolean; status?: string; linkedOrgId?: string | null; sessions?: DaemonSession[] }
     let daemon: DaemonStatus = { reachable: false }
     try {
       const res = await fetch(`${DAEMON_URL}/status`, {
@@ -72,12 +86,23 @@ export async function GET(req: NextRequest) {
         cache: 'no-store',
       })
       if (res.ok) {
-        const j = (await res.json()) as { status?: string; linkedOrgId?: string | null }
-        daemon = { reachable: true, status: j.status, linkedOrgId: j.linkedOrgId ?? null }
+        const j = (await res.json()) as { status?: string; linkedOrgId?: string | null; sessions?: DaemonSession[] }
+        daemon = { reachable: true, status: j.status, linkedOrgId: j.linkedOrgId ?? null, sessions: Array.isArray(j.sessions) ? j.sessions : undefined }
       }
     } catch {}
     if (!daemon.reachable) {
       checks.push({ id: 'whatsapp', label: 'Daemon WhatsApp (Baileys)', status: 'warn', detail: `No alcanzable en ${DAEMON_URL}` })
+    } else if (daemon.sessions) {
+      // Contrato P0.1: cada organización solo puede ver SU propia sesión.
+      // Las sesiones de otras organizaciones no se exponen ni influyen aquí.
+      const my = daemon.sessions.find((s) => s.orgId === auth.orgId)
+      checks.push({
+        id: 'whatsapp',
+        label: 'Daemon WhatsApp (Baileys)',
+        status: my?.lastError ? 'warn' : 'ok',
+        detail: my?.lastError || undefined,
+        data: { connection: my?.status ?? 'disconnected', orgLinked: !!my },
+      })
     } else if (daemon.linkedOrgId && daemon.linkedOrgId !== auth.orgId) {
       checks.push({ id: 'whatsapp', label: 'Daemon WhatsApp (Baileys)', status: 'fail', detail: 'La sesión está vinculada a OTRA organización' })
     } else {
@@ -110,13 +135,14 @@ export async function GET(req: NextRequest) {
       checks.push({ id: 'memory', label: 'Memoria del agente', status: 'warn', detail: 'Tablas de memoria no disponibles (schema viejo)' })
     }
 
-    // ---------- 7) Automatizaciones ----------
+    // ---------- 7) Automatizaciones (P0.2: TODAS las ejecuciones scoped a ESTA org) ----------
     const since = new Date(Date.now() - 86_400_000)
     const [active, failed24h, waiting, orphans, overdue] = await Promise.all([
       db.automation.count({ where: { organizationId: auth.orgId, isActive: true } }),
-      db.automationRun.count({ where: { status: 'failed', startedAt: { gte: since }, automation: { organizationId: auth.orgId } } }),
-      db.automationRun.count({ where: { status: 'waiting', automation: { organizationId: auth.orgId } } }),
-      db.automationRun.count({ where: { status: 'running', startedAt: { lt: new Date(Date.now() - 15 * 60_000) } } }),
+      db.automationRun.count({ where: { status: 'failed', startedAt: { gte: since }, organizationId: auth.orgId } }),
+      db.automationRun.count({ where: { status: 'waiting', organizationId: auth.orgId } }),
+      // P0.2: antes este conteo NO filtraba por organización y veía huérfanos de TODOS los tenants.
+      db.automationRun.count({ where: { status: 'running', startedAt: { lt: new Date(Date.now() - 15 * 60_000) }, organizationId: auth.orgId } }),
       db.automation.count({ where: { organizationId: auth.orgId, isActive: true, triggerType: 'schedule', nextRunAt: { lt: new Date(Date.now() - 5 * 60_000) } } }),
     ])
     checks.push({
@@ -138,13 +164,25 @@ export async function GET(req: NextRequest) {
     })
 
     // ---------- FIX determinista (único permitido) ----------
+    // P0.2: el fix es una operación del TENANT autenticado. Antes este
+    // updateMany marcaba como failed ejecuciones huérfanas de CUALQUIER
+    // organización (escritura cross-tenant). Ahora solo puede tocar runs cuya
+    // organizationId coincide con la del JWT; las de otros tenants quedan
+    // intocables incluso conociendo sus IDs/estados.
     let fixed: Record<string, number> = {}
     if (applyFix && orphans > 0) {
       const r = await db.automationRun.updateMany({
-        where: { status: 'running', startedAt: { lt: new Date(Date.now() - 15 * 60_000) } },
+        where: { status: 'running', startedAt: { lt: new Date(Date.now() - 15 * 60_000) }, organizationId: auth.orgId },
         data: { status: 'failed', error: 'interrupted: marcado por Doctor (fix determinista)', finishedAt: new Date() },
       })
       fixed = { orphanRunsMarkedFailed: r.count }
+      await auditAndTimeline({
+        orgId: auth.orgId,
+        userId: auth.userId,
+        action: 'fixed',
+        entity: 'automation_run',
+        details: { source: 'doctor', orphanRunsMarkedFailed: r.count },
+      })
     }
 
     const verdict = checks.some((c) => c.status === 'fail') ? 'critical' : checks.some((c) => c.status === 'warn') ? 'degraded' : 'healthy'

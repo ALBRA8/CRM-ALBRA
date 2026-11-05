@@ -22,8 +22,10 @@ export async function GET(req: NextRequest) {
     })
 
     // Última ejecución por automatización (estado por paso para debugging)
+    // P0.2: filtro organizationId explícito y redundante (defensa en profundidad
+    // multi-tenant; los automationId ya están scoped por la consulta de arriba).
     const lastRuns = await db.automationRun.findMany({
-      where: { automationId: { in: automations.map((a) => a.id) } },
+      where: { organizationId: auth.orgId, automationId: { in: automations.map((a) => a.id) } },
       orderBy: { startedAt: 'desc' },
       take: automations.length * 3,
     })
