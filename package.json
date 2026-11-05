@@ -16,7 +16,8 @@
     "predev": "node scripts/ensure-env.mjs",
     "wa:daemon:detached": "node scripts/start-daemon-detached.mjs",
     "security:scan": "node scripts/scan-secrets.mjs",
-    "security:scan:history": "node scripts/scan-secrets.mjs --history"
+    "security:scan:history": "node scripts/scan-secrets.mjs --history",
+    "lint:baseline": "node scripts/lint-baseline.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

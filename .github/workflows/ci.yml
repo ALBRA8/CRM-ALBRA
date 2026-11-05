@@ -21,16 +21,22 @@ jobs:
           cache: npm
       - name: Instalar dependencias
         run: npm install --legacy-peer-deps
-      - name: Escáner de secretos (CP-Sec-01)
+      - name: Escáner de secretos (CP-Sec-01, bloqueante)
         run: npm run security:scan
+      - name: Escáner de secretos del HISTORIAL (bloqueante para hallazgos nuevos)
+        run: npm run security:scan:history
       - name: Generar cliente Prisma
         run: npm run db:generate
       - name: TypeScript
         run: npx tsc --noEmit
-      - name: Lint (baseline preexistente — informativo, no bloqueante)
+      - name: Lint — baseline de reducción progresiva (BLOQUEA con errores nuevos)
+        run: npm run lint:baseline
+      - name: Lint completo (informativo: baseline histórico heredado)
         run: npm run lint
         continue-on-error: true
       - name: Suite de tests
         run: npx vitest run
+      - name: Auditoría de dependencias (no bloqueante; elevar a bloqueante tras triage)
+        run: npm audit --omit=dev || true
       - name: Build de producción
         run: npm run build

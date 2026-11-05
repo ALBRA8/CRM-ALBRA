@@ -18,7 +18,7 @@ import { resetRateLimits } from '@/lib/rate-limit'
  */
 
 const TEST_EMAIL = 'reset-hash@test.albra'
-const NEW_PASSWORD = 'Nueva-Clave-2026'
+const NEW_PASSWORD = 'Nueva-Clave-2026' // scan-secrets:allow — fixture de contraseña de prueba (no es un secreto)
 
 let userId = ''
 
