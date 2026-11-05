@@ -1,26 +1,38 @@
 #!/usr/bin/env node
 /**
- * CRM ALBRA - WhatsApp Daemon (Baileys)
+ * CRM ALBRA - WhatsApp Daemon (Baileys) — MULTI-ORGANIZACIÓN
  * Conexión por QR (protocolo WhatsApp Web) usando @whiskeysockets/baileys.
  * Corre como proceso separado en el puerto 3002 (WHATSAPP_DAEMON_URL).
  *
- * Adaptado al CRM multi-tenant: usa organizationId (no userId) y el esquema
- * Prisma actual (Client sin temperature/score, WhatsAppConversation/Message).
+ * P0.1 ORDEN MAESTRA (fix/saas-security-and-stabilization):
+ *  YA NO existe una sesión global compartida. Cada organización tiene su
+ *  PROPIA sesión de WhatsApp con credenciales aisladas en .wa-auth/<orgId>/
+ *  y su propio socket, estado, QR, teléfono, reintentos y errores.
  *
- * Arranque: bun run wa:daemon  ó  node src/whatsapp-daemon/daemon.mjs
+ *  - Toda operación (conectar, QR, estado, enviar, desconectar, conversaciones)
+ *    recibe orgId y opera EXCLUSIVAMENTE sobre la sesión de esa organización.
+ *  - Los eventos de una sesión (messages.upsert, reconexiones) están cerrados
+ *    sobre SU orgId: un callback jamás escribe datos de otra organización.
+ *  - /send exige orgId; el envío sin orgId (hosts standalone como WP/ULTRA)
+ *    solo se admite cuando hay EXACTAMENTE UNA sesión conectada (ambiguación
+ *    imposible). Con dos o más conectadas se rechaza con 409.
+ *  - La migración del layout legado (una carpeta global) es un MOVIMIENTO a
+ *    la carpeta de su organización: nunca se borra información de sesión.
+ *
+ * Arranque: npm run wa:daemon  ó  node src/whatsapp-daemon/daemon.mjs
  */
 
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys'
 import QRCode from 'qrcode'
 import qrcodeTerminal from 'qrcode-terminal'
 import { createServer } from 'http'
-import { Boom } from '@hapi/boom'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs'
+import { authDirFor, planBootRestore, decideUnscopedSend, validateOrgId } from './session-registry.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const AUTH_DIR = join(__dirname, '.wa-auth')
+const AUTH_ROOT = join(__dirname, '.wa-auth') // raíz: una carpeta por organización dentro
 const PORT = Number(process.env.WHATSAPP_DAEMON_PORT || 3002)
 
 // El daemon es un proceso Node independiente: carga el .env del proyecto para
@@ -48,17 +60,63 @@ process.on('unhandledRejection', (err) => {
   console.error('[UNHANDLED] Rejection:', err)
 })
 
-// ============ State ============
-let sock = null
-let connectionStatus = 'disconnected' // disconnected, connecting, waiting_qr, connected
-let qrCodeData = null // base64 QR image
-let qrCodeText = null // raw QR string
-let connectedPhone = null
-let lastConnectionUpdate = null
-let linkedOrgId = null // organización dueña de esta sesión de WhatsApp (multi-tenant)
-let lastError = null // último error de conexión, visible en /status y en la UI
-let connectInFlight = false // evita bucles de conexión duplicados
-let connectRetries = 0 // reintento con backoff (se resetea al abrir sesión)
+// ============ Sessions (UNA POR ORGANIZACIÓN) ============
+/**
+ * Mapa orgId → sesión. Cada sesión posee TODO su estado sin compartirllo:
+ *   { orgId, sock, status, qrCodeData, qrCodeText, phone, lastUpdate,
+ *     lastError, retries, inFlight }
+ * Ninguna operación acepta "la sesión global": o se nombra la organización,
+ * o la política de /send sin orgId resuelve la única conectada (ver registry).
+ */
+const sessions = new Map()
+
+function getOrCreateSession(orgId) {
+  let s = sessions.get(orgId)
+  if (!s) {
+    s = {
+      orgId,
+      sock: null,
+      status: 'disconnected', // disconnected | connecting | waiting_qr | connected
+      qrCodeData: null,
+      qrCodeText: null,
+      phone: null,
+      lastUpdate: null,
+      lastError: null,
+      retries: 0,
+      inFlight: false,
+    }
+    sessions.set(orgId, s)
+  }
+  return s
+}
+
+function sessionList() {
+  return [...sessions.values()].map((s) => ({
+    orgId: s.orgId,
+    status: s.status,
+    phone: s.phone,
+    lastUpdate: s.lastUpdate,
+    lastError: s.lastError,
+  }))
+}
+
+/** Agregado compatible con consumidores legacy (doctor, panel, proxy viejo). */
+function aggregateStatus() {
+  const list = [...sessions.values()]
+  const connected = list.find((s) => s.status === 'connected')
+  const pending = list.find((s) => s.status === 'connecting' || s.status === 'waiting_qr')
+  const withError = list.find((s) => s.lastError)
+  return {
+    status: connected ? 'connected' : pending ? pending.status : 'disconnected',
+    phone: connected?.phone ?? null,
+    lastUpdate: connected?.lastUpdate ?? pending?.lastUpdate ?? null,
+    orgLinked: list.length > 0,
+    // Con exactamente una sesión se mantiene el contrato antiguo (linkedOrgId);
+    // con varias, el campo único es ambiguo → null y el detalle vive en sessions[].
+    linkedOrgId: list.length === 1 ? list[0].orgId : null,
+    lastError: withError?.lastError ?? null,
+  }
+}
 
 // ============ Database Helper ============
 // better-sqlite3 directo para evitar overhead de Prisma en el daemon
@@ -81,44 +139,9 @@ try {
   console.error('[DB] Failed to connect:', err.message)
 }
 
-/**
- * Organización dueña del número conectado.
- * SEGURIDAD (auditoría crítica #1 — fuga multi-tenant): YA NO se toma la primera
- * organización de la BD (SELECT ... LIMIT 1). La org se vincula explícitamente
- * cuando la sesión de WhatsApp se conecta desde la UI de una organización
- * (POST /connect { orgId }, validado contra la BD y persistido junto a la sesión).
- * Sin org vinculada, los mensajes entrantes NO se guardan (se avisa en el log).
- */
-const ORG_META_FILE = join(AUTH_DIR, 'session-org.json')
-
-function persistLinkedOrg(orgId) {
-  try {
-    fs.mkdirSync(AUTH_DIR, { recursive: true })
-    fs.writeFileSync(ORG_META_FILE, JSON.stringify({ orgId, linkedAt: new Date().toISOString() }))
-  } catch (err) {
-    console.error('[ORG] No se pudo persistir la vinculación de organización:', err.message)
-  }
-}
-
-function loadLinkedOrgFromDisk() {
-  try {
-    if (fs.existsSync(ORG_META_FILE)) {
-      const meta = JSON.parse(fs.readFileSync(ORG_META_FILE, 'utf8'))
-      if (meta.orgId && orgExists(meta.orgId)) {
-        linkedOrgId = meta.orgId
-        console.log(`[ORG] Sesión previa vinculada a organización: ${linkedOrgId}`)
-      }
-    }
-  } catch {}
-}
-
 function orgExists(orgId) {
   if (!db || !orgId) return false
   return !!db.prepare('SELECT id FROM Organization WHERE id = ?').get(orgId)
-}
-
-function getOrgId() {
-  return linkedOrgId
 }
 
 function getOrCreateConversation(orgId, contactPhone, contactName) {
@@ -222,34 +245,67 @@ async function transcribeViaApi(audioBuffer) {
 }
 
 /**
- * Reintento de conexión con backoff: 3s, 6s, 9s... hasta 30s.
- * ANTES: si connectToWhatsApp() lanzaba (sin red / versión inaccesible / auth
- * corrupta), la promesa quedaba como unhandledRejection y el status quedaba
- * pegado en 'connecting' para siempre — el usuario veía "Generando QR..."
- * eternamente y ningún QR llegaba nunca.
+ * Reintento de conexión con backoff POR SESIÓN: 3s, 6s, 9s... hasta 30s.
+ * El fallo de una organización NUNCA toca las sesiones de las demás.
  */
-function scheduleReconnect(reason) {
-  connectRetries++
-  const delay = Math.min(3000 * connectRetries, 30000)
+function scheduleReconnect(s, reason) {
+  s.retries++
+  const delay = Math.min(3000 * s.retries, 30000)
   if (reason) {
-    lastError = reason
-    console.warn(`[WA] ${reason}`)
+    s.lastError = reason
+    console.warn(`[WA:${s.orgId.slice(-6)}] ${reason}`)
   }
-  console.log(`[WA] Reintento de conexión en ${delay / 1000}s (intento ${connectRetries})...`)
+  console.log(`[WA:${s.orgId.slice(-6)}] Reintento de conexión en ${delay / 1000}s (intento ${s.retries})...`)
   setTimeout(() => {
-    connectToWhatsApp().catch(err => console.error('[WA] Error en reintento:', err?.message || err))
+    connectToWhatsApp(s.orgId).catch((err) => console.error('[WA] Error en reintento:', err?.message || err))
   }, delay)
 }
 
-// ============ WhatsApp Connection ============
-async function connectToWhatsApp() {
-  if (connectInFlight) return
-  connectInFlight = true
-  connectionStatus = 'connecting'
-  lastConnectionUpdate = new Date().toISOString()
+/** Limpieza de UNA sesión: socket, estado y SOLO su carpeta de credenciales. */
+function destroySession(s, { removeAuthDir = false } = {}) {
+  if (s.sock) {
+    try { s.sock.end() } catch {}
+    try { s.sock.removeAllListeners?.('connection.update') } catch {}
+    try { s.sock.ev?.removeAllListeners?.('messages.upsert') } catch {}
+    s.sock = null
+  }
+  s.status = 'disconnected'
+  s.qrCodeData = null
+  s.qrCodeText = null
+  s.phone = null
+  s.lastError = null
+  s.retries = 0
+  sessions.delete(s.orgId)
+  if (removeAuthDir) {
+    try {
+      const dir = authDirFor(AUTH_ROOT, s.orgId)
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
+    } catch (err) {
+      console.error(`[WA:${s.orgId.slice(-6)}] No se pudo limpiar la carpeta de sesión:`, err?.message || err)
+    }
+  }
+}
+
+// ============ WhatsApp Connection (por organización) ============
+async function connectToWhatsApp(orgId) {
+  // P0.1: orgId obligatorio, seguro y con organización viva en BD.
+  if (!validateOrgId(orgId)) throw new Error('orgId inválido')
+  if (!orgExists(orgId)) throw new Error('Organización no encontrada')
+
+  const s = getOrCreateSession(orgId)
+
+  // Evitar duplicidad: si ya hay un intento en curso o ya está conectada, no
+  // se crea un segundo socket para la misma organización.
+  if (s.inFlight) return
+  if (s.sock && s.status === 'connected') return
+
+  s.inFlight = true
+  s.status = 'connecting'
+  s.lastUpdate = new Date().toISOString()
 
   try {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR) // eslint-disable-line react-hooks/rules-of-hooks
+  const dir = authDirFor(AUTH_ROOT, orgId)
+  const { state, saveCreds } = await useMultiFileAuthState(dir) // eslint-disable-line react-hooks/rules-of-hooks
 
   // Versión de WhatsApp Web: si no se puede consultar (sin salida a internet
   // momentánea), Baileys sigue con su versión embebida en vez de morir aquí.
@@ -257,16 +313,16 @@ async function connectToWhatsApp() {
   try {
     const fetched = await fetchLatestBaileysVersion()
     version = fetched.version
-    console.log(`[WA] Using Baileys version: ${version.join('.')}`)
+    console.log(`[WA:${orgId.slice(-6)}] Using Baileys version: ${version.join('.')}`)
   } catch (err) {
-    console.warn('[WA] No se pudo consultar la versión de WhatsApp Web; se usa la versión embebida de Baileys:', err?.message || err)
+    console.warn(`[WA:${orgId.slice(-6)}] No se pudo consultar la versión de WhatsApp Web; se usa la versión embebida de Baileys:`, err?.message || err)
   }
 
   // Logger silencioso (Baileys es muy verboso)
   const silentLogger = { level: 'silent', fatal: () => {}, error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {} }
   silentLogger.child = () => silentLogger
 
-  sock = makeWASocket({
+  const sock = makeWASocket({
     ...(version ? { version } : {}),
     auth: state,
     logger: silentLogger,
@@ -274,17 +330,23 @@ async function connectToWhatsApp() {
     connectTimeoutMs: 60000,
     qrTimeout: 120000,
   })
+  s.sock = sock
 
+  // TODOS los handlers están cerrados sobre `s` (y su orgId): el aislamiento
+  // entre organizaciones no depende de variables globales.
   sock.ev.on('connection.update', async (update) => {
+    // La sesión pudo ser desconectada mientras llegaba este evento:
+    // si ya no es la socket viva de la sesión, ignorar el callback huérfano.
+    if (s.sock !== sock) return
     const { connection, lastDisconnect, qr } = update
-    lastConnectionUpdate = new Date().toISOString()
+    s.lastUpdate = new Date().toISOString()
 
     if (qr) {
-      connectionStatus = 'waiting_qr'
-      qrCodeText = qr
+      s.status = 'waiting_qr'
+      s.qrCodeText = qr
 
       try {
-        qrCodeData = await QRCode.toDataURL(qr, {
+        s.qrCodeData = await QRCode.toDataURL(qr, {
           width: 400,
           margin: 2,
           color: { dark: '#000000', light: '#ffffff' },
@@ -294,45 +356,37 @@ async function connectToWhatsApp() {
       }
 
       qrcodeTerminal.generate(qr, { small: true })
-      console.log('[WA] QR Code generated - scan with WhatsApp')
+      console.log(`[WA:${orgId.slice(-6)}] QR Code generated - scan with WhatsApp`)
     }
 
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut
 
-      console.log(`[WA] Connection closed. Status: ${statusCode}, Reconnect: ${shouldReconnect}`)
+      console.log(`[WA:${orgId.slice(-6)}] Connection closed. Status: ${statusCode}, Reconnect: ${shouldReconnect}`)
 
       if (statusCode === DisconnectReason.loggedOut) {
-        connectionStatus = 'disconnected'
-        qrCodeData = null
-        qrCodeText = null
-        connectedPhone = null
-        lastError = null
-        connectRetries = 0
-        try {
-          fs.rmSync(AUTH_DIR, { recursive: true, force: true })
-        } catch {}
+        // Logout: la sesión de ESA organización muere y se limpia SOLO su carpeta.
+        destroySession(s, { removeAuthDir: true })
       } else {
-        connectionStatus = 'disconnected'
-      }
-
-      if (shouldReconnect) {
-        scheduleReconnect(`Conexión cerrada (código ${statusCode ?? 'desconocido'}). Reintentando automáticamente.`)
+        s.status = 'disconnected'
+        if (shouldReconnect) {
+          scheduleReconnect(s, `Conexión cerrada (código ${statusCode ?? 'desconocido'}). Reintentando automáticamente.`)
+        }
       }
     } else if (connection === 'open') {
-      connectionStatus = 'connected'
-      qrCodeData = null
-      qrCodeText = null
-      lastError = null
-      connectRetries = 0
-      console.log('[WA] Connected successfully!')
+      s.status = 'connected'
+      s.qrCodeData = null
+      s.qrCodeText = null
+      s.lastError = null
+      s.retries = 0
+      console.log(`[WA:${orgId.slice(-6)}] Connected successfully!`)
 
       try {
         const me = sock.user
         if (me?.id) {
-          connectedPhone = me.id.split(':')[0]
-          console.log(`[WA] Phone: ${connectedPhone}`)
+          s.phone = me.id.split(':')[0]
+          console.log(`[WA:${orgId.slice(-6)}] Phone: ${s.phone}`)
         }
       } catch {}
     }
@@ -340,8 +394,7 @@ async function connectToWhatsApp() {
 
   sock.ev.on('creds.update', saveCreds)
 
-  // Registro de mensajes entrantes (dentro del try: si algo falla antes de
-  // llegar aquí, el catch cierra limpio y agenda reintento).
+  // Registro de mensajes entrantes — SIEMPRE con la org de ESTA sesión.
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
@@ -372,9 +425,11 @@ async function connectToWhatsApp() {
         const contactName = isOwner ? contactPhone : (msg.pushName || contactPhone)
         const waMessageId = msg.key.id
 
-        const orgId = getOrgId()
-        if (!orgId) {
-          console.warn('[WA] Mensaje descartado: la sesión no está vinculada a ninguna organización. Reconecta WhatsApp desde Configuración → WhatsApp para vincularla.')
+        // P0.1: la org es la DUEÑA DE ESTA SESIÓN — no hay getOrgId() global.
+        // Sin org de la sesión, el mensaje se descarta (fail-closed).
+        const orgId = s.orgId
+        if (!orgExists(orgId)) {
+          console.warn(`[WA:${orgId.slice(-6)}] Mensaje descartado: la organización de esta sesión ya no existe.`)
           continue
         }
 
@@ -404,19 +459,19 @@ async function connectToWhatsApp() {
             if (transcribed) {
               textContent = transcribed
               voiceTranscribed = true
-              console.log(`[WA] Nota de voz transcrita de ${contactPhone}: ${transcribed.substring(0, 50)}...`)
+              console.log(`[WA:${orgId.slice(-6)}] Nota de voz transcrita de ${contactPhone}: ${transcribed.substring(0, 50)}...`)
             } else {
               // Fail-open a humano: el mensaje NO se pierde; queda visible en la
               // bandeja para gestión manual y la IA no responde sola.
               textContent = '🎤 Nota de voz (no se pudo transcribir automáticamente)'
-              console.warn(`[WA] Nota de voz de ${contactPhone} guardada sin transcripción`)
+              console.warn(`[WA:${orgId.slice(-6)}] Nota de voz de ${contactPhone} guardada sin transcripción`)
             }
           } else {
             continue // ni texto ni audio: se ignora como antes (stickers, imágenes, etc.)
           }
         }
 
-        console.log(`[WA] ${isOwner ? 'Mensaje del dueño hacia' : 'Message from'} ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
+        console.log(`[WA:${orgId.slice(-6)}] ${isOwner ? 'Mensaje del dueño hacia' : 'Message from'} ${contactName} (${contactPhone}): ${textContent.substring(0, 50)}...`)
 
         const conv = getOrCreateConversation(orgId, contactPhone, contactName)
         if (!conv) continue
@@ -424,7 +479,7 @@ async function connectToWhatsApp() {
         saveMessage(
           conv.id, orgId,
           isOwner ? 'outbound' : 'inbound',
-          isOwner ? (connectedPhone || '') : contactPhone,
+          isOwner ? (s.phone || '') : contactPhone,
           contactPhone,
           textContent,
           isOwner ? 'user' : 'contact',
@@ -440,7 +495,7 @@ async function connectToWhatsApp() {
         // Auto-respuesta con IA si está habilitada (voz: solo si se transcribió).
         // JAMÁS para mensajes del dueño (fromMe): el bot no se responde a sí mismo.
         if (!isOwner && conv.isAutoReply && conv.status === 'active' && (messageType !== 'voice' || voiceTranscribed)) {
-          console.log(`[WA] Auto-reply enabled for ${contactPhone}, calling agent...`)
+          console.log(`[WA:${orgId.slice(-6)}] Auto-reply enabled for ${contactPhone}, calling agent...`)
           // FIX BARRERA 3 complemento (mismo GO): WhatsApp no siempre incluye
           // senderPn en el key del mensaje (verificado con mensaje real 19:49 UTC).
           // El destinatario de la respuesta es entonces el JID ORIGINAL del
@@ -455,14 +510,14 @@ async function connectToWhatsApp() {
     }
   })
 
-  connectRetries = 0
+  s.retries = 0
   } catch (err) {
     // Falta de red, auth corrupta, etc.: NUNCA dejar el status en 'connecting'.
-    connectionStatus = 'disconnected'
-    sock = null
-    scheduleReconnect(`No se pudo iniciar la conexión con WhatsApp: ${err?.message || err}`)
+    s.status = 'disconnected'
+    s.sock = null
+    scheduleReconnect(s, `No se pudo iniciar la conexión con WhatsApp: ${err?.message || err}`)
   } finally {
-    connectInFlight = false
+    s.inFlight = false
   }
 }
 
@@ -507,23 +562,28 @@ async function triggerAgentReply(orgId, conv, messageText, replyJid) {
 
     if (!replyText) return
 
-    await sendWhatsAppMessage(replyJid, replyText)
-    saveMessage(conv.id, orgId, 'outbound', connectedPhone || '', replyJid.split('@')[0], replyText, 'agent')
+    await sendWhatsAppMessage(orgId, replyJid, replyText)
+    saveMessage(conv.id, orgId, 'outbound', sessionPhone(orgId) || '', replyJid.split('@')[0], replyText, 'agent')
 
-    console.log(`[auto-reply] Reply sent to ${replyJid}: ${replyText.substring(0, 50)}...`)
+    console.log(`[auto-reply:${orgId.slice(-6)}] Reply sent to ${replyJid}: ${replyText.substring(0, 50)}...`)
   } catch (err) {
     console.error('[auto-reply] Auto-reply error:', err)
   }
 }
 
-// ============ Send Message ============
-async function sendWhatsAppMessage(jid, text) {
-  if (!sock || connectionStatus !== 'connected') {
+// ============ Send Message (por organización) ============
+function sessionPhone(orgId) {
+  return sessions.get(orgId)?.phone ?? null
+}
+
+async function sendWhatsAppMessage(orgId, jid, text) {
+  const s = sessions.get(orgId)
+  if (!s || !s.sock || s.status !== 'connected') {
     throw new Error('WhatsApp not connected')
   }
 
   const waJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`
-  const sent = await sock.sendMessage(waJid, { text })
+  const sent = await s.sock.sendMessage(waJid, { text })
   return sent
 }
 
@@ -539,7 +599,7 @@ const server = createServer(async (req, res) => {
     return
   }
   res.setHeader('Access-Control-Allow-Origin', allowedOrigins.includes(origin) ? origin : 'http://localhost:3000')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 
   // SEGURIDAD (auditoría crítica #2/#4): TODOS los métodos exigen el secreto
@@ -561,80 +621,125 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const path = url.pathname
 
+  /**
+   * P0.1 — resolución de organización para la operación.
+   * Devuelve el orgId a usar o escribe la respuesta de error y devuelve null.
+   * Reglas:
+   *  - orgId explícito → validar formato seguro y existencia en BD.
+   *  - sin orgId (hosts standalone) → SOLO si hay exactamente UNA sesión
+   *    conectada (decideUnscopedSend). Con varias: 409. Con cero: 400.
+   */
+  function resolveOrgForWrite(body, res) {
+    const explicit = typeof body?.orgId === 'string' ? body.orgId : (url.searchParams.get('orgId') || '')
+    if (explicit) {
+      if (!validateOrgId(explicit) || !orgExists(explicit)) {
+        jsonResponse(res, { error: 'Organización no encontrada o identificador inválido' }, 400)
+        return null
+      }
+      return explicit
+    }
+    const decision = decideUnscopedSend(sessionList())
+    if (!decision.allow) {
+      jsonResponse(res, { error: decision.reason }, decision.code)
+      return null
+    }
+    return decision.orgId
+  }
+
   try {
     if (req.method === 'GET' && path === '/status') {
-      // linkedOrgId: permite al proxy verificar que la org del JWT coincide
-      // con la org vinculada al daemon (endpoints internos, protegidos por
-      // INTERNAL_API_SECRET — nunca públicos).
-      jsonResponse(res, { status: connectionStatus, phone: connectedPhone, lastUpdate: lastConnectionUpdate, orgLinked: !!linkedOrgId, linkedOrgId: linkedOrgId || null, lastError })
+      // Contrato legacy (status/phone/orgLinked/linkedOrgId) + detalle multi-org.
+      // El proxy verifica la propiedad de la sesión con sessions[] por orgId.
+      jsonResponse(res, { ...aggregateStatus(), sessions: sessionList() })
       return
     }
 
     if (req.method === 'GET' && path === '/qr') {
-      if (connectionStatus === 'connected') {
-        jsonResponse(res, { status: 'connected', qr: null, phone: connectedPhone })
-      } else if (qrCodeData) {
-        jsonResponse(res, { status: 'waiting_qr', qr: qrCodeData, qrText: qrCodeText })
+      // El QR es de UNA organización: se pide por orgId (o la única sesión).
+      const requested = url.searchParams.get('orgId') || ''
+      let orgId = null
+      if (requested) {
+        if (!validateOrgId(requested) || !orgExists(requested)) {
+          jsonResponse(res, { error: 'Organización no encontrada o identificador inválido' }, 400)
+          return
+        }
+        orgId = requested
       } else {
-        jsonResponse(res, { status: connectionStatus, qr: null })
+        const list = [...sessions.values()]
+        if (list.length === 1) orgId = list[0].orgId
+        else {
+          jsonResponse(res, { error: 'orgId requerido para consultar el QR (aislamiento multi-tenant)' }, 400)
+          return
+        }
+      }
+      const s = sessions.get(orgId)
+      if (!s) {
+        jsonResponse(res, { status: 'disconnected', qr: null, orgId })
+        return
+      }
+      if (s.status === 'connected') {
+        jsonResponse(res, { status: 'connected', qr: null, phone: s.phone, orgId })
+      } else if (s.qrCodeData) {
+        jsonResponse(res, { status: 'waiting_qr', qr: s.qrCodeData, qrText: s.qrCodeText, orgId })
+      } else {
+        jsonResponse(res, { status: s.status, qr: null, orgId })
       }
       return
     }
 
     if (req.method === 'POST' && path === '/connect') {
-      // Vinculación multi-tenant: el proxy (con sesión JWT de una org) indica a qué
-      // organización pertenece esta sesión de WhatsApp. Se valida contra la BD.
+      // P0.1: la sesión se crea PARA la organización pedida (orgId obligatorio).
+      // Cada org tiene la suya: ya no existe el rebinding entre organizaciones.
       const body = await parseBody(req)
-      if (body.orgId) {
-        if (!orgExists(body.orgId)) {
-          jsonResponse(res, { error: 'Organización no encontrada' }, 400)
-          return
-        }
-        // FAIL-CLOSED (auditoría pre-venta P0, defensa en profundidad): si la
-        // sesión ya está vinculada a OTRA organización, el daemon se NIEGA a
-        // re-vincularla aunque llegue un orgId distinto con el secreto interno.
-        // La desvinculación solo ocurre por /disconnect de la org dueña
-        // (verificada por el proxy) o borrando el volumen wa-auth.
-        if (linkedOrgId && linkedOrgId !== body.orgId) {
-          console.warn(`[ORG] REBIND denegado: sesión de ${linkedOrgId}, solicitud de ${body.orgId}`)
-          jsonResponse(res, { error: 'Esta sesión de WhatsApp ya está vinculada a otra organización' }, 403)
-          return
-        }
-        linkedOrgId = body.orgId
-        persistLinkedOrg(linkedOrgId)
-        console.log(`[ORG] Sesión vinculada a organización: ${linkedOrgId}`)
-      } else if (!linkedOrgId) {
+      const orgId = typeof body.orgId === 'string' ? body.orgId : ''
+      if (!validateOrgId(orgId)) {
         jsonResponse(res, { error: 'orgId requerido: no se conecta una sesión de WhatsApp sin organización (aislamiento multi-tenant)' }, 400)
         return
       }
-      if (connectionStatus === 'connected') {
-        jsonResponse(res, { status: 'connected', phone: connectedPhone, orgLinked: true })
+      if (!orgExists(orgId)) {
+        jsonResponse(res, { error: 'Organización no encontrada' }, 400)
+        return
+      }
+      const s = sessions.get(orgId)
+      if (s && s.status === 'connected') {
+        jsonResponse(res, { status: 'connected', phone: s.phone, orgId, orgLinked: true })
+      } else if (s && (s.inFlight || s.status === 'connecting' || s.status === 'waiting_qr')) {
+        // Ya hay una conexión en curso para esta org: no duplicar sockets.
+        jsonResponse(res, { status: s.status, message: 'La conexión de esta organización ya está en curso', orgId, orgLinked: true })
       } else {
-        connectToWhatsApp()
-        jsonResponse(res, { status: 'connecting', message: 'Iniciando conexión...', orgLinked: true })
+        connectToWhatsApp(orgId).catch((err) => console.error('[WA] Error al conectar:', err?.message || err))
+        jsonResponse(res, { status: 'connecting', message: 'Iniciando conexión...', orgId, orgLinked: true })
       }
       return
     }
 
-    if (req.method === 'POST' && path === '/disconnect') {
-      // logout() lanza si el socket no llegó a abrirse (waiting_qr/connecting):
-      // la limpieza SIEMPRE procede, venga o no el logout.
-      if (sock) {
-        try { await sock.logout() } catch (err) {
-          console.warn('[WA] logout falló (se limpia igualmente):', err?.message || err)
-          try { sock.end() } catch {}
-        }
-        sock = null
+    if ((req.method === 'POST' && (path === '/disconnect' || path === '/logout'))) {
+      // Desconecta SOLO la sesión de la organización pedida. Fail-closed:
+      // sin orgId no se toca NADA (ya no hay una sesión global que cerrar).
+      const body = await parseBody(req)
+      const orgId = typeof body.orgId === 'string' ? body.orgId : (url.searchParams.get('orgId') || '')
+      if (!validateOrgId(orgId)) {
+        jsonResponse(res, { error: 'orgId requerido: indica la organización de la sesión a desconectar' }, 400)
+        return
       }
-      connectionStatus = 'disconnected'
-      qrCodeData = null
-      qrCodeText = null
-      connectedPhone = null
-      linkedOrgId = null
-      lastError = null
-      connectRetries = 0
-      try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) } catch {}
-      jsonResponse(res, { status: 'disconnected', message: 'WhatsApp desconectado' })
+      const s = sessions.get(orgId)
+      if (s) {
+        // logout() lanza si el socket no llegó a abrirse: la limpieza SIEMPRE procede.
+        if (s.sock) {
+          try { await s.sock.logout() } catch (err) {
+            console.warn(`[WA:${orgId.slice(-6)}] logout falló (se limpia igualmente):`, err?.message || err)
+            try { s.sock.end() } catch {}
+          }
+        }
+        destroySession(s, { removeAuthDir: true })
+      } else {
+        // Sin sesión viva: limpiar restos de credenciales de esa org si existen
+        try {
+          const dir = authDirFor(AUTH_ROOT, orgId)
+          if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
+        } catch {}
+      }
+      jsonResponse(res, { status: 'disconnected', message: 'WhatsApp desconectado', orgId })
       return
     }
 
@@ -646,37 +751,44 @@ const server = createServer(async (req, res) => {
         jsonResponse(res, { error: 'to y text son requeridos' }, 400)
         return
       }
-      if (connectionStatus !== 'connected') {
-        jsonResponse(res, { error: 'WhatsApp no conectado' }, 400)
+
+      // P0.1: el envío SIEMPRE resuelve primero la organización dueña de la
+      // sesión por la que saldrá el mensaje. Jamás se usa el socket de otra org.
+      const orgId = resolveOrgForWrite(body, res)
+      if (!orgId) return
+
+      const s = sessions.get(orgId)
+      if (!s || s.status !== 'connected') {
+        jsonResponse(res, { error: `WhatsApp no conectado para la organización (${orgId.slice(-6)})` }, 400)
         return
       }
 
-      const sent = await sendWhatsAppMessage(to, text)
+      const sent = await sendWhatsAppMessage(orgId, to, text)
 
       // Persistencia del saliente (P0): las respuestas manuales de la bandeja
       // deben aparecer en el hilo. Antes /send enviaba y NO guardaba → el
       // historial quedaba incompleto para el vendedor y para la IA.
-      if (db && linkedOrgId) {
+      if (db) {
         try {
           const digits = String(to).replace(/\D+/g, '')
-          let conv = db.prepare('SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND contactPhone = ?').get(linkedOrgId, to)
+          let conv = db.prepare('SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND contactPhone = ?').get(orgId, to)
           if (!conv && digits) {
-            conv = db.prepare("SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND REPLACE(REPLACE(REPLACE(REPLACE(contactPhone, ' ', ''), '-', ''), '(', ''), ')', '') = ?").get(linkedOrgId, digits)
+            conv = db.prepare("SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND REPLACE(REPLACE(REPLACE(REPLACE(contactPhone, ' ', ''), '-', ''), '(', ''), ')', '') = ?").get(orgId, digits)
           }
           if (!conv) {
             // Conversación/cliente nuevos: misma vía que los entrantes (round-robin NO aplica aquí; queda prospect)
             const contactName = body.contactName || to
-            conv = getOrCreateConversation(linkedOrgId, to, contactName)
+            conv = getOrCreateConversation(orgId, to, contactName)
           }
           if (conv) {
-            saveMessage(conv.id, linkedOrgId, 'outbound', connectedPhone || '', to, text, 'user', sent?.key?.id || null)
+            saveMessage(conv.id, orgId, 'outbound', s.phone || '', to, text, 'user', sent?.key?.id || null)
           }
         } catch (persistErr) {
           console.error('[WA] No se pudo persistir el mensaje saliente:', persistErr?.message || persistErr)
         }
       }
 
-      jsonResponse(res, { success: true, messageId: sent?.key?.id })
+      jsonResponse(res, { success: true, messageId: sent?.key?.id, orgId })
       return
     }
 
@@ -685,9 +797,11 @@ const server = createServer(async (req, res) => {
         jsonResponse(res, { error: 'DB not available' }, 500)
         return
       }
-      const orgId = getOrgId()
-      if (!orgId) {
-        jsonResponse(res, { conversations: [], orgLinked: false })
+      // P0.1: FAIL-CLOSED — sin orgId no se devuelve NINGUNA conversación.
+      // (Antes se respondía con la org de la sesión global.)
+      const orgId = url.searchParams.get('orgId') || ''
+      if (!validateOrgId(orgId)) {
+        jsonResponse(res, { error: 'orgId requerido (aislamiento multi-tenant)' }, 400)
         return
       }
       const conversations = db.prepare(`
@@ -697,7 +811,7 @@ const server = createServer(async (req, res) => {
         WHERE c.organizationId = ?
         ORDER BY c.lastMessageAt DESC
       `).all(orgId)
-      jsonResponse(res, { conversations })
+      jsonResponse(res, { conversations, orgId })
       return
     }
 
@@ -708,12 +822,19 @@ const server = createServer(async (req, res) => {
         return
       }
 
+      // P0.1: el alcance es la organización que pide (orgId obligatorio).
+      const orgId = url.searchParams.get('orgId') || ''
+      if (!validateOrgId(orgId)) {
+        jsonResponse(res, { error: 'orgId requerido (aislamiento multi-tenant)' }, 400)
+        return
+      }
+
       const conv = db.prepare(`
         SELECT c.*, cl.name as clientName
         FROM WhatsAppConversation c
         LEFT JOIN Client cl ON c.clientId = cl.id
         WHERE c.id = ? AND c.organizationId = ?
-      `).get(convId, getOrgId())
+      `).get(convId, orgId)
 
       if (!conv) {
         jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
@@ -805,30 +926,83 @@ function parseBody(req) {
   })
 }
 
+// ============ Arranque: migración legado + restauración por organización ============
+
+/**
+ * Migración NO destructiva del layout legado (una sola carpeta global):
+ * mueve los archivos de credenciales a .wa-auth/<orgId>/ y conserva el meta
+ * antiguo renombrado (nunca se elimina información de sesión).
+ */
+function migrateLegacyAuthDir(orgId) {
+  const target = authDirFor(AUTH_ROOT, orgId)
+  try {
+    fs.mkdirSync(target, { recursive: true })
+    for (const name of fs.readdirSync(AUTH_ROOT)) {
+      if (name === 'session-org.json' || validateOrgId(name)) continue // meta y carpetas por-org no se tocan
+      const from = join(AUTH_ROOT, name)
+      let isDir = false
+      try { isDir = fs.statSync(from).isDirectory() } catch { continue }
+      if (isDir) continue
+      fs.renameSync(from, join(target, name))
+    }
+    const metaPath = join(AUTH_ROOT, 'session-org.json')
+    if (fs.existsSync(metaPath)) {
+      fs.renameSync(metaPath, join(AUTH_ROOT, 'migrated-session-org.json.bak'))
+    }
+    console.log(`[BOOT] Sesión legado migrada a .wa-auth/${orgId}/ (movimiento, sin borrado)`)
+  } catch (err) {
+    console.error('[BOOT] Migración legado falló (se continúa sin conectar la sesión legacy):', err?.message || err)
+  }
+}
+
+function performBoot() {
+  let rootIsDir = false
+  let rootEntries = []
+  let legacyMeta = null
+  try {
+    rootIsDir = fs.existsSync(AUTH_ROOT) && fs.statSync(AUTH_ROOT).isDirectory()
+    if (rootIsDir) {
+      rootEntries = fs.readdirSync(AUTH_ROOT)
+      const metaPath = join(AUTH_ROOT, 'session-org.json')
+      if (fs.existsSync(metaPath)) {
+        try { legacyMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch { legacyMeta = null }
+      }
+    }
+  } catch (err) {
+    console.error('[BOOT] No se pudo inspeccionar .wa-auth/:', err?.message || err)
+    return
+  }
+
+  const plan = planBootRestore({ rootEntries, rootIsDir, legacyOrgMeta: legacyMeta, orgExists })
+  for (const note of plan.notes) console.log(`[BOOT] ${note}`)
+
+  if (plan.migrate) migrateLegacyAuthDir(plan.migrate.to)
+
+  // Restauración: cada organización con credenciales en disco recupera SU sesión.
+  for (const orgId of plan.restore) {
+    console.log(`[BOOT] Restaurando sesión de WhatsApp de la organización ${orgId}...`)
+    connectToWhatsApp(orgId).catch((err) => console.error('[BOOT] Error restaurando sesión:', err?.message || err))
+  }
+
+  if (!rootIsDir || (plan.restore.length === 0 && !plan.migrate)) {
+    console.log('[WA] No sessions found. Waiting for /connect requests...')
+  }
+}
+
 // ============ Start ============
 server.listen(PORT, () => {
-  console.log(`\n🟢 CRM ALBRA - WhatsApp Daemon`)
+  console.log(`\n🟢 CRM ALBRA - WhatsApp Daemon (multi-organización)`)
   console.log(`   API: http://localhost:${PORT}`)
   console.log(`   Status: http://localhost:${PORT}/status`)
-  console.log(`   QR: http://localhost:${PORT}/qr\n`)
-
-  // Auto-conecta si existe sesión previa (restaurando la org vinculada)
-  if (fs.existsSync(AUTH_DIR)) {
-    console.log('[WA] Existing session found, connecting...')
-    loadLinkedOrgFromDisk()
-    if (!linkedOrgId) console.warn('[ORG] Sesión previa SIN organización vinculada — los mensajes entrantes se descartarán hasta reconectar desde la UI')
-    connectToWhatsApp()
-  } else {
-    console.log('[WA] No session found. Waiting for /connect request...')
-    connectionStatus = 'disconnected'
-  }
+  console.log(`   Sesiones activas: ${sessions.size}\n`)
+  performBoot()
 })
 
-// Graceful shutdown
+// Graceful shutdown: cerrar TODAS las sesiones de todas las organizaciones.
 process.on('SIGINT', () => {
   console.log('\n[WA] Shutting down...')
-  if (sock) {
-    sock.end()
+  for (const s of sessions.values()) {
+    try { s.sock?.end() } catch {}
   }
   if (db) {
     db.close()
@@ -839,7 +1013,9 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   console.log('\n[WA] SIGTERM received, shutting down...')
-  if (sock) sock.end()
+  for (const s of sessions.values()) {
+    try { s.sock?.end() } catch {}
+  }
   if (db) db.close()
   server.close()
   process.exit(0)

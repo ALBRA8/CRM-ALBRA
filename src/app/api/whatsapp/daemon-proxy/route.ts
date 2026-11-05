@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { handle, json } from '@/lib/api-helpers'
 import { requireAuth, requirePermission } from '@/lib/auth'
 import { can } from '@/lib/rbac'
+import { mapStatusToVerdict, type OwnershipVerdict } from '@/lib/whatsapp-session-verdict'
 
 /**
  * Proxy al daemon de WhatsApp (Baileys) en http://localhost:3002 con timeout de 3s.
@@ -43,15 +44,19 @@ const ALLOWED_POST = ['/connect', '/disconnect', '/send', '/logout']
 const ALLOWED_PUT = [/^\/conversations\/[\w@.:-]+$/]
 
 /**
- * GUARD MULTI-TENANT FAIL-CLOSED (auditoría pre-venta P0): el daemon es UNA
- * sola sesión de WhatsApp vinculada a UNA organización. Un usuario autenticado
- * de la org B NO puede leer/enviar/desconectar/conectar la sesión de la org A.
- * Si la propiedad NO puede verificarse (daemon caído, timeout, status no-ok,
- * respuesta ambigua) la operación se DENIEGA — "no pude comprobarlo" jamás se
- * interpreta como "no hay organización vinculada".
+ * GUARD MULTI-TENANT FAIL-CLOSED — P0.1 sesiones POR ORGANIZACIÓN:
+ * cada organización tiene SU propia sesión de WhatsApp en el daemon. El orgId
+ * SIEMPRE se toma del JWT (jamás del body del cliente) y el veredicto se
+ * calcula contra sessions[] del daemon:
+ *
+ *   sesión de MI org existe          → permitir
+ *   no hay sesión de MI org          → DENEGAR operate (403); view/connect OK
+ *   no se pudo verificar el estado   → DENEGAR (403)  [daemon caído, timeout,
+ *      status no-ok, respuesta ambigua]
+ *
+ * Si el daemon no está corriendo NO se simula estado: la operación se deniega
+ * con 403/503 (respuestas vacías falsas ocultaban el fallo al operador).
  */
-type OwnershipVerdict = 'SAME_ORG' | 'UNLINKED' | 'OTHER_ORG' | 'UNKNOWN'
-
 async function resolveOwnership(authOrgId: string): Promise<OwnershipVerdict> {
   let res: Response
   try {
@@ -64,16 +69,15 @@ async function resolveOwnership(authOrgId: string): Promise<OwnershipVerdict> {
     return 'UNKNOWN' // daemon caído / timeout / INTERNAL_API_SECRET ausente → DENIED
   }
   if (!res.ok) return 'UNKNOWN' // error consultando ownership → DENIED
-  let j: { orgLinked?: unknown; linkedOrgId?: unknown }
+  let j: Parameters<typeof mapStatusToVerdict>[0]
   try {
-    j = (await res.json()) as { orgLinked?: unknown; linkedOrgId?: unknown }
+    j = (await res.json()) as Parameters<typeof mapStatusToVerdict>[0]
   } catch {
     return 'UNKNOWN' // respuesta no-JSON → DENIED
   }
-  if (typeof j.orgLinked !== 'boolean') return 'UNKNOWN' // ambigua → DENIED
-  if (!j.orgLinked) return 'UNLINKED' // daemon VERIFICÓ explícitamente: no hay sesión
-  if (typeof j.linkedOrgId !== 'string' || !j.linkedOrgId) return 'UNKNOWN'
-  return j.linkedOrgId === authOrgId ? 'SAME_ORG' : 'OTHER_ORG'
+  // Traducción pura y testeada (whatsapp-session-verdict.ts): sessions[] por
+  // org en el daemon multi-org, fallback legacy si aún respondiera el viejo.
+  return mapStatusToVerdict(j, authOrgId)
 }
 
 const DENY_MSG: Record<Exclude<OwnershipVerdict, 'SAME_ORG'>, string> = {
@@ -88,10 +92,10 @@ function deny(v: Exclude<OwnershipVerdict, 'SAME_ORG'>): NextResponse {
 
 /**
  * Política por operación:
- *   connect → SAME_ORG | UNLINKED (vinculación inicial; el primero que escanea
- *             el QR vincula la sesión a su org — después, todos los demás: 403)
+ *   connect → SAME_ORG | UNLINKED (crea la sesión de MI org; si ya existe la
+ *             de otra org no afecta: cada org tiene la suya)
  *   view    (status/qr) → SAME_ORG | UNLINKED (con UNLINKED no hay nada que
- *             filtrar; con OTHER_ORG se deniega para NO filtrar teléfono/org)
+ *             filtrar: MI org aún no tiene sesión)
  *   operate (send/disconnect/logout/conversations/PUT) → SOLO SAME_ORG
  */
 type Op = 'connect' | 'view' | 'operate'
@@ -100,6 +104,16 @@ function sessionGate(v: OwnershipVerdict, op: Op): NextResponse | null {
   if (v === 'SAME_ORG') return null
   if (op !== 'operate' && v === 'UNLINKED') return null
   return deny(v as Exclude<OwnershipVerdict, 'SAME_ORG'>)
+}
+
+/**
+ * P0.1: añade el orgId del JWT como alcance explícito de la operación en el
+ * daemon. El daemon NUNCA acepta "la sesión global": cada llamada nombra a su
+ * organización (QR, conversaciones, send, disconnect...).
+ */
+function withOrgParam(path: string, orgId: string): string {
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}orgId=${encodeURIComponent(orgId)}`
 }
 
 function daemonHeaders(): Record<string, string> {
@@ -146,7 +160,13 @@ export async function GET(req: NextRequest) {
     const op: Op = clean === '/status' || clean === '/qr' ? 'view' : 'operate'
     const denied = sessionGate(await resolveOwnership(auth.orgId), op)
     if (denied) return denied
-    return proxyGet(clean + (extra ? `?${extra}` : ''))
+    // P0.1: QR y conversaciones SIEMPRE alcanzan la sesión de MI organización
+    // (/status es agregado del daemon y no necesita orgId).
+    const scoped =
+      clean === '/status'
+        ? extra ? `${clean}?${extra}` : clean
+        : withOrgParam(clean, auth.orgId) + (extra ? `&${extra}` : '')
+    return proxyGet(scoped)
   })
 }
 
@@ -172,12 +192,14 @@ export async function POST(req: NextRequest) {
       return json({ error: `Sin permiso para esta acción (${capability})` }, { status: 403 })
     }
     try {
-      // Multi-tenant fail-closed: la sesión se vincula a la org del JWT; si el
-      // daemon ya está vinculado a OTRA org o NO puede verificarse, se deniega.
+      // Multi-tenant fail-closed: la sesión se crea/opera con la org del JWT.
+      // P0.1: TODAS las operaciones nombran su organización (conectar,
+      // desconectar, enviar). El orgId del body del cliente JAMÁS se confía:
+      // se sobreescribe con el del JWT.
       const op: Op = path === '/connect' ? 'connect' : 'operate'
       const denied = sessionGate(await resolveOwnership(auth.orgId), op)
       if (denied) return denied
-      const payload = path === '/connect' ? { ...body, orgId: auth.orgId } : body
+      const payload = { ...body, orgId: auth.orgId }
       const res = await fetch(`${DAEMON_URL}${path}`, {
         method: 'POST',
         headers: daemonHeaders(),
