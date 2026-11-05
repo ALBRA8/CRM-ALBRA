@@ -4,6 +4,7 @@ import { verifyPassword, signToken, HttpError } from '@/lib/auth'
 import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { rateLimit, rateLimited, clientIp } from '@/lib/rate-limit'
+import { logSecurityEvent } from '@/lib/security-log'
 
 /**
  * POST /api/auth/login — verifica credenciales y devuelve { token, user }.
@@ -41,13 +42,16 @@ export async function POST(req: NextRequest) {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       const failed = rateLimit(emailKey, LOGIN_EMAIL_LIMIT, LOGIN_EMAIL_WINDOW_MS)
       if (!failed.ok) return rateLimited(failed)
+      // B8: observabilidad de seguridad — intento fallido de login (sin PII de contraseñas).
+      logSecurityEvent('auth.login_failed', { ip, email })
       throw new HttpError(401, 'Credenciales inválidas')
     }
     if (!user.isActive) throw new HttpError(403, 'Usuario desactivado. Contacta al administrador.')
     const org = await db.organization.findUnique({ where: { id: user.organizationId }, select: { isActive: true } })
     if (!org || !org.isActive) throw new HttpError(403, 'La organización no está activa')
 
-    const token = signToken({ userId: user.id, orgId: user.organizationId, role: user.role, email: user.email })
+    // B4: el JWT lleva tokenVersion para que logout/reset/desactivación puedan revocarlo
+    const token = signToken({ userId: user.id, orgId: user.organizationId, role: user.role, email: user.email, tokenVersion: user.tokenVersion })
     await auditAndTimeline({ orgId: user.organizationId, userId: user.id, action: 'login', entity: 'user', entityId: user.id, details: { name: user.name } })
 
     // Cookie httpOnly además del token en el body (modo dual: la cookie

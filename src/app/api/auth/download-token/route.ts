@@ -19,6 +19,8 @@ export async function POST(req: NextRequest) {
       orgId: auth.orgId,
       role: auth.role,
       email: auth.email,
+      // B4: hereda la tokenVersion → un download-token también se revoca
+      tokenVersion: auth.tokenVersion,
     })
     return json({ token, expiresIn: DOWNLOAD_TOKEN_TTL_SECONDS })
   })

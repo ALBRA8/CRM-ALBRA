@@ -18,6 +18,17 @@ export async function register() {
     }
   }
 
+  // B4 — Prewarm del caché de tokenVersion: las guardas síncronas (getAuth)
+  // parten del estado exacto de revocación sin consultar BD en cada request.
+  try {
+    const { prewarmSessionVersions } = await import('./lib/session-version')
+    prewarmSessionVersions().catch((err: unknown) => {
+      console.error('[session-version] prewarm falló (se refrescará perezosamente):', err instanceof Error ? err.message : err)
+    })
+  } catch (err) {
+    console.error('[instrumentation] no se pudo precargar session-version', err)
+  }
+
   try {
     const { runDueJobs } = await import('./lib/scheduler')
     const tick = async () => {

@@ -55,7 +55,8 @@ export async function POST(req: NextRequest) {
     await createStandardPipeline(org.id)
     await createOrgSettings(org.id)
 
-    const token = signToken({ userId: user.id, orgId: org.id, role: user.role, email: user.email })
+    // B4: el JWT lleva tokenVersion para la revocación de sesiones
+    const token = signToken({ userId: user.id, orgId: org.id, role: user.role, email: user.email, tokenVersion: user.tokenVersion })
     return jsonWithSession({
       token,
       user: { id: user.id, name: user.name, email: user.email, company: user.company, phone: user.phone, role: user.role, avatar: user.avatar },

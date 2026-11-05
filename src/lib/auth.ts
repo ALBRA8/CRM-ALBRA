@@ -1,6 +1,8 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { NextRequest } from 'next/server'
 import { can } from './rbac'
+import { isSessionRevoked, scheduleRefreshSessionVersion } from './session-version'
+import { logSecurityEvent } from './security-log'
 
 /**
  * Autenticación JWT sin dependencias externas (HMAC-SHA256 firmado con APP_SECRET)
@@ -30,6 +32,8 @@ export interface SessionPayload {
   exp: number
   /** presence de token de descarga: SOLO válido en ?token= de endpoints de descarga */
   purpose?: 'download'
+  /** B4: versión del usuario con la que se firmó el token (revocación de sesiones) */
+  tokenVersion?: number
 }
 
 // ---------- Contraseñas (scrypt) ----------
@@ -110,6 +114,8 @@ export interface AuthContext {
   role: string
   email: string
   isAdmin: boolean
+  /** B4: tokenVersion del usuario embebida en el JWT (para heredarla en download-tokens) */
+  tokenVersion?: number
 }
 
 /** Cookie de sesión httpOnly (mitigación XSS: el JWT no necesita vivir en localStorage). */
@@ -131,7 +137,12 @@ export interface GetAuthOptions {
 /** Opciones para endpoints de descarga: única vía legítima de ?token=. */
 export const DOWNLOAD_AUTH_OPTS: GetAuthOptions = { allowQueryToken: true }
 
-function toAuthContext(session: SessionPayload): AuthContext {
+function toAuthContext(session: SessionPayload): AuthContext | null {
+  // B4 revocación: si el usuario ya lleva una versión mayor que la firmada en
+  // el token (logout / reset de contraseña / desactivación), la sesión muere.
+  if (isSessionRevoked(session.userId, session.tokenVersion)) return null
+  // Convergencia multi-proceso: refresco perezoso de la versión vigente.
+  scheduleRefreshSessionVersion(session.userId)
   return {
     userId: session.userId,
     orgId: session.orgId,
@@ -140,6 +151,7 @@ function toAuthContext(session: SessionPayload): AuthContext {
     // superadmin es administrador también DENTRO de su organización
     // (superconjunto de owner), además de su rol de plataforma.
     isAdmin: session.role === 'owner' || session.role === 'admin' || session.role === 'superadmin',
+    tokenVersion: session.tokenVersion,
   }
 }
 
@@ -224,6 +236,8 @@ export function requireSuperAdmin(req: NextRequest, opts: GetAuthOptions = {}): 
 export function requirePermission(req: NextRequest, capability: string, opts: GetAuthOptions = {}): AuthContext {
   const auth = requireAuth(req, opts)
   if (!can(auth.role, capability)) {
+    // B8: observabilidad de seguridad — denegación RBAC (403) registrada.
+    logSecurityEvent('rbac.denied', { userId: auth.userId, orgId: auth.orgId, role: auth.role, capability })
     throw new HttpError(403, `Sin permiso para esta acción (${capability})`)
   }
   return auth

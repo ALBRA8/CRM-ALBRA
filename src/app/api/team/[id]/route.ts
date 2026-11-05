@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requireAdmin, HttpError } from '@/lib/auth'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { handle, json, readBody, str } from '../../_lib/shared'
+import { bumpTokenVersionForUser } from '@/lib/session-version'
 
 /** PUT /api/team/:id — actualiza rol/datos de un miembro de la MISMA organización. */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -42,6 +43,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       data,
       select: { id: true, name: true, email: true, role: true, phone: true, company: true, avatar: true, isActive: true, createdAt: true },
     })
+    // B4: desactivar a un miembro revoca sus sesiones vigentes (JWT de 7 días).
+    if (data.isActive === false) {
+      const bumped = await db.user.update({ where: { id }, data: { tokenVersion: { increment: 1 } }, select: { tokenVersion: true } })
+      bumpTokenVersionForUser(id, bumped.tokenVersion)
+    }
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,
@@ -70,7 +76,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
     if (member.id === auth.userId) throw new HttpError(400, 'No puedes desactivarte a ti mismo')
 
-    await db.user.update({ where: { id }, data: { isActive: false } })
+    // B4: la desactivación revoca las sesiones del miembro (tokenVersion++).
+    const bumped = await db.user.update({ where: { id }, data: { isActive: false, tokenVersion: { increment: 1 } }, select: { tokenVersion: true } })
+    bumpTokenVersionForUser(id, bumped.tokenVersion)
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,
