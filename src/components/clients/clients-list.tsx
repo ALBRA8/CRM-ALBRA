@@ -257,8 +257,8 @@ export function ClientsList() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => {
-            window.open(api.getExportCsvUrl('clients'), '_blank')
+          onClick={async () => {
+            window.open(await api.getExportCsvUrl('clients'), '_blank')
           }}
           className="h-8 text-xs gap-1.5"
         >

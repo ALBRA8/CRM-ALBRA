@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { requirePermission } from '@/lib/auth'
+import { requirePermission, DOWNLOAD_AUTH_OPTS } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { buildCsv } from '@/lib/csv'
@@ -8,12 +8,14 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 
 /**
  * GET /api/export/csv?type=clients|services|quotes|transactions — CSV con BOM UTF-8.
- * Autenticación por header Bearer o ?token= (descargas directas desde <a>).
+ * Autenticación por Bearer/cookie y, SOLO aquí (endpoint de descarga), ?token=
+ * con JWT de sesión (compatibilidad) o download-token de corta vida.
+ * Descarga directa: Referrer-Policy no-referrer para no filtrar la URL (con su token).
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    // Fase 2 RBAC: exportar datos completos es owner/admin (soporta ?token= para descargas)
-    const auth = requirePermission(req, 'export.data')
+    // Fase 2 RBAC: exportar datos completos es owner/admin (opt-in ?token= de descarga)
+    const auth = requirePermission(req, 'export.data', DOWNLOAD_AUTH_OPTS)
     const type = new URL(req.url).searchParams.get('type') || 'clients'
     const orgId = auth.orgId
 
@@ -65,6 +67,7 @@ export async function GET(req: NextRequest) {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="${filename}"`,
+        'Referrer-Policy': 'no-referrer',
       },
     })
   })

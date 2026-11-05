@@ -43,9 +43,12 @@ describe('auth guard — GET /api/clients', () => {
     expect(Array.isArray(body.clients)).toBe(true)
   })
 
-  it('acepta el fallback ?token= usado por las descargas directas', async () => {
+  it('REPARACIÓN B1: RECHAZA ?token= en ruta NO-descarga con 401 (antes autenticaba: inseguro)', async () => {
+    // El JWT por query quedaba en historial/logs/Referer; ahora solo los
+    // endpoints de descarga (export/csv, reports/pdf, reports/excel, quotes/pdf)
+    // aceptan ?token= mediante opt-in explícito. /api/clients NO es descarga.
     const res = await clientsGET(req(`/api/clients?token=${encodeURIComponent(tokenA())}`))
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(401)
   })
 })
 

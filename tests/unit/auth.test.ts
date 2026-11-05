@@ -4,12 +4,15 @@ import {
   hashPassword,
   verifyPassword,
   signToken,
+  signDownloadToken,
   verifyToken,
   getAuth,
   requireAuth,
   requireAdmin,
   slugify,
   HttpError,
+  DOWNLOAD_AUTH_OPTS,
+  DOWNLOAD_TOKEN_TTL_SECONDS,
   type SessionPayload,
 } from '@/lib/auth'
 
@@ -124,9 +127,35 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     expect(res?.isAdmin).toBe(true) // role owner
   })
 
-  it('getAuth admite ?token= (descargas CSV/PDF/backup)', () => {
-    const res = getAuth(requestWithAuth({ token: signToken(payload()) }))
+  it('REPARACIÓN B1: getAuth RECHAZA ?token= en rutas normales (solo opt-in de descarga)', () => {
+    // Comportamiento SEGURO nuevo: el JWT por query quedaba en historial/logs/Referer.
+    // Antes este test codificaba el comportamiento inseguro (aceptaba ?token= global).
+    expect(getAuth(requestWithAuth({ token: signToken(payload()) }))).toBeNull()
+    // Con el opt-in de descarga (DOWNLOAD_AUTH_OPTS) sí autentica.
+    const res = getAuth(requestWithAuth({ token: signToken(payload()) }), DOWNLOAD_AUTH_OPTS)
     expect(res?.userId).toBe('u-1')
+  })
+
+  it('REPARACIÓN B1: download-token NO autentica por Bearer/cookie y SÍ por ?token= en descargas', () => {
+    const dl = signDownloadToken(payload())
+    // por Bearer en cualquier ruta → null (nunca sustituye a la sesión)
+    expect(getAuth(requestWithAuth({ authorization: `Bearer ${dl}` }))).toBeNull()
+    // por ?token= en endpoint de descarga → autentica
+    const viaQuery = getAuth(requestWithAuth({ token: dl }), DOWNLOAD_AUTH_OPTS)
+    expect(viaQuery?.userId).toBe('u-1')
+    expect(viaQuery?.orgId).toBe('org-1')
+  })
+
+  it('REPARACIÓN B1: download-token caducado → null; TTL por defecto 300s', () => {
+    const expired = signDownloadToken(payload(), -1)
+    expect(verifyToken(expired)).toBeNull()
+    expect(getAuth(requestWithAuth({ token: expired }), DOWNLOAD_AUTH_OPTS)).toBeNull()
+    const fresh = signDownloadToken(payload())
+    const session = verifyToken(fresh)
+    expect(session?.purpose).toBe('download')
+    // 5 minutos de margen de firma
+    expect((session?.exp ?? 0) - Date.now()).toBeLessThanOrEqual(DOWNLOAD_TOKEN_TTL_SECONDS * 1000)
+    expect((session?.exp ?? 0) - Date.now()).toBeGreaterThan(DOWNLOAD_TOKEN_TTL_SECONDS * 1000 - 5_000)
   })
 
   it('getAuth devuelve null sin token, con basura o con token firmado por otro secreto', () => {

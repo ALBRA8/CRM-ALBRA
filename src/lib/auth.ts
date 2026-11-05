@@ -28,6 +28,8 @@ export interface SessionPayload {
   role: string
   email: string
   exp: number
+  /** presence de token de descarga: SOLO válido en ?token= de endpoints de descarga */
+  purpose?: 'download'
 }
 
 // ---------- Contraseñas (scrypt) ----------
@@ -64,6 +66,25 @@ export function signToken(payload: Omit<SessionPayload, 'exp'>, days = 7): strin
   return `${header}.${claims}.${sig}`
 }
 
+/**
+ * Token de DESCARGA de corta vida (reparación integral B1).
+ *
+ * Motivo: el JWT de sesión (7 días) no debe colarse en URLs (?token=) porque
+ * queda en historial del navegador, logs de proxy y cabecera Referer. Para las
+ * descargas directas (<a href>, window.open) se emite un token dedicado con
+ * `purpose: 'download'` y expiración de 5 minutos; los endpoints de descarga
+ * lo aceptan solo en `?token=` y NUNCA fuera de ellos.
+ */
+export const DOWNLOAD_TOKEN_TTL_SECONDS = 300
+
+export function signDownloadToken(payload: Omit<SessionPayload, 'exp' | 'purpose'>, ttlSeconds = DOWNLOAD_TOKEN_TTL_SECONDS): string {
+  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+  const body: SessionPayload = { ...payload, purpose: 'download', exp: Date.now() + ttlSeconds * 1000 }
+  const claims = b64url(JSON.stringify(body))
+  const sig = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
+  return `${header}.${claims}.${sig}`
+}
+
 export function verifyToken(token: string): SessionPayload | null {
   try {
     const [header, claims, sig] = token.split('.')
@@ -94,21 +115,23 @@ export interface AuthContext {
 /** Cookie de sesión httpOnly (mitigación XSS: el JWT no necesita vivir en localStorage). */
 export const SESSION_COOKIE = 'albra_session'
 
-export function getAuth(req: NextRequest): AuthContext | null {
-  const header = req.headers.get('authorization') || ''
-  // Prioridad: 1) Bearer (pestaña activa, evita conflictos multi-cuenta),
-  // 2) cookie httpOnly (persistencia tras F5 sin token en localStorage),
-  // 3) ?token= (descargas directas CSV/PDF/backup).
-  let token = header.startsWith('Bearer ') ? header.slice(7) : null
-  if (!token) token = req.cookies.get(SESSION_COOKIE)?.value ?? null
-  if (!token) {
-    // endpoints de descarga (csv/backup/pdf) admiten ?token=
-    const url = new URL(req.url)
-    token = url.searchParams.get('token')
-  }
-  if (!token) return null
-  const session = verifyToken(token)
-  if (!session) return null
+/**
+ * Opciones de autenticación por ruta (reparación integral B1).
+ *
+ * `allowQueryToken` es un OPT-IN EXPLÍCITO: el JWT ya NO se acepta por
+ * `?token=` en todas las rutas (quedaba expuesto en historial, logs y Referer).
+ * Solo los endpoints de DESCARGA (export/csv, reports/pdf, reports/excel,
+ * quotes/pdf, backup) lo permiten, y allí aceptan además el download-token de
+ * corta vida (`purpose: 'download'`, 5 min) emitido por /api/auth/download-token.
+ */
+export interface GetAuthOptions {
+  allowQueryToken?: boolean
+}
+
+/** Opciones para endpoints de descarga: única vía legítima de ?token=. */
+export const DOWNLOAD_AUTH_OPTS: GetAuthOptions = { allowQueryToken: true }
+
+function toAuthContext(session: SessionPayload): AuthContext {
   return {
     userId: session.userId,
     orgId: session.orgId,
@@ -120,6 +143,39 @@ export function getAuth(req: NextRequest): AuthContext | null {
   }
 }
 
+export function getAuth(req: NextRequest, opts: GetAuthOptions = {}): AuthContext | null {
+  const allowQueryToken = opts.allowQueryToken === true
+
+  // 1) Bearer (pestaña activa, evita conflictos multi-cuenta)
+  // 2) cookie httpOnly (persistencia tras F5 sin token en localStorage)
+  const header = req.headers.get('authorization') || ''
+  let token = header.startsWith('Bearer ') ? header.slice(7) : null
+  if (!token) token = req.cookies.get(SESSION_COOKIE)?.value ?? null
+
+  if (token) {
+    const session = verifyToken(token)
+    if (!session) return null
+    // Un download-token NUNCA autentica por Bearer/cookie ni en rutas
+    // normales: solo por ?token= en endpoints de descarga.
+    if (session.purpose === 'download') return null
+    return toAuthContext(session)
+  }
+
+  // 3) ?token= SOLO con opt-in explícito (endpoints de descarga). Acepta el JWT
+  // de sesión por compatibilidad con los enlaces ya emitidos, y el
+  // download-token de corta vida como vía recomendada.
+  if (allowQueryToken) {
+    const queryToken = new URL(req.url).searchParams.get('token')
+    if (queryToken) {
+      const session = verifyToken(queryToken)
+      if (!session) return null
+      return toAuthContext(session)
+    }
+  }
+
+  return null
+}
+
 export class HttpError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -129,15 +185,15 @@ export class HttpError extends Error {
 }
 
 /** Requiere sesión; lanza HttpError 401 si no hay. */
-export function requireAuth(req: NextRequest): AuthContext {
-  const auth = getAuth(req)
+export function requireAuth(req: NextRequest, opts: GetAuthOptions = {}): AuthContext {
+  const auth = getAuth(req, opts)
   if (!auth) throw new HttpError(401, 'Token de autorización requerido')
   return auth
 }
 
 /** Requiere rol admin/owner (para config sensible como Nicho, equipo, integraciones). */
-export function requireAdmin(req: NextRequest): AuthContext {
-  const auth = requireAuth(req)
+export function requireAdmin(req: NextRequest, opts: GetAuthOptions = {}): AuthContext {
+  const auth = requireAuth(req, opts)
   if (!auth.isAdmin) throw new HttpError(403, 'Se requieren permisos de administrador')
   return auth
 }
@@ -152,8 +208,8 @@ export function requireAdmin(req: NextRequest): AuthContext {
  * vida de usuarios prohibe crear/promover superadmin): solo existe por
  * promoción directa en BD (scripts/promote-superadmin.mjs).
  */
-export function requireSuperAdmin(req: NextRequest): AuthContext {
-  const auth = requireAuth(req)
+export function requireSuperAdmin(req: NextRequest, opts: GetAuthOptions = {}): AuthContext {
+  const auth = requireAuth(req, opts)
   if (auth.role !== 'superadmin') {
     throw new HttpError(403, 'Se requiere rol de superadministrador de plataforma')
   }
@@ -165,8 +221,8 @@ export function requireSuperAdmin(req: NextRequest): AuthContext {
  * la UI puede ocultar botones, pero aquí se decide de verdad. Soporta
  * comodines ('settings.*' concede 'settings.write').
  */
-export function requirePermission(req: NextRequest, capability: string): AuthContext {
-  const auth = requireAuth(req)
+export function requirePermission(req: NextRequest, capability: string, opts: GetAuthOptions = {}): AuthContext {
+  const auth = requireAuth(req, opts)
   if (!can(auth.role, capability)) {
     throw new HttpError(403, `Sin permiso para esta acción (${capability})`)
   }

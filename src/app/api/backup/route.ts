@@ -54,6 +54,7 @@ export async function GET(req: NextRequest) {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': `attachment; filename="crm-albra-backup-${new Date().toISOString().split('T')[0]}.json"`,
+        'Referrer-Policy': 'no-referrer',
       },
     })
   })
