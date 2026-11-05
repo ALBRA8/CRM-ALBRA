@@ -29,7 +29,7 @@ export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram' | 'facebook'
 export interface InboxConversation {
   key: string
   channel: InboxChannel
-  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Facebook'
+  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Messenger'
   contactName: string
   /** Handle real para ENVIAR: teléfono WA / chatId TG / recipientId IG. */
   contactHandle: string
@@ -56,7 +56,7 @@ const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = 
   whatsapp: 'WhatsApp',
   telegram: 'Telegram',
   instagram: 'Instagram',
-  facebook: 'Facebook',
+  facebook: 'Messenger',
 }
 
 /** Prefijo de la key del canal WhatsApp directo (sin conversación previa). */
@@ -356,7 +356,7 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
       options.push({
         key: makeInboxKey('facebook', clientId),
         channel: 'facebook',
-        channelLabel: 'Facebook',
+        channelLabel: 'Messenger',
         contactHandle: String(m.senderId || m.recipientId),
       })
     }

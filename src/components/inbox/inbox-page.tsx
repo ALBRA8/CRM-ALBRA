@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, Facebook, RefreshCw, Loader2, Mic } from 'lucide-react'
+import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2, Mic } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,16 +10,25 @@ import { cn } from '@/lib/utils'
 import type { InboxConversation, InboxMessage } from '@/lib/inbox'
 
 /**
- * Bandeja omnicanal (Fase 4): WhatsApp + Telegram + Instagram + Facebook en una sola vista.
+ * Bandeja omnicanal (Fase 4): WhatsApp + Telegram + Instagram + Messenger en una sola vista.
  * Dos paneles (lista + hilo) en desktop; en móvil se alterna lista/hilo.
  * Polling cada 12s; envío por el canal de cada conversación vía /api/inbox/send.
  */
+
+/** Icono Messenger (rayo) — lucide no lo trae (mismo SVG que settings/facebook-tab) */
+function MessengerIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M12 2C6.477 2 2 6.145 2 11.259c0 2.913 1.454 5.51 3.722 7.208V22l3.405-1.869c.899.249 1.855.383 2.873.383 5.523 0 10-4.145 10-9.255C22 6.145 17.523 2 12 2zm1.008 12.461-2.546-2.716-4.969 2.716 5.464-5.797 2.607 2.716 4.908-2.716-5.464 5.797z" />
+    </svg>
+  )
+}
 
 const CHANNEL_ICON = {
   whatsapp: MessageCircle,
   telegram: SendIcon,
   instagram: Instagram,
-  facebook: Facebook,
+  facebook: MessengerIcon,
 } as const
 
 const CHANNEL_BADGE = {
@@ -156,7 +165,7 @@ export function InboxPage() {
     { id: 'whatsapp', label: 'WhatsApp' },
     { id: 'telegram', label: 'Telegram' },
     { id: 'instagram', label: 'Instagram' },
-    { id: 'facebook', label: 'Facebook' },
+    { id: 'facebook', label: 'Messenger' },
   ]
 
   return (
@@ -165,7 +174,7 @@ export function InboxPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Bandeja</h1>
           <p className="text-xs text-slate-500">
-            WhatsApp · Telegram · Instagram {totalUnread > 0 ? `— ${totalUnread} sin leer` : '— todo al día'}
+            WhatsApp · Telegram · Instagram · Messenger {totalUnread > 0 ? `— ${totalUnread} sin leer` : '— todo al día'}
           </p>
         </div>
         <Button variant="ghost" size="sm" className="text-slate-500 h-8 w-8 p-0" onClick={() => loadList()} title="Actualizar">
@@ -200,7 +209,7 @@ export function InboxPage() {
               <div className="p-6 text-center">
                 <InboxIcon className="w-8 h-8 text-slate-200 mx-auto mb-2" />
                 <p className="text-xs text-slate-400">Sin conversaciones aún</p>
-                <p className="text-[10px] text-slate-300 mt-1">Los mensajes de WhatsApp, Telegram e Instagram aparecerán aquí</p>
+                <p className="text-[10px] text-slate-300 mt-1">Los mensajes de WhatsApp, Telegram, Instagram y Messenger aparecerán aquí</p>
               </div>
             ) : (
               filtered.map((conv) => {

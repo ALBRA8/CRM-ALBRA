@@ -28,7 +28,7 @@ import {
 import { toast } from 'sonner'
 
 /** Icono Messenger (rayo) — lucide no lo trae */
-function MessengerIcon({ className = '' }: { className?: string }) {
+export function MessengerIcon({ className = '' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
       <path d="M12 2C6.477 2 2 6.145 2 11.259c0 2.913 1.454 5.51 3.722 7.208V22l3.405-1.869c.899.249 1.855.383 2.873.383 5.523 0 10-4.145 10-9.255C22 6.145 17.523 2 12 2zm1.008 12.461-2.546-2.716-4.969 2.716 5.464-5.797 2.607 2.716 4.908-2.716-5.464 5.797z" />
@@ -128,7 +128,7 @@ export function FacebookTab() {
         webhookVerifyToken,
         appSecret: appSecret || undefined,
       })
-      toast.success('Configuración de Facebook guardada')
+      toast.success('Configuración de Messenger guardada')
       await loadConfig()
       setAppSecret('')
     } catch (err) {
@@ -140,10 +140,10 @@ export function FacebookTab() {
   }
 
   const handleDisconnect = async () => {
-    if (!confirm('¿Desconectar Facebook?')) return
+    if (!confirm('¿Desconectar Messenger?')) return
     try {
       await api.disconnectFacebook()
-      toast.success('Facebook desconectado')
+      toast.success('Messenger desconectado')
       await loadConfig()
       setPageId('')
       setPageToken('')
@@ -305,7 +305,7 @@ export function FacebookTab() {
               </div>
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  Facebook Messenger — Configuración manual (avanzada)
+                  Messenger — Configuración manual (avanzada)
                 </CardTitle>
                 <CardDescription>
                   Método alternativo sin OAuth: Page ID, Page Token y Verify Token pegados a mano
@@ -405,7 +405,7 @@ export function FacebookTab() {
               ) : (
                 <Save className="w-4 h-4 mr-2" />
               )}
-              {status.configured ? 'Guardar cambios' : 'Conectar Facebook'}
+              {status.configured ? 'Guardar cambios' : 'Conectar Messenger'}
             </Button>
             {status.configured && (
               <Button variant="outline" onClick={handleDisconnect}>
@@ -419,7 +419,7 @@ export function FacebookTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Cómo configurar Facebook Messenger</CardTitle>
+          <CardTitle className="text-sm">Cómo configurar Messenger</CardTitle>
         </CardHeader>
         <CardContent className="text-xs text-slate-600 space-y-2">
           <p>
