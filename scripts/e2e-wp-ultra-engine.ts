@@ -3,11 +3,16 @@
 // el anti-ban horario), pero con el HttpCrmDaemonDispatcher HTTP real apuntando
 // al stub del daemon (contrato: Bearer INTERNAL_API_SECRET + {to,text}).
 import { createServer } from 'node:http'
-import { createBroadcastServer } from '/home/z/repos/WHATSPOWER-ULTRA/src/server.ts'
-import { HttpCrmDaemonDispatcher } from '/home/z/repos/WHATSPOWER-ULTRA/src/adapters/dispatcher.ts'
+import { createBroadcastServer } from '../repos/WHATSPOWER-ULTRA/src/server.ts'
+import { HttpCrmDaemonDispatcher } from '../repos/WHATSPOWER-ULTRA/src/adapters/dispatcher.ts'
 
 const STUB_PORT = 3102
-const DAEMON_SECRET = 'crm_albra_internal_secret_key_fixed_length_for_daemon_2026'
+// CP-Sec-01: el secreto NUNCA se versiona — se exige del entorno (fail-fast).
+const DAEMON_SECRET = process.env.INTERNAL_API_SECRET
+if (!DAEMON_SECRET) {
+  console.error('✋ Falta INTERNAL_API_SECRET en el entorno (no se permite secreto hardcodeado)')
+  process.exit(1)
+}
 const PHONE = '573777888999'
 const results: Array<{ id: string; pass: boolean; detail: string }> = []
 function log(id: string, pass: boolean, detail: string) {

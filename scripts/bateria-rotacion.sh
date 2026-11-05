@@ -12,8 +12,15 @@ RES=$EV/bateria-rotacion.txt
 mkdir -p "$LOGS" "$EV"
 NEW=$(cat $R/NEW_INTERNAL_API_SECRET.txt)
 OLD=$(cat $R/OLD_INTERNAL_API_SECRET.txt)
-FALLBACK='crm_albra_internal_secret_key_fixed_length_for_daemon_2026'
-DEVSECRET='dev_secret_shared_albra_2a'
+# CP-Sec-01: los valores históricamente publicados NO se versionan — se exigen del entorno.
+# Se usan solo como pruebas NEGATIVAS (verificar que el sistema los rechaza con 401).
+FALLBACK="${FALLBACK_SECRET:-}"
+DEVSECRET="${DEV_SHARED_HMAC_SECRET:-}"
+if [ -z "$FALLBACK" ] || [ -z "$DEVSECRET" ]; then
+  echo "✋ Faltan FALLBACK_SECRET y/o DEV_SHARED_HMAC_SECRET en el entorno." >&2
+  echo "   Son los valores publicados que la batería debe verificar como RECHAZADOS (401)." >&2
+  exit 1
+fi
 WPNEW=$(cat $R/NEW_WHATSPOWER_WEBHOOK_SECRET.txt)
 PASS=0; FAIL=0
 log(){ echo "$1" | tee -a "$RES"; }

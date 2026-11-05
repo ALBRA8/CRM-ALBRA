@@ -8,7 +8,8 @@ CREDS=download/.e2e-creds.sh
 # 1. Credenciales frescas (siempre se regeneran)
 WP_SECRET="wpbr_$(openssl rand -hex 24)"
 META_SECRET="e2emeta_$(openssl rand -hex 24)"
-DAEMON_SECRET="crm_albra_internal_secret_key_fixed_length_for_daemon_2026"  # default del daemon en el sandbox
+# CP-Sec-01: el secreto del daemon NO se versiona — se exige del entorno (fail-fast).
+DAEMON_SECRET="${INTERNAL_API_SECRET:?✋ Falta INTERNAL_API_SECRET en el entorno}"
 
 umask 077
 cat > "$CREDS" << EOF

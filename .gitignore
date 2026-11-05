@@ -93,3 +93,17 @@ AUDITORIA*.txt
 
 # Repos hermanos clonados (proyecto modular ALBRA) - no son parte de este repo
 repos/
+
+# ===== Artefactos de credenciales (CP-Sec-01) =====
+# NUNCA versionar tokens/keys reales ni redactados: los e2e usan env vars o fixtures efímeros
+scripts/e2e-token.txt
+scripts/e2e-wp-token.txt
+scripts/e2e-wp-apikey.json
+scripts/e2e-apikey.txt
+scripts/e2e-wp-key.txt
+scripts/*token*.txt
+scripts/*apikey*
+scripts/*-key.txt
+*.e2e-token
+credentials*.json
+*credentials*.txt

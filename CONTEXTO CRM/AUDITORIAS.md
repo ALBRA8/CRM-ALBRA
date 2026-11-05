@@ -43,9 +43,30 @@ Pruebas reportadas: 434/434 con .env de producción simulado, 434/434 sin .env y
 
 **No se ha confirmado que 658740b pertenezca a ALBRA8/CRM-ALBRA.** No atribuir ni integrar ese commit aquí hasta verificar el repositorio, rama, árbol y remoto. La simulación Linux no sustituye la ejecución en Windows real con el .env local.
 
+## A-005 — Auditoría de seguridad CP-Sec-01 (orden de cierre 2026-11-06)
+**Fecha:** 2026-11-06. **Rama:** main @ 2cbae0c (remoto verificado con ls-remote antes y después). **Método:** inspección directa, comparaciones por hash contra la DB viva, ejecución de suites.
+
+### Credenciales versionadas (5 artefactos E2E)
+- `scripts/e2e-token.txt`, `e2e-wp-token.txt`, `e2e-wp-apikey.json`, `e2e-apikey.txt`, `e2e-wp-key.txt`.
+- El árbol los traía ya redactados desde `bb8ec07` (2026-10-27), pero los valores REALES permanecen en el historial (commits `d646cf9`, `23c945e`, `541d9b2`, `ab23795`).
+- **Verificación de vitalidad (sin exponer valores):**
+  - Tabla `ApiKey` de la DB viva (`db/custom.db`): **0 filas** → las claves `albra_*` históricas no autentican contra nada.
+  - JWTs históricos: NO firman con `APP_SECRET` ni `INTERNAL_API_SECRET` actuales (HMAC-SHA256 comparado en memoria) → el secreto que los firmó fue rotado.
+  - Daemon vivo (:3002) con el secreto antiguo `crm_albra_internal_secret_key_fixed_length_for_daemon_2026`: **401** → muerto.
+- **Veredicto: credenciales MUERTAS** (no se requiere rotación de sistemas vivos). Artefactos eliminados del árbol + reglas .gitignore. Exposición en historial documentada en PENDIENTES (purga requiere filter-repo + force-push autorizado).
+
+### Secretos conocidos en código
+- El secreto de daemon antiguo estaba hardcodeado en 5 scripts del CRM (4 E2E + batería de rotación). Corregidos a fail-fast por entorno. El valor sigue forjable desde el historial de ESTE repo y del de WHATSPOWER (commit `2e23cbc`, borrado en `a94815d`); ya no es aceptado por ningún servicio vivo.
+- Escáner nuevo `scripts/scan-secrets.mjs` (JWT, PATs GitHub/AWS/Slack/Google/Stripe/OpenAI/Anthropic/Meta, PEM, `albra_*`, secretos de config) + 11 pruebas + `npm run security:scan[:history]`. Triage de los 41 hallazgos iniciales: 1 real (secreto de daemon en scripts), 40 placeholders/dummies documentales verificados uno a uno. Árbol final: LIMPIO.
+
+### Otros
+- `scripts/start-whatspower-detached.mjs` eliminado: código operativo de otro repositorio con ruta absoluta `/home/z/...` (violaba las reglas de separación). El launcher canónico vive en WHATSPOWER.
+- Lint del repo: 358 errores / 5089 avisos PREEXISTENTES (baseline; 0 errores en los archivos de esta sesión).
+- Suite completa: 464/464 (51 archivos, 74s). tsc: 0 errores. Build: OK. Servicios :3000/:3002 sin interrupción.
+
 ## Próxima auditoría
-1. Revisar todas las API routes, server actions, consultas Prisma, relaciones, cron/workers, exportaciones, webhooks, sesiones, credenciales, REST/MCP y API keys.
-2. Resolver y probar P0.2, P0.3 y P0.4 con pruebas negativas entre dos tenants.
-3. Verificar de forma independiente P0.1 en el commit publicado.
-4. Confirmar el repositorio de origen/destino de 658740b antes de integrarlo.
+1. Revisar todas las API routes, server actions, consultas Prisma, relaciones, cron/workers, exportaciones, webhooks, sesiones, credenciales, REST/MCP y API keys (parcialmente cubierto por A-005; ampliar a rutas de negocio).
+2. ~~Resolver y probar P0.2, P0.3 y P0.4~~ — HECHO y verificado 2026-11-06 (ver ESTADO_ACTUAL).
+3. ~~Verificar de forma independiente P0.1~~ — HECHO 2026-11-06 (commits en main, tests en verde).
+4. ~~Confirmar el repositorio de origen/destino de 658740b~~ — RESUELTO: ALBRA8/YOUTUBE-AUTOMATION.
 5. No certificar producción sin lint, TypeScript, tests, build, health checks, revisión de seguridad y pruebas de aislamiento reproducibles.

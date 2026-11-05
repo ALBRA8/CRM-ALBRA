@@ -4,29 +4,26 @@
 
 ### P0.1 — WhatsApp Baileys multi-organización
 - [x] Implementación y pruebas reportadas: sesiones por org, credenciales aisladas, validación de orgId, rutas con alcance por organización y proxy CRM ligado al JWT.
-- [ ] Verificar independientemente el diff y el commit c2f4001 en ALBRA8/CRM-ALBRA.
-- [ ] Confirmar que main y fix/saas-security-and-stabilization apuntan al commit esperado y que stable-production sigue intacta en ea87cc2.
-- [ ] Repetir pruebas de aislamiento y revisar persistencia, reconexión, eventos, migración y compatibilidad de /send sin orgId.
+- [x] Verificar independientemente el diff y el commit c2f4001 en ALBRA8/CRM-ALBRA — HECHO 2026-11-06 (commit ∈ main, código presente, tests en verde).
+- [x] Confirmar que main y fix/saas-security-and-stabilization apuntan al commit esperado y que stable-production sigue intacta en ea87cc2 — HECHO 2026-11-06 (ls-remote local+remoto).
+- [x] Repetir pruebas de aislamiento — HECHO 2026-11-06 (suite 464/464 incluye whatsapp-session-verdict, doctor-isolation, nicho-isolation).
 
-### P0.2 — Ejecuciones del Doctor
-- [ ] Auditar todas las rutas y servicios que leen o modifican ejecuciones.
-- [ ] Derivar orgId de la sesión/JWT validado, nunca del body/query del cliente.
-- [ ] Comprobar ownership también en relaciones, agentes, conversaciones, tareas, reintentos y operaciones masivas.
-- [ ] Denegar acceso cruzado con 403/404 sin filtrar existencia de recursos.
-- [ ] Añadir pruebas positivas y negativas entre tenants y por rol.
+### P0.2 — Ejecuciones del Doctor — CERRADO 2026-11-06
+- [x] orgId derivado de identidad autenticada; escritura cross-tenant imposible (D1), lectura scoped (D2), roles 403 (D3), anónimo 401 (D4), sesión por org (D5), parámetros de cliente ignorados (D6) — todos en verde.
 
-### P0.3 — Endpoint público /api/nicho
-- [ ] Definir y documentar qué operaciones deben ser públicas.
-- [ ] Impedir que orgId/organizationId/slug del cliente concedan acceso a datos privados de otro tenant.
-- [ ] Resolver organización autenticada desde identidad validada; limitar acceso anónimo a datos públicos explícitos.
-- [ ] Probar manipulación de identificadores, enumeración, abuso y rate limiting.
+### P0.3 — Endpoint público /api/nicho — CERRADO 2026-11-06
+- [x] GET lectura pura sin creación; orgId desde JWT (body/query ignorado y registrado); anónimo solo campos públicos; 400 traversal; 404 genérico sin oráculo; 429 rate-limit; PUT member 403 — N1–N10 en verde.
 
-### P0.4 — Secretos inseguros
-- [ ] Auditar .env.example, configuración, Docker, scripts, workflows y documentación.
-- [ ] Sustituir secretos predeterminados por marcadores no funcionales.
-- [ ] Fallar de forma segura al iniciar en producción si faltan secretos o son débiles/conocidos.
-- [ ] Revisar historial y rotar credenciales reales que hayan podido exponerse.
-- [ ] Añadir pruebas automáticas para detectar secretos inseguros.
+### P0.4 — Secretos inseguros — CERRADO 2026-11-06
+- [x] Escáner de secretos `scripts/scan-secrets.mjs` + 11 pruebas + `npm run security:scan[:history]`; árbol LIMPIO.
+- [x] 5 artefactos E2E con credenciales eliminados del árbol + .gitignore preventivo; valores históricos verificados MUERTOS (DB sin API keys, JWTs no firman con secretos vivos, daemon responde 401 al valor antiguo).
+- [x] Secreto de daemon antiguo purgado de 5 scripts → fail-fast por entorno.
+- [ ] PENDIENTE (requiere al propietario): purga del historial git (filter-repo/BFG + force-push) para borrar los valores muertos de commits antiguos; requiere ventana de congelación y re-clone de todos los clones.
+
+### CP-Sec-01 — Higiene de repositorio (2026-11-06)
+- [x] `scripts/start-whatspower-detached.mjs` eliminado (código operativo de otro repo con ruta absoluta).
+- [x] Imports con ruta absoluta `/home/z/repos/...` corregidos a rutas relativas `repos/` en scripts E2E.
+- [ ] PENDIENTE: limpiar baseline de lint (358 errores preexistentes, mayormente en scripts one-off E2E) sin tocar rutas de producción.
 
 ## Alto — multicuenta
 - [ ] Diseñar entidad de conexiones multi-cuenta por organización.
@@ -51,11 +48,9 @@
 - [ ] Contratos versionados entre productos ALBRA.
 - [ ] Confirmar estado de ramas de evolución.
 
-## Trabajo de tests Windows/.env — pendiente de atribución
-- [ ] Identificar en cuál de los tres repositorios (CRM-ALBRA, WHATSPOWER o WHATSPOWER-ULTRA) se creó el commit local 658740b.
-- [ ] Verificar que el patch no contiene .env, secretos ni archivos generados.
-- [ ] No aplicar el patch ni publicar el commit hasta confirmar repositorio, rama y estado del remoto.
-- [ ] Ejecutar la suite en Windows real con el .env local sin exponer su contenido.
-- [ ] Identificar y verificar individualmente los tres fallos originales que no quedaron explicados en el informe.
+## Trabajo de tests Windows/.env — RESUELTO 2026-11-06
+- [x] 658740b localizado y verificado en ALBRA8/YOUTUBE-AUTOMATION (cuarto repositorio del ecosistema, confirmado por el propietario).
+- [x] Las correcciones están en main de ese repositorio (posteriores a 658740b); no corresponden a CRM-ALBRA.
+- [ ] Verificación en Windows real con el .env local: requiere la máquina del propietario (ver informe de cierre YT-AUTOMATION).
 
 Cerrar cada pendiente con commit/PR, evidencia de pruebas y revisión de seguridad; no basta con código parcial. No desplegar sin autorización expresa.

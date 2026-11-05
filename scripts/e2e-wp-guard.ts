@@ -2,9 +2,14 @@
 // Usa el HttpCrmDaemonDispatcher REAL de WHATSPOWER-ULTRA contra:
 //   a) el daemon productivo del CRM (:3002) sin autorización de envío → guard
 //   b) el daemon productivo con autorización pero WhatsApp desconectado → error controlado
-import { HttpCrmDaemonDispatcher } from '/home/z/repos/WHATSPOWER-ULTRA/src/adapters/dispatcher.ts'
+import { HttpCrmDaemonDispatcher } from '../repos/WHATSPOWER-ULTRA/src/adapters/dispatcher.ts'
 
-const DAEMON_SECRET = 'crm_albra_internal_secret_key_fixed_length_for_daemon_2026'
+// CP-Sec-01: el secreto NUNCA se versiona — se exige del entorno (fail-fast).
+const DAEMON_SECRET = process.env.INTERNAL_API_SECRET
+if (!DAEMON_SECRET) {
+  console.error('✋ Falta INTERNAL_API_SECRET en el entorno (no se permite secreto hardcodeado)')
+  process.exit(1)
+}
 const PHONE = '573777888999'
 const results: Array<{ id: string; pass: boolean; detail: string }> = []
 function log(id: string, pass: boolean, detail: string) {
