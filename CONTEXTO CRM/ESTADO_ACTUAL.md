@@ -73,3 +73,16 @@ El commit 658740b fue **localizado y verificado en ALBRA8/YOUTUBE-AUTOMATION** (
 
 ## Conclusión
 CRM multi-tenant con P0.1–P0.4 verificados directamente en código y con la suite completa en verde (464/464, tsc 0 errores, build OK, escáner de secretos limpio). El bloqueo de seguridad restante en ESTE repositorio es la exposición histórica de artefactos E2E en el historial git (valores muertos, verificados) que requiere purga con filter-repo y force-push autorizado por el propietario, y el baseline de lint preexistente.
+
+## Reparación General Integral — 2026-11-06 (rama `repair/integral-20261106`)
+
+Trabajo verificado en esta sesión (no solo reportado): commits B1→B9 en `repair/integral-20261106`.
+
+- **Autenticación**: JWT restringido fuera de URLs (solo descargas con opt-in + download-tokens de 5 min); rate limiting en login/forgot/reset/register/demo/MCP/crm-actions/email; tokens de reset hasheados (sha256, un solo uso); revocación de sesiones por `User.tokenVersion` (logout/reset/desactivación).
+- **Datos**: restauración de backup atómica en transacción con tope 25 MB y reporte; sin inyección cross-org.
+- **Secretos**: escáner reforzado con allowlist y baseline histórico explícitos y verificables (huellas sha256-12, jamás valores); escaneo del historial COMPLETO; CI bloqueante solo para hallazgos NUEVOS. 78 hallazgos históricos con estado ROTACION-PENDIENTE (ver PENDIENTES.md).
+- **Integración**: puente CRM→WHATSPOWER al contrato HMAC v1.1.0 (`timestamp.body`); `docs/INTEGRATION_CONTRACT.md`.
+- **Observabilidad**: `auth.login_failed` y `rbac.denied` en security-log.
+- **CI**: secret-scan árbol+historial bloqueantes, tsc, lint con baseline de reducción progresiva, tests, build, npm audit informativo.
+- **Pruebas**: 501/506 locales (los 5 fallos son del WIP concurrente de terceros en archivos sin seguimiento; en checkout limpio el gate de independencia pasa 4/4 — verificado con worktree). tsc limpio en árbol versionado; security:scan y security:scan:history exit 0.
+- **No se tocó** `stable-production`, no se desplegó, no se activaron envíos reales, y NO se modificó el trabajo concurrente sin seguimiento de terceros (chat/agent).
