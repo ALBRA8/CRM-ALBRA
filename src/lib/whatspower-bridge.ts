@@ -53,9 +53,14 @@ function sharedSecret(): string | null {
   return s && s.trim() ? s.trim() : null
 }
 
-/** Firma del mismo formato que WHATSPOWER verifica en /api/inbound (hex puro, sin prefijo). */
-export function signWhatspowerPayload(rawBody: string, secret: string): string {
-  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
+/**
+ * Firma del contrato HMAC v2 (integración v1.1.0, coordinada con WHATSPOWER y
+ * WHATSPOWER-ULTRA): la MAC cubre `${timestamp}.${rawBody}` — el timestamp queda
+ * VINCULADO criptográficamente al cuerpo, de modo que modificarlo invalida la
+ * firma (anti-replay real). Debe enviarse el MISMO timestamp firmado en X-Timestamp.
+ */
+export function signWhatspowerPayload(rawBody: string, secret: string, timestamp: string): string {
+  return createHmac('sha256', secret).update(`${timestamp}.${rawBody}`, 'utf8').digest('hex')
 }
 
 export interface WhatspowerInboundInput {
@@ -105,7 +110,9 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
     message: { text: input.text },
   }
   const rawBody = JSON.stringify(payload)
-  const signature = signWhatspowerPayload(rawBody, secret)
+  // HMAC v2: se firma y se envía el MISMO timestamp (contrato v1.1.0).
+  const timestamp = String(Date.now())
+  const signature = signWhatspowerPayload(rawBody, secret, timestamp)
 
   try {
     const res = await fetch(inboundUrl(), {
@@ -113,7 +120,7 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
       headers: {
         'Content-Type': 'application/json',
         'X-Signature-SHA256': signature,
-        'X-Timestamp': String(Date.now()),
+        'X-Timestamp': timestamp,
       },
       body: rawBody,
       signal: AbortSignal.timeout(INBOUND_TIMEOUT_MS),

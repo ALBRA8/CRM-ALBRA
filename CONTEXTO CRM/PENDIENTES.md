@@ -54,3 +54,11 @@
 - [ ] Verificación en Windows real con el .env local: requiere la máquina del propietario (ver informe de cierre YT-AUTOMATION).
 
 Cerrar cada pendiente con commit/PR, evidencia de pruebas y revisión de seguridad; no basta con código parcial. No desplegar sin autorización expresa.
+
+## Reparación General Integral 2026-11-06 — pendientes del operador
+
+1. **ROTACIÓN DE SECRETOS HISTÓRICOS (prioridad alta)**: el historial git contiene secretos reales publicados antes de la reparación (baseline verificable en `scripts/security/secret-baseline.json`, 78 huellas en commits 23c945e, d646cf9, 541d9b2, ab23795, f2e98c0, ff8b184e, 8d01287, c54f5c1: JWTs, APP_SECRET/CONFIG_SECRET, token de Slack). Acción: rotar APP_SECRET, secretos de integraciones y el token de Slack; opcionalmente purgar el historial con `git filter-repo` (requiere force-push — decisión explícita del operador; la rama `stable-production` NO debe reescribirse).
+2. **Lint**: baseline heredado de 331 errores registrado en `scripts/security/eslint-baseline.json` (solo puede BAJAR; `npm run lint:baseline` bloquea errores nuevos en CI). Reducción progresiva pendiente.
+3. **`npm audit --omit=dev`**: paso de CI no bloqueante; hacer triage y elevar a bloqueante tras revisar hallazgos.
+4. **Trabajo concurrente de terceros**: existe WIP sin seguimiento (chat/agent) que incumple el gate de independencia del chaleco (`tests/unit/harness-independence.test.ts` falla con ese WIP presente y pasa 4/4 en checkout limpio). Coordinar con su autor: o se integra correctamente o se retira.
+5. **Migración Prisma**: `User.tokenVersion` se aplica con `prisma db push` (BD actual ya la tiene). Si se adoptan migraciones formales, crear la migración correspondiente (reversible: DROP COLUMN).

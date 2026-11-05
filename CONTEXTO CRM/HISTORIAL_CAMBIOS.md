@@ -36,3 +36,17 @@ Se mencionaron previamente ramas saas-development y stable-production; confirmar
 - **Eliminado** `scripts/start-whatspower-detached.mjs` (código operativo de otro repositorio con ruta absoluta). Imports absolutos `/home/z/repos/...` corregidos a rutas relativas en scripts E2E.
 - **P0.1–P0.4 verificados directamente** (commits en main; suites de aislamiento en verde). Suite completa 464/464 en 51 archivos (74s); tsc 0 errores; build OK; lint con baseline preexistente de 358 errores (0 en archivos de esta sesión).
 - Servicios :3000 y :3002 operativos durante toda la sesión, sin interrupciones.
+
+## Reparación General Integral — 2026-11-06 (rama repair/integral-20261106, B1→B9)
+
+- **B1**: JWT restringido fuera de URLs — `?token=` SOLO en endpoints de descarga con opt-in (`DOWNLOAD_AUTH_OPTS`), download-tokens de 5 min (purpose='download') y `Referrer-Policy: no-referrer`. Antes el JWT de 7 días se aceptaba por query en TODAS las rutas.
+- **B2**: rate limiting transversal (login 10/min IP + 5/15min email, forgot 3/15min, reset 10/15min, register 5/h, demo 5/h, MCP 60/min, crm-actions 120/min, email/send 20/h + permiso admin; notifications/all con permiso de exportación).
+- **B3**: tokens de reset hasheados con sha256 (un solo uso, 1 h) + revocación al resetear (tokenVersion).
+- **B4**: revocación de sesiones — `User.tokenVersion`; logout, reset de contraseña y desactivación invalidan el JWT ya emitido. Caché en proceso con prewarm (instrumentation) y refresh con debounce. Tests REV-01/REV-02.
+- **B5**: restauración de backup ATÓMICA (`db.$transaction`), tope 25 MB → 413, reporte `transactional:true` + restored/skipped por entidad; jamás introduce registros en otra organización. Tests BKP-01..03.
+- **B6**: errores 500 genéricos (jamás `err.message` al cliente; HttpError 5xx también).
+- **B7**: escáner de secretos reforzado (DUMMY_HINTS exactos, huellas sha256-12, allowlist `scripts/security/secret-allowlist.json` y baseline histórico `secret-baseline.json` VERIFICABLES, historial COMPLETO sin tope de 400 ni solo-líneas-añadidas; CI bloqueante solo para hallazgos NUEVOS) + lint con baseline de reducción progresiva (`npm run lint:baseline`, bloquea errores nuevos) + auditoría de dependencias en CI.
+- **B8**: observabilidad de seguridad transversal (`auth.login_failed`, `rbac.denied` vía security-log).
+- **B9**: puente CRM→WHATSPOWER actualizado al contrato HMAC v2 (`timestamp.body` — mismo timestamp firmado y enviado) coordinado con 2A y 2B; `docs/INTEGRATION_CONTRACT.md` v1.1.0.
+- **Verificación**: suite local 501/506 (los 5 fallos restantes son del trabajo CONCURRENTE de terceros en archivos sin seguimiento — chat/agent WIP; en checkout limpio `harness-independence` pasa 4/4, verificado con worktree temporal). tsc limpio en el árbol versionado. `security:scan` y `security:scan:history` exit 0 (33 dummies en allowlist explícita; 78 hallazgos históricos en baseline con estado ROTACION-PENDIENTE).
+- **NOTA de concurrencia**: durante la ejecución, un agente de terceros operaba el mismo repositorio (WIP sin seguimiento de chat/agent y checkouts de rama). La reparación se preservó íntegra en `repair/integral-20261106` sin tocar su trabajo.
