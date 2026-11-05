@@ -1530,3 +1530,10 @@ Usuario da GO explícito a ULTRA ("dale go a ultra... estamos colgados en tiempo
 5. .gitignore de ULTRA: añadidos *.db y db/ (broadcast.db operativa NO se trackea). Commit ULTRA 9dadc5d (9 archivos: launcher, smoke, fixes, tests, test:e2e, README, .gitignore). SIN PUSH: el PAT fue destruido tras el episodio anterior y está pendiente de revocación; commits locales listos para push con token fresco.
 6. Estado final del mundo modular: CRM :3000 ✅ (local 3927c3c), daemon :3002 ✅ (401 sin auth = fail-closed), WP :3003 ✅, ULTRA :3004 ✅ EN MODO SIMULACIÓN — Campaign Studio en http://localhost:3004/campaigns.
 7. Higiene: INTERNAL_API_SECRET del sandbox apareció brevemente en el chat por error de filtrado (tail sin máscara del .env); es efímero del sandbox; rotación en el próximo reinicio de servicios. Pendiente usuario: dedupe de clientes (hallazgo previo), token fresco para push (WP 7f38030, CRM 3927c3c, ULTRA 9dadc5d), y autorización explícita cuando toque piloto con despacho real.
+
+## Task ID: push-token-reutilizado-2026-11-05
+Usuario re-pega el MISMO PAT (no fue revocado). Push completado con helper de credenciales inline leyendo archivo efímero (token nunca en argv ni en .git/config; /tmp noexec obligó a cambiar el método askpass del episodio anterior).
+1. Push CRM-ALBRA 3927c3c..68e2715 main→main (fd348aa/3927c3c del renombre Messenger ya estaban en origin; quedó pendiente solo el worklog del GO ULTRA).
+2. Push WHATSPOWER-ULTRA e6ef56d..9dadc5d main→main (primer push del Nivel 3 con launcher, smoke 10/10 y fixes).
+3. WP sin cambios (7f38030 ya en origin/main). Mundo modular 100% sincronizado en GitHub.
+4. Recordatorio emitido al usuario: REVOCAR este PAT YA (expuesto dos veces en chat; concede escritura a los 3 repos). Ningún archivo trackeado ni .git/config contiene el token (verificado).
