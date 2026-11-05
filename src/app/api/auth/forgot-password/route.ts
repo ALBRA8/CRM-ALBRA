@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
 import { db } from '@/lib/db'
 import { handle, json, readBody, requireFields, str } from '../../_lib/shared'
 import { rateLimit, rateLimited, clientIp } from '@/lib/rate-limit'
@@ -13,6 +13,10 @@ import { rateLimit, rateLimited, clientIp } from '@/lib/rate-limit'
  *   (anti-enumeración; se eliminó el token en claro que antes se devolvía
  *   en desarrollo: la forma de la respuesta ya no depende de la existencia
  *   de la cuenta ni del entorno).
+ *
+ * Reparación integral B3: el token (32 bytes aleatorios = 64 hex) se guarda
+ * HASHEADO (sha256) en BD. Un atacante con copia de la BD no puede usar los
+ * resetToken almacenados: en claro solo existe en el email entregado.
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
@@ -25,11 +29,12 @@ export async function POST(req: NextRequest) {
 
     const user = await db.user.findUnique({ where: { email } })
     if (user && user.isActive) {
-      // 32 bytes aleatorios (≥32 que exigirá B3). B3 lo guardará hasheado.
+      const plain = randomBytes(32).toString('hex') // ≥32 bytes aleatorios (B3)
+      const hashed = createHash('sha256').update(plain).digest('hex')
       await db.user.update({
         where: { id: user.id },
         data: {
-          resetToken: randomBytes(32).toString('hex'),
+          resetToken: hashed,
           resetTokenExp: new Date(Date.now() + 3_600_000),
         },
       })

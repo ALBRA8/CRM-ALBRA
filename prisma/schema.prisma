@@ -75,8 +75,13 @@ model User {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   savedViews     SavedView[]
   apiKeysCreated ApiKey[]
+  // B3: guarda sha256(token) — el token en claro SOLO viaja por email; nunca en BD.
   resetToken     String?
   resetTokenExp  DateTime?
+  // B4: revocación de sesiones — se incrementa en logout, reset de contraseña y
+  // desactivación; los JWT llevan la versión con la que fueron firmados y un
+  // token con versión menor queda inválido (ver src/lib/session-version.ts).
+  tokenVersion   Int          @default(0)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
