@@ -110,7 +110,7 @@ describe('L4: revocación de sesiones tras cambio de contraseña', () => {
 })
 
 describe('L5: puente WhatsPower HMAC v2 (timestamp ligado)', () => {
-  const SECRET = 'whatspower_bridge_secret_for_tests_0000'
+  const SECRET = 'whatspower_bridge_secret_for_tests_0000' // scan-secrets:allow (dummy de prueba, no es credencial real)
   const body = JSON.stringify({ hello: 'world' })
 
   it('la firma v2 = HMAC(secret, `${ts}.${body}`)', () => {
