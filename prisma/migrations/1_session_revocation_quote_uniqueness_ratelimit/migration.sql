@@ -64,3 +64,9 @@ WHERE "id" IN (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Quote_organizationId_number_key" ON "Quote"("organizationId", "number");
+
+-- CreateTable (contador atómico de números de cotización por organización)
+CREATE TABLE "OrgCounter" (
+    "key" TEXT NOT NULL PRIMARY KEY,
+    "value" INTEGER NOT NULL DEFAULT 0
+);

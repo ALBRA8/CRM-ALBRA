@@ -275,6 +275,15 @@ model RateLimitBucket {
   @@index([resetAt])
 }
 
+// Contadores atómicos por organización (segunda reparación §2.E): asignación
+// del número de cotización con un único upsert-increment (sin transacción
+// interactiva en el camino caliente — bajo SQLite la contención de varias
+// transacciones interactivas paralelas es patológica; un statement atómico no).
+model OrgCounter {
+  key   String @id
+  value Int    @default(0)
+}
+
 // Líneas de detalle de una cotización (portado del repo base, ahora relacional)
 model QuoteItem {
   id             String        @id @default(cuid())

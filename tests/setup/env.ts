@@ -36,7 +36,11 @@ if (!process.env.APP_ENCRYPTION_KEY) {
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url)) // tests/setup
 const PROJECT_ROOT = path.resolve(THIS_DIR, '..', '..')
 const TEST_DB_PATH = path.join(PROJECT_ROOT, 'db', 'test-vitest.db')
-const TEST_DB_URL = `file:${TEST_DB_PATH}`
+// Timeout de socket ampliado: los tests de concurrencia (segunda reparación)
+// sostienen varias escrituras simultáneas; SQLite es single-writer y Prisma
+// serializa con el pool por defecto. Un socket_timeout generoso evita abortar
+// transacciones sanas por espera de conexión. Esto NO afloja aserciones.
+const TEST_DB_URL = `file:${TEST_DB_PATH}?socket_timeout=60000`
 
 // NODE_ENV ya es 'test' bajo Vitest → Prisma sin log de queries (ver src/lib/db.ts).
 process.env.DATABASE_URL = TEST_DB_URL

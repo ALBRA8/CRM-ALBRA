@@ -60,41 +60,44 @@ export async function POST(req: NextRequest) {
     const discountPct = clamp(numOrNull(body.discount) ?? 0, 0, 100)
     const totals = computeQuoteTotals(items, discountPct)
 
-    // (segunda reparación §2.E) Creación TRANSACCIONAL: número + cotización +
-    // líneas en una sola unidad; la restricción UNIQUE (organizationId, number)
-    // cierra la carrera entre creaciones concurrentes y se reintenta con el
-    // siguiente número (3 intentos). Nunca quedan cotizaciones sin líneas ni
-    // números duplicados dentro de una organización.
+    // (segunda reparación §2.E) Creación con número ATÓMICO: el contador por
+    // organización se incrementa con un solo statement (sin transacción
+    // interactiva — la contención SQLite de varias interactivas paralelas es
+    // patológica); el create con líneas anidadas es atómico de por sí. La
+    // restricción UNIQUE (organizationId, number) es la guardia final: ante
+    // P2002 (número ocupado por restore/import) se reintenta con el siguiente.
     let created
     for (let attempt = 0; ; attempt++) {
       try {
-        created = await db.$transaction(async (tx) => {
-          const number = await nextQuoteNumber(auth.orgId, tx)
-          return tx.quote.create({
-            data: {
-              organizationId: auth.orgId,
-              number,
-              clientId,
-              opportunityId: opportunityId || null,
-              items: { create: quoteItemRows(items, auth.orgId) },
-              subtotal: totals.subtotal,
-              tax: totals.tax,
-              total: totals.total,
-              currency: str(body.currency) ?? 'USD',
-              status: str(body.status) ?? 'draft',
-              validUntil: dateOrNull(body.validUntil),
-              notes: str(body.notes),
-            },
-            include: {
-              client: { select: { id: true, name: true, email: true, phone: true, address: true } },
-              opportunity: { select: { id: true, title: true } },
-              items: true,
-            },
-          })
+        const number = await nextQuoteNumber(auth.orgId)
+        created = await db.quote.create({
+          data: {
+            organizationId: auth.orgId,
+            number,
+            clientId,
+            opportunityId: opportunityId || null,
+            items: { create: quoteItemRows(items, auth.orgId) },
+            subtotal: totals.subtotal,
+            tax: totals.tax,
+            total: totals.total,
+            currency: str(body.currency) ?? 'USD',
+            status: str(body.status) ?? 'draft',
+            validUntil: dateOrNull(body.validUntil),
+            notes: str(body.notes),
+          },
+          include: {
+            client: { select: { id: true, name: true, email: true, phone: true, address: true } },
+            opportunity: { select: { id: true, title: true } },
+            items: true,
+          },
         })
         break
       } catch (err) {
-        if (isUniqueViolation(err) && attempt < 2) continue
+        const retryable = isUniqueViolation(err) || (err as { code?: string })?.code === 'P2024' || /database is locked/i.test(String((err as Error)?.message))
+        if (retryable && attempt < 4) {
+          await new Promise((r) => setTimeout(r, 25 * (attempt + 1)))
+          continue
+        }
         throw err
       }
     }

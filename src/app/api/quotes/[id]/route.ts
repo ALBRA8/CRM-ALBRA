@@ -135,7 +135,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         })
       }
       return q
-    })
+    }, { maxWait: 5_000, timeout: 30_000 })
 
     if (statusChanged && newStatus) {
       await auditAndTimeline({
