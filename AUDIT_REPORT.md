@@ -88,3 +88,46 @@ Duplicación de primitivas de seguridad entre WP y ULTRA (150 líneas) — extra
 ## 7. Veredicto
 
 **Production Ready con reservas documentadas**: cero críticos abiertos, cero regresiones, suites íntegras y CI disparando en ramas de trabajo; los pendientes son de refuerzo/decisión de negocio, cada uno documentado con causa raíz y plan exacto. No se marca "producción plena" hasta completar los pendientes M13–M16 (datos) y la rotación del PAT.
+
+---
+
+# SEGUNDA REPARACIÓN INTEGRAL — 2026-11-06 (rama `fix/segunda-reparacion-integral`)
+
+Nueva orden de trabajo (fase 2). Causas raíz corregidas y evidencia de cada bloque:
+
+## §2.A Sesiones — revocación PERSISTENTE
+- **Causa raíz:** `src/lib/session-invalidation.ts` usaba un `Map` en memoria (no persistente, no compartido, se perdía al reiniciar).
+- **Corrección:** contador `tokenVersion` en BD (migración 1), claim `tv` en el JWT, guardas async `requireAuth/requireAdmin/requireSuperAdmin/requirePermission` que consultan la BD en cada petición (usuario existe + activo + `tv` vigente + org del token = org del usuario). Fail-closed ante fallo de BD. Revocación atómica dentro del MISMO update que desactiva/degrada (team PUT/DELETE) y en el reset de contraseña. 141 call sites migrados a `await`.
+- **Pruebas:** `tests/integration/session-revocation.test.ts` (7): desactivación, reinicio (nuevo registro de módulos), multi-instancia (BD como única autoridad), flujo forgot→reset real, doble uso concurrente imposible, rol revocado, login de inactivo 403.
+
+## §2.B Autorización y aislamiento
+- **Auditoría** de las 110 rutas API: sin bypass cross-org explotable; `requireSuperAdmin` solo en `/api/super/overview`; ninguna ruta acepta `organizationId` del cliente.
+- **Corrección de integridad referencial cross-org:** `assignedToId` (clients/opportunities), `quoteId` (transactions), `userId` (notifications), `clientId` (inbox/send) se validan contra la org antes de usarse.
+- **Pruebas:** `tests/integration/cross-org-references.test.ts` (4 negativas con 2 orgs).
+
+## §2.C Rate limiting y proxies
+- **Causa raíz:** `clientIp()` confiaba ciegamente en `X-Forwarded-For` (falsificable); límites solo en memoria.
+- **Corrección:** política `TRUST_PROXY`/`TRUST_PROXY_HOPS` (entrada derecha no falsificable; sin proxy declarado la cabecera se ignora); `dbRateLimit` PERSISTENTE en BD (tabla `RateLimitBucket`) para login/forgot/reset; límite de cuerpo 1 MB (413) en `readBody` y 25 MB en restore.
+- **Pruebas:** `tests/unit/rate-limit-policy.test.ts` (6).
+
+## §2.D Ciclo de vida de cuentas
+- Consumo ATÓMICO del token de reset (`updateMany` condicional: doble uso concurrente imposible — probado); contraseñas ≥ 8; revocación por cambio de rol; logout con `allDevices` (bump persistente).
+
+## §2.E Cotizaciones, pagos y datos
+- `UNIQUE (organizationId, number)` en Quote + asignación de número con contador atómico (`OrgCounter`, upsert+RETURNING; la contención de transacciones interactivas paralelas en SQLite es patológica — eliminada del camino caliente).
+- PUT con transición CAS + ingreso por aceptación DENTRO de la transacción (dos PUT concurrentes → EXACTAMENTE un ingreso — probado).
+- Backup GET con snapshot en transacción (timeout 60s); restore TODO-O-NADA en una transacción con sufijo ante colisión de números y tope 25 MB.
+
+## §2.F Migraciones
+- Baseline `0_baseline` + migración aditiva `1_session_revocation_quote_uniqueness_ratelimit` (dedup NO destructivo de números duplicados históricos).
+- Validado con evidencia: instalación limpia (`migrate deploy` OK) y BD existente con duplicados (P3005 → `migrate resolve --applied 0_baseline` → deploy → 0 duplicados, sin filas perdidas). Runbook completo en `docs/MIGRACIONES.md`.
+
+## §7 CI
+- Filtro de ramas reparado (estaba corrupto: `branches: ain, ...`).
+- Lint sin `continue-on-error`: ratchet `scripts/lint-baseline.mjs` (baseline 328 errores preexistentes; los NUEVOS bloquean; las mejoras rebajan el baseline automáticamente).
+
+## Resultados reales (esta rama)
+- `npx tsc --noEmit`: 0 errores.
+- Suite: **56 archivos, 499/499** pruebas (baseline previo 475; +24 nuevas).
+- Build de producción `next build`: OK (en sandbox con heap limitado 1400MB por memoria del entorno).
+- Escáner de secretos: ver apartado de la rama base; el token de GitHub usado para push viaja SOLO en la llamada de push (nunca en archivos/commits).

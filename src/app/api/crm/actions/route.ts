@@ -100,6 +100,10 @@ export async function POST(req: NextRequest) {
     params = parsed.data as Record<string, unknown>
 
     const result = await executeCrmAction(caller.orgId, caller.userId, action, params, 'crm-api')
-    return json(result, { status: result.ok ? 200 : 400 })
+    // (segunda reparación §3.B — integración WHATSPOWER) El CRM CONFIRMA la
+    // organización a la que se atribuyó la acción (la resolvida desde la API
+    // key/JWT, jamás de un campo del cliente). El host (WHATSPOWER) la coteja
+    // para cerrar el bucle de identidad del tenant; discrepancia → rechazo allí.
+    return json({ ...result, orgId: caller.orgId }, { status: result.ok ? 200 : 400 })
   })
 }

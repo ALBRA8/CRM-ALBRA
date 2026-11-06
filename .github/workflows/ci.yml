@@ -27,9 +27,8 @@ jobs:
         run: npm run db:generate
       - name: TypeScript
         run: npx tsc --noEmit
-      - name: Lint (baseline preexistente — informativo, no bloqueante)
-        run: npm run lint
-        continue-on-error: true
+      - name: Lint con baseline ratchet (los errores NUEVOS bloquean; orden §7: sin continue-on-error)
+        run: node scripts/lint-baseline.mjs
       - name: Suite de tests
         run: npx vitest run
       - name: Build de producción
