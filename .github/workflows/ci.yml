@@ -1,9 +1,9 @@
 name: CI CRM-ALBRA
 on:
   push:
-    branches: [main, 'fix/**']
+    branches: [main, 'fix/**', 'repair/**']
   pull_request:
-    branches: [main, 'fix/**']
+    branches: [main, 'fix/**', 'repair/**']
 
 jobs:
   ci:
@@ -27,7 +27,7 @@ jobs:
         run: npm run db:generate
       - name: TypeScript
         run: npx tsc --noEmit
-      - name: Lint con baseline ratchet (los errores NUEVOS bloquean; orden §7: sin continue-on-error)
+      - name: Lint con baseline ratchet (errores NUEVOS bloquean, orden 7, sin continue-on-error)
         run: node scripts/lint-baseline.mjs
       - name: Suite de tests
         run: npx vitest run
