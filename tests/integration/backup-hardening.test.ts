@@ -27,7 +27,7 @@ describe('B5: backup/restauración endurecida', () => {
     expect(res.status).toBe(200)
     const data = await res.json() as any
     expect(data.success).toBe(true)
-    expect(data.transactional).toBe(true, 'la restauración es atómica (transacción)')
+    expect(data.transactional).toBe(true) // la restauración es atómica (transacción)
     expect(data.restored.clients).toBeGreaterThanOrEqual(2)
     expect(data.restored.transactions).toBeGreaterThanOrEqual(1)
 
