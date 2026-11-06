@@ -86,3 +86,32 @@ Trabajo verificado en esta sesión (no solo reportado): commits B1→B9 en `repa
 - **CI**: secret-scan árbol+historial bloqueantes, tsc, lint con baseline de reducción progresiva, tests, build, npm audit informativo.
 - **Pruebas**: 501/506 locales (los 5 fallos son del WIP concurrente de terceros en archivos sin seguimiento; en checkout limpio el gate de independencia pasa 4/4 — verificado con worktree). tsc limpio en árbol versionado; security:scan y security:scan:history exit 0.
 - **No se tocó** `stable-production`, no se desplegó, no se activaron envíos reales, y NO se modificó el trabajo concurrente sin seguimiento de terceros (chat/agent).
+
+## Reparación general integral — cierre de ejecución 2026-11-06 (ramas repair)
+
+**Método:** ejecución directa sobre ramas `repair/integral-20261106` en los TRES repositorios (CRM-ALBRA, WHATSPOWER, WHATSPOWER-ULTRA), verificación por suites reales (sin continue-on-error ni mocks que oculten fallos), push verificado con ls-remote posterior.
+
+### CRM-ALBRA (Capa 0) — rama repair @ 0ebb48f
+- B1–B9 verificados en esta sesión: tsc 0 errores; suite 500/500 (56 archivos); escáner de secretos del árbol LIMPIO; escáner del historial COMPLETO en verde con entradas allowlist/baseline explícitas para fixtures dummy verificados (huellas sha256-12; commits 171f2319, c1ed7015, 7f5fb6c6 — este último solo alcanzable desde main local de sandbox, jamás empujado).
+- Puente CRM→2A al contrato HMAC v2 confirmado: `signWhatspowerPayload` firma `timestamp.body` con el MISMO ts firmado y enviado, y `eventId` en el payload.
+- CI con lint:baseline bloqueante (sin continue-on-error para errores nuevos) + secret scanners bloqueantes + tsc + suite + build.
+
+### WHATSPOWER (Capa 2A) — rama repair @ a82880b
+- HMAC v2 (timestamp dentro de la MAC, ±300 s, timing-safe) + anti-replay PERSISTENTE en SQLite (`webhook_replay`, purga >600 s, sobrevive reinicios — probado entre instancias).
+- Multi-organización: `INTERNAL_API_KEYS="orgId:secreto[:rol]"` (legado → org default/admin), roles admin para liberar locks y eliminar supresiones, X-Org-Id solo restringe (403), secretos de webhook por organización (el secreto validado VINCULA la org; orgId del payload contradictorio → 403).
+- Esquema v3 org-scoped con migración reversible documentada (docs/MIGRACION-ORG-SCOPED.md: copia .bak pre-migración, transacción única con ROLLBACK, datos heredados → org 'default').
+- /qr y /qr/data protegidos (jamás QR a anónimos; /qr/data exige rol admin); idempotencia atómica por reclamación (INSERT OR IGNORE) con purga a 7 días; pagos con máquina de estados PENDING→APPROVED|REJECTED (409 terminales, 400 whitelist, 404 desconocida), `payment_audit`, `PAYMENTS_MODE` (simulador etiquetado, jamás como cobro real); rate limiting 429+Retry-After; body 1 MB con 413 y drenaje; errores 5xx genéricos; teléfonos enmascarados en logs.
+- Los 7 rechazos del contrato §4 en `tests/contract-v11.test.ts` (R1–R7, incluida concurrencia real con UNA sola operación). Suite: 102/102 × 2 ejecuciones; tsc 0.
+
+### WHATSPOWER-ULTRA (Capa 2B) — rama repair @ ba805f0
+- HMAC v2 per-org `WEBHOOK_LEAD_SECRETS` (el secreto vincula la org; legado solo org default; producción EXIGE per-org en el guard fail-fast) + anti-replay persistente + idempotencia de eventos `orgId::eventId` (SQLite, 7 días).
+- Bind de organización en la ingesta: un webhook de la org A JAMÁS añade leads a la campaña de la org B (validación de ownership → 404 sin oráculo) — probado R6b.
+- Motor de despacho: claim ATÓMICO `UPDATE … WHERE id=? AND status='PENDING'` (changes=0 ⇒ otro worker), transiciones posteriores con guard `WHERE status='DISPATCHING'`, /step solo RUNNING (DRAFT promociona; pausas/terminales no), reconciliación FAILED_RETRYABLE ≤3 intentos → FAILED permanente, UNCERTAIN_DISPATCH jamás re-enfocado automáticamente, recoverFromCrash al arrancar, nextPacingDelayMs (jitter 15–35 s) y cooldown de lote con vencimiento y reset automático.
+- Máquina de estados de campañas: pause/resume/cancel con transiciones legales y terminales intocables (409); audit_log para identidades de servicio (actor truncado, jamás la clave); rate limits 120/min admin y 30/min webhook por IP con 429+Retry-After; body 1 MB en los 4 endpoints sin tope; TRUST_PROXY para x-forwarded-for; destinos de enlaces solo http(s):// absoluto; credenciales 2B→2A (Bearer) en checkers de locks/supresión; gate DOBLE ALLOW_REAL_DISPATCH (flag + env) y bloqueo por config incompleta en TODOS los adaptadores — la salvaguarda queda INTACTA y reforzada.
+- Los 7 rechazos + R6b + ST-01..05 en `tests/contract-v11.test.ts`. Suite: 73/73 × 3 ejecuciones; tsc 0. (pilot-safeguards/bajas-circuit siguen en test:e2e exigiendo servicios vivos — fail-closed preservado.)
+
+### Estado de ramas tras el push (verificado con ls-remote)
+- CRM-ALBRA: main ac01106 intacta; stable-production ea87cc2 intacta; repair/integral-20261106 → 0ebb48f (NUEVA en origin).
+- WHATSPOWER: main 85d7fcf intacta; repair/integral-20261106 → a82880b (NUEVA en origin).
+- WHATSPOWER-ULTRA: main 8d00230 intacta; repair/integral-20261106 → ba805f0 (NUEVA en origin).
+- Push normal (fast-forward), sin force, sin mezclas entre repos, sin despliegue, sin envíos reales (ALLOW_REAL_DISPATCH=false en todos lados).
