@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, HttpError } from '@/lib/auth'
 import { auditAndTimeline, parseIntParam, paginationMeta } from '@/lib/api-helpers'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { assignLeadRoundRobin } from '@/lib/lead-routing'
@@ -83,6 +83,13 @@ export async function POST(req: NextRequest) {
 
     // Fase 2: si el creador no eligió responsable, el lead entra al round-robin
     const assignedToId = str(body.assignedToId) ?? (await assignLeadRoundRobin(auth.orgId))
+    // (segunda reparación §2.B) Integridad referencial entre organizaciones:
+    // el responsable debe ser un usuario de LA MISMA organización (la FK simple
+    // no lo impide; la validación de negocio sí).
+    if (assignedToId) {
+      const assignee = await db.user.findFirst({ where: { id: assignedToId, organizationId: auth.orgId }, select: { id: true } })
+      if (!assignee) throw new HttpError(400, 'El responsable no pertenece a tu organización')
+    }
 
     const created = await db.client.create({
       data: {

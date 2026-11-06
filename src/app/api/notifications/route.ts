@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, HttpError } from '@/lib/auth'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { handle, json, readBody, str, qparam } from '../_lib/shared'
 
@@ -49,7 +49,14 @@ export async function POST(req: NextRequest) {
     const created = await db.notification.create({
       data: {
         organizationId: auth.orgId,
-        userId: str(body.userId),
+        // (segunda reparación §2.B) El destinatario debe pertenecer a la organización
+        userId: await (async () => {
+          const userId = str(body.userId)
+          if (!userId) return null
+          const u = await db.user.findFirst({ where: { id: userId, organizationId: auth.orgId }, select: { id: true } })
+          if (!u) throw new HttpError(400, 'El usuario destinatario no pertenece a tu organización')
+          return userId
+        })(),
         type: str(body.type) ?? 'system',
         title: str(body.title) as string,
         body: str(body.message) ?? str(body.body),

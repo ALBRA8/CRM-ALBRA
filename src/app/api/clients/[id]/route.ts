@@ -42,7 +42,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if ('source' in body) data.source = str(body.source) ?? 'manual'
     if ('status' in body) data.status = str(body.status) ?? 'prospect'
     if ('lastContactAt' in body) data.lastContactAt = dateOrNull(body.lastContactAt)
-    if ('assignedToId' in body) data.assignedToId = str(body.assignedToId)
+    if ('assignedToId' in body) {
+      // (segunda reparación §2.B) El responsable debe pertenecer a la organización
+      const assigneeId = str(body.assignedToId)
+      if (assigneeId) {
+        const assignee = await db.user.findFirst({ where: { id: assigneeId, organizationId: auth.orgId }, select: { id: true } })
+        if (!assignee) throw new HttpError(400, 'El responsable no pertenece a tu organización')
+      }
+      data.assignedToId = assigneeId
+    }
     if ('identifier' in body || 'cedula' in body) data.cedula = str(body.identifier) ?? str(body.cedula)
 
     const updated = await db.client.update({

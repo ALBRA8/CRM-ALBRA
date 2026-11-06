@@ -90,7 +90,15 @@ export async function POST(req: NextRequest) {
         currency: str(body.currency) ?? 'USD',
         date: dateOrNull(body.date) ?? new Date(),
         clientId: clientId || null,
-        quoteId: str(body.quoteId),
+        // (segunda reparación §2.B) La cotización referenciada debe existir y
+        // pertenecer a la organización (Transaction.quoteId no tiene FK en BD).
+        quoteId: await (async () => {
+          const quoteId = str(body.quoteId)
+          if (!quoteId) return null
+          const q = await db.quote.findFirst({ where: { id: quoteId, organizationId: auth.orgId }, select: { id: true } })
+          if (!q) throw new HttpError(400, 'Cotización no encontrada')
+          return quoteId
+        })(),
         method: str(body.method),
       },
     })
