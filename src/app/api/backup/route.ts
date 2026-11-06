@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { requirePermission } from '@/lib/auth'
+import { requirePermission, HttpError } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { auditAndTimeline } from '@/lib/api-helpers'
@@ -86,19 +86,105 @@ const d = (v: unknown): Date | null => {
 }
 const digits = (v: unknown): string => String(v ?? '').replace(/\D+/g, '')
 
+// (tercera reparación 6.A) Tope EFECTIVO del body de restauración:
+// el límite NO puede depender de Content-Length (una petición chunked o sin
+// cabecera lo evadía y req.json() cargaba el body COMPLETO en memoria).
+// Se lee el STREAM por chunks con corte duro en MAX_BACKUP_BYTES: el cuerpo se
+// descarta en cuanto se supera el tope (sin acumularlo), haya o no cabecera.
+const MAX_BACKUP_BYTES = 25_000_000
+
+async function readJsonBodyWithLimit(req: NextRequest, maxBytes: number): Promise<{ ok: true; text: string } | { ok: false; tooLarge: boolean }> {
+  // Rechazo rápido cuando la cabecera declara un tamaño mayor (ahorra lectura)
+  const declared = Number(req.headers.get('content-length') ?? '')
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    return { ok: false, tooLarge: true }
+  }
+  const reader = req.body?.getReader()
+  if (!reader) {
+    // Sin stream legible no hay backup verificable: rechazo (fail-closed)
+    return { ok: false, tooLarge: true }
+  }
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value?.byteLength ?? 0
+      if (total > maxBytes) {
+        try { await reader.cancel('backup demasiado grande') } catch {}
+        return { ok: false, tooLarge: true }
+      }
+      chunks.push(value)
+    }
+  } catch {
+    return { ok: false, tooLarge: false } // stream roto/abortado → body inválido (400), no un exceso de tamaño
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    merged.set(c, offset)
+    offset += c.byteLength
+  }
+  return { ok: true, text: new TextDecoder().decode(merged) }
+}
+
+/**
+ * (tercera reparación 6.A) Validación de ESTRUCTURA y VERSIÓN del backup ANTES
+ * de tocar la base de datos: un JSON corrupto, de otra aplicación o de una
+ * versión futura se rechaza con 400 (jamás se inicia una restauración parcial).
+ */
+function validateBackupEnvelope(parsed: unknown): { ok: true; body: BackupBody } | { ok: false; message: string } {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, message: 'Backup inválido: se esperaba un objeto JSON' }
+  }
+  const obj = parsed as Record<string, unknown>
+  if (obj.app !== 'CRM ALBRA') {
+    return { ok: false, message: 'Backup inválido: no es un backup de CRM ALBRA (campo app ausente o incorrecto)' }
+  }
+  const version = Number(obj.version)
+  if (!Number.isFinite(version) || version < 1 || version > 3) {
+    return { ok: false, message: 'Backup con versión no soportada (se admiten versiones 1 a 3)' }
+  }
+  const data = obj.data
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { ok: false, message: 'Backup inválido: falta el objeto data' }
+  }
+  const collections = ['clients', 'services', 'templates', 'opportunities', 'reservations', 'quotes', 'quoteItems', 'transactions'] as const
+  for (const key of collections) {
+    const val = (data as Record<string, unknown>)[key]
+    if (val !== undefined && !Array.isArray(val)) {
+      return { ok: false, message: `Backup inválido: la colección "${key}" debe ser un arreglo` }
+    }
+  }
+  return { ok: true, body: data as BackupBody }
+}
+
 export async function POST(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: restaurar datos masivamente es owner/admin
     const auth = await requirePermission(req, 'export.data')
-    // (segunda reparación §2.C) Tope de tamaño del cuerpo de restauración:
-    // un JSON gigante no puede agotar la memoria del servicio (25 MB).
-    const declaredLen = Number(req.headers.get('content-length') ?? '0')
-    if (Number.isFinite(declaredLen) && declaredLen > 25_000_000) {
-      const err: Error & { status?: number } = new Error('Backup demasiado grande (máximo 25 MB)')
-      err.status = 413
-      throw err
+    // (tercera reparación 6.A) Tope EFECTIVO por lectura de stream (25 MB):
+    // cubre Content-Length, transferencia chunked y peticiones SIN cabecera.
+    // El body se descarta en cuanto se supera el tope → 413 sin agotar memoria.
+    const bodyRead = await readJsonBodyWithLimit(req, MAX_BACKUP_BYTES)
+    if (!bodyRead.ok) {
+      throw new HttpError(
+        bodyRead.tooLarge ? 413 : 400,
+        bodyRead.tooLarge ? 'Backup demasiado grande (máximo 25 MB)' : 'No se pudo leer el cuerpo de la restauración (stream inválido o interrumpido)'
+      )
     }
-    const body = (await req.json().catch(() => ({}))) as BackupBody
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(bodyRead.text)
+    } catch {
+      throw new HttpError(400, 'Backup inválido: el cuerpo no es JSON válido')
+    }
+    const envelope = validateBackupEnvelope(parsed)
+    if (!envelope.ok) {
+      throw new HttpError(400, envelope.message)
+    }
+    const body = envelope.body
     const restored = { clients: 0, services: 0, templates: 0, opportunities: 0, reservations: 0, quotes: 0, quoteItems: 0, transactions: 0 }
     const skipped = { clients: 0, services: 0, templates: 0, opportunities: 0, reservations: 0, quotes: 0, quoteItems: 0, transactions: 0 }
 
@@ -107,7 +193,13 @@ export async function POST(req: NextRequest) {
     // (segunda reparación §2.E) TODA la restauración corre dentro de UNA
     // transacción: o se restaura todo o nada — jamás un restore parcial por
     // un crash a mitad ni registros huérfanos a mitad de import.
-    return json(await db.$transaction(async (tx) => {
+    // (tercera reparación 6.A) La AUDITORÍA va FUERA de la transacción:
+    // auditAndTimeline escribe por la conexión global y, dentro de la
+    // transacción interactiva (que retiene el lock de escritura de SQLite),
+    // se bloqueaba en deadlock (defecto de fase 2 detectado por la batería).
+    // Además: si la restauración se revierte, no queda auditoría de un hecho
+    // que no ocurrió. El operatorio del restore queda auditado SOLO si existe.
+    const result = await db.$transaction(async (tx) => {
     const orgClients = await tx.client.findMany({ where: { organizationId: auth.orgId }, select: { id: true, phone: true } })
     const clientByPhone = new Map<string, string>()
     for (const c of orgClients) if (c.phone) clientByPhone.set(digits(c.phone), c.id)
@@ -319,15 +411,17 @@ export async function POST(req: NextRequest) {
       restored.transactions++
     }
 
+    return { success: true, restored, skipped }
+    }, { maxWait: 5_000, timeout: 120_000 }) // fin db.$transaction — todo o nada
+
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,
       action: 'imported',
       entity: 'backup',
-      details: { restored, skipped },
+      details: { restored: result.restored, skipped: result.skipped },
     })
 
-    return { success: true, restored, skipped }
-    }, { maxWait: 5_000, timeout: 120_000 })) // fin db.$transaction — todo o nada (y respuesta json(...))
+    return json(result)
   })
 }
