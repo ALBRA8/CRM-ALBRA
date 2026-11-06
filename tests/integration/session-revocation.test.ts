@@ -111,18 +111,18 @@ describe('revocación persistente — cambio de contraseña (flujo real forgot+r
     const oldJwt = A()
 
     // 2. Consume el token con la nueva contraseña
-    const reset = await resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Nueva-Clave-2026' } }))
+    const reset = await resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Nueva-Clave-2026' } })) // scan-secrets:allow (dummy)
     expect(reset.status).toBe(200)
 
     // 3. El JWT anterior queda revocado (tokenVersion incrementada en el UPDATE del reset)
     expect((await clientsGET(req('/api/clients', { token: oldJwt }))).status).toBe(401)
 
     // 4. El MISMO token de recuperación NO puede usarse otra vez (doble uso)
-    const again = await resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Otra-Clave-2026' } }))
+    const again = await resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Otra-Clave-2026' } })) // scan-secrets:allow (dummy)
     expect(again.status).toBe(400)
 
     // 5. Login con la nueva contraseña funciona y emite JWT con tv vigente
-    const login = await loginPOST(req('/api/auth/login', { method: 'POST', body: { email, password: 'Nueva-Clave-2026' } }))
+    const login = await loginPOST(req('/api/auth/login', { method: 'POST', body: { email, password: 'Nueva-Clave-2026' } })) // scan-secrets:allow (dummy)
     expect(login.status).toBe(200)
   })
 
@@ -134,8 +134,8 @@ describe('revocación persistente — cambio de contraseña (flujo real forgot+r
     const { resetToken } = (await jsonBody(forgot)) as { resetToken: string }
 
     const [r1, r2] = await Promise.all([
-      resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Concurrente-1' } })),
-      resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Concurrente-2' } })),
+      resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Concurrente-1' } })), // scan-secrets:allow (dummy)
+      resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Concurrente-2' } })), // scan-secrets:allow (dummy)
     ])
     const statuses = [r1.status, r2.status].sort()
     expect(statuses).toEqual([200, 400]) // uno consume; el otro pierde
@@ -166,9 +166,9 @@ describe('ciclo de vida — rol y estado', () => {
     // usuario con contraseña conocida creado por el flujo de reset.
     const forgot = await forgotPOST(req('/api/auth/forgot-password', { method: 'POST', body: { email: FIX.userA.email } }))
     const { resetToken } = (await jsonBody(forgot)) as { resetToken: string }
-    await resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Login-Check-2026' } }))
+    await resetPOST(req('/api/auth/reset-password', { method: 'POST', body: { token: resetToken, password: 'Login-Check-2026' } })) // scan-secrets:allow (contraseña dummy de prueba, no es credencial real)
     await db.user.update({ where: { id: FIX.userA.id }, data: { isActive: false } })
-    const res = await loginPOST(req('/api/auth/login', { method: 'POST', body: { email: FIX.userA.email, password: 'Login-Check-2026' } }))
+    const res = await loginPOST(req('/api/auth/login', { method: 'POST', body: { email: FIX.userA.email, password: 'Login-Check-2026' } })) // scan-secrets:allow (dummy)
     expect(res.status).toBe(403)
   })
 })
