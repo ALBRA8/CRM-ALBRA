@@ -9,7 +9,7 @@ import { buildOppMeta, oppAmountFrom, serializeOpportunity } from '../_lib/oppor
 /** GET /api/opportunities — listado con client y stage incluidos. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const clientId = qparam(req, 'clientId')
     const status = qparam(req, 'status')
     const stageId = qparam(req, 'stageId')
@@ -47,7 +47,7 @@ function parseIntQ(req: NextRequest, name: string): number | null {
 /** POST /api/opportunities — { clientId, title, estimatedValue, probability, stageId, ... } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     requireFields(body, ['title'])
 

@@ -31,7 +31,7 @@ function toNumber(v: string | undefined): number {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requirePermission(req, 'data.import')
+    const auth = await requirePermission(req, 'data.import')
     let form: FormData
     try {
       form = await req.formData()

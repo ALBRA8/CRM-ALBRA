@@ -13,7 +13,7 @@ import { rememberCorrection } from '@/lib/memory'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as {
       original?: string
       final?: string

@@ -35,7 +35,7 @@ function serializeMember(user: {
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const members = await db.user.findMany({
       where: { organizationId: auth.orgId },
       orderBy: { createdAt: 'asc' },
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/team — invita un miembro a la MISMA organización (rol del body). */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = await readBody(req)
     requireFields(body, ['name', 'email', 'password'])
 

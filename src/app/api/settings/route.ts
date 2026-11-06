@@ -38,7 +38,7 @@ async function loadOrCreate(orgId: string) {
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const [settings, org] = await Promise.all([
       db.settings.findUnique({ where: { organizationId: auth.orgId } }),
       db.organization.findUnique({ where: { id: auth.orgId }, select: { name: true } }),
@@ -102,7 +102,7 @@ interface SettingsBody {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = (await req.json().catch(() => ({}))) as SettingsBody
 
     await loadOrCreate(auth.orgId)
@@ -152,7 +152,7 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     await loadOrCreate(auth.orgId)
     await db.settings.update({ where: { organizationId: auth.orgId }, data: { llmApiKeyEnc: null } })
     await auditAndTimeline({

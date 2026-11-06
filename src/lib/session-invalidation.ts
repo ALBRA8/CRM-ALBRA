@@ -1,24 +1,40 @@
 /**
- * session-invalidation.ts — Invalidación de sesiones tras cambio de contraseña
- * (reparación integral 2026-11-06 — orden §6: revocación de sesiones).
+ * session-invalidation.ts — Revocación de sesiones PERSISTENTE por `tokenVersion`.
+ * (segunda reparación integral 2026-11-06 — orden §2.A)
  *
- * Mecanismo: cutoff por usuario. Todo JWT lleva `iat`; getAuth() rechaza tokens
- * emitidos ANTES del cutoff registrado. Map en memoria por proceso: el cambio
- * de contraseña invalida sesiones en caliente; en despliegues multi-instancia
- * propagar por pub/sub (documentado en PRODUCTION_READINESS.md).
+ * Causa raíz corregida: la versión anterior usaba un Map EN MEMORIA — no era
+ * persistente, no se compartía entre instancias y se perdía al reiniciar.
+ *
+ * Mecanismo actual (autoridad en la base de datos, sin Redis ni pub/sub):
+ *  - Cada User lleva un contador `tokenVersion` (Prisma, default 0).
+ *  - Todo JWT lleva el claim `tv` con la versión vigente al firmarse.
+ *  - Las guardas async de src/lib/auth.ts (requireAuth y derivadas) consultan
+ *    la BD en cada petición y RECHAZAN el token si `tv` !== tokenVersion vigente,
+ *    si el usuario no existe o si dejó de estar activo (fail-closed).
+ *  - Revocar = `bumpTokenVersion(userId)`: un UPDATE atómico de incremento.
+ *
+ * Propiedades demostradas en tests/integration/session-revocation.test.ts:
+ *  - tras REINICIAR el servidor (nuevo registro de módulos), un JWT anterior
+ *    sigue siendo rechazado (el estado NO vive en memoria de proceso);
+ *  - una SEGUNDA INSTANCIA (otro registro de módulos, sin comunicación alguna)
+ *    ve la revocación al instante (solo comparten la BD);
+ *  - la desactivación de un empleado y el reset de contraseña revocan al momento.
  */
 
-const cutoffs = new Map<string, number>()
+import { db } from './db'
 
-/** Registra el instante de corte: tokens con iat <= cutoff quedan inválidos. */
-export function invalidateSessions(userId: string, at: number = Date.now()): void {
-  const prev = cutoffs.get(userId)
-  if (prev === undefined || at > prev) cutoffs.set(userId, at)
-}
-
-/** true si el token (iat en ms) fue emitido antes del último corte. */
-export function isSessionInvalidated(userId: string, issuedAtMs: number): boolean {
-  const cutoff = cutoffs.get(userId)
-  if (cutoff === undefined) return false
-  return issuedAtMs <= cutoff
+/**
+ * Revoca las sesiones de un usuario de forma PERSISTENTE: incrementa
+ * atómicamente su `tokenVersion` en la base de datos y devuelve la versión
+ * nueva. Los JWT existentes (con la versión anterior en `tv`) dejan de ser
+ * aceptados por las guardas de autenticación, en este proceso y en cualquiera
+ * otro que comparta la misma base de datos.
+ */
+export async function bumpTokenVersion(userId: string): Promise<number> {
+  const user = await db.user.update({
+    where: { id: userId },
+    data: { tokenVersion: { increment: 1 } },
+    select: { tokenVersion: true },
+  })
+  return user.tokenVersion
 }

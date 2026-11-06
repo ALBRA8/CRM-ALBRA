@@ -18,7 +18,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 export async function POST(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: disparar el scheduler manualmente es operación administrativa
-    const auth = requirePermission(req, 'automations.run')
+    const auth = await requirePermission(req, 'automations.run')
     const { processed, results } = await runDueJobs({ orgId: auth.orgId })
 
     // Contadores honestos: se cuentan los runs REALES ejecutados en esta

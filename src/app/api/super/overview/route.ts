@@ -113,7 +113,7 @@ async function checkSystems(crmDbOk: boolean): Promise<SystemHealth[]> {
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireSuperAdmin(req)
+    const auth = await requireSuperAdmin(req)
 
     const [orgs, users, services, crmDbOk] = await Promise.all([
       db.organization.findMany({

@@ -15,7 +15,7 @@ import { normalizeTrigger, toJsonString, normalizeActions, intervalMinutesFrom, 
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const automations = await db.automation.findMany({
       where: { organizationId: auth.orgId },
       orderBy: { createdAt: 'desc' },
@@ -59,7 +59,7 @@ interface AutomationBody {
 export async function POST(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: crear automatizaciones es tarea de owner/admin
-    const auth = requirePermission(req, 'automations.write')
+    const auth = await requirePermission(req, 'automations.write')
     const body = (await req.json().catch(() => ({}))) as AutomationBody
     requireFields(body as unknown as Record<string, unknown>, ['name'])
 

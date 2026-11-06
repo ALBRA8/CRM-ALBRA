@@ -11,9 +11,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { NextRequest } from 'next/server'
 import { createHash, createHmac } from 'crypto'
-import { signToken, verifyToken, getAuth } from '@/lib/auth'
+import { signToken, verifyToken, getAuth, requireAuth } from '@/lib/auth'
 import { redeemDownloadTicket, issueDownloadTicket } from '@/lib/download-tickets'
-import { invalidateSessions } from '@/lib/session-invalidation'
+import { bumpTokenVersion } from '@/lib/session-invalidation'
 import { signWhatspowerPayload } from '@/lib/whatspower-bridge'
 import { rateLimit, resetRateLimits } from '@/lib/rate-limit'
 import { FIX } from '../setup/seed-data'
@@ -95,17 +95,25 @@ describe('L3: token de reset hasheado en BD', () => {
   })
 })
 
-describe('L4: revocación de sesiones tras cambio de contraseña', () => {
-  it('un token emitido antes del cutoff queda inválido para getAuth', async () => {
-    const token = OWNER_A()
-    // Sanity: válido antes de la revocación
+describe('L4: revocación de sesiones tras cambio de contraseña (tokenVersion PERSISTENTE)', () => {
+  it('un JWT anterior deja de funcionar tras la revocación; uno firmado con la versión vigente, no', async () => {
+    const token = OWNER_A() // sin claim tv → se trata como versión 0
+    // Sanity: la guarda acepta el token antes de revocar
+    const before = await requireAuth(req('/x', { headerToken: token }))
+    expect(before.userId).toBe(FIX.userA.id)
+
+    // Reset de contraseña → bump persistente en BD (lo ejecuta la ruta)
+    await bumpTokenVersion(FIX.userA.id)
+
+    // El token viejo (tv=0) muere ante la guarda async (BD-autoritativa)
+    await expect(requireAuth(req('/x', { headerToken: token }))).rejects.toMatchObject({ status: 401 })
+    // getAuth (verificación barata) aún lo decodifica — la autoridad es la guarda async
     expect(getAuth(req('/x', { headerToken: token }))?.userId).toBe(FIX.userA.id)
-    invalidateSessions(FIX.userA.id)
-    // El token viejo (iat <= cutoff) muere; uno nuevo (iat > cutoff) vive
-    expect(getAuth(req('/x', { headerToken: token }))).toBeNull()
-    await new Promise((r) => setTimeout(r, 5)) // garantiza iat del nuevo > cutoff
-    const fresh = signToken({ userId: FIX.userA.id, orgId: FIX.orgA.id, role: 'owner', email: FIX.userA.email }, 1)
-    expect(getAuth(req('/x', { headerToken: fresh }))?.userId).toBe(FIX.userA.id)
+
+    // Un token firmado con la versión VIGENTE (1) sí pasa
+    const fresh = signToken({ userId: FIX.userA.id, orgId: FIX.orgA.id, role: 'owner', email: FIX.userA.email, tv: 1 }, 1)
+    const auth = await requireAuth(req('/x', { headerToken: fresh }))
+    expect(auth.userId).toBe(FIX.userA.id)
   })
 })
 

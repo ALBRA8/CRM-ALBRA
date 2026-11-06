@@ -10,7 +10,7 @@ import { serializeField } from '../_lib/custom-fields'
 /** GET /api/custom-fields?entity= — definiciones visibles (excluye campos de sistema). */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const entity = qparam(req, 'entity')
     const where: Prisma.CustomFieldWhereInput = {
       organizationId: auth.orgId,
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/custom-fields — { name, fieldType|type, entity, options?, isRequired?, order? } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = await readBody(req)
     requireFields(body, ['name', 'entity'])
 

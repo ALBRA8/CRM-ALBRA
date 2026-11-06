@@ -1,6 +1,19 @@
 import type { Opportunity, Quote, QuoteItem } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { isObjArray, num, str } from './shared'
 import { serializeClientRef } from './clients'
+
+/** Cliente Prisma transaccional (para operaciones dentro de $transaction). */
+export type TxClient = Prisma.TransactionClient
+/** Cliente por defecto cuando no se pasa un tx: el db global. */
+type DbLike = TxClient | { quote: TxClient['quote'] }
+
+/** Resuelve el cliente a usar (tx explícito o el db global con import perezoso). */
+async function resolveClient(client?: DbLike): Promise<DbLike> {
+  if (client) return client
+  const { db } = await import('@/lib/db')
+  return db
+}
 
 /**
  * Cotizaciones: `number` se expone también como `quoteNumber` (el frontend lo
@@ -48,14 +61,25 @@ export function quoteItemRows(items: QuoteItemParsed[], organizationId?: string)
   }))
 }
 
-/** Número secuencial COT-0001 por organización (a prueba de colisiones simples). */
-export async function nextQuoteNumber(orgId: string): Promise<string> {
-  const { db } = await import('@/lib/db')
-  let n = (await db.quote.count({ where: { organizationId: orgId } })) + 1
+/** ¿Es un error P2002 (violación de unicidad) de Prisma? */
+export function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string })?.code === 'P2002'
+}
+
+/**
+ * Número secuencial COT-0001 por organización.
+ * (segunda reparación §2.E) Acepta un cliente transaccional: cuando se invoca
+ * DENTRO de db.$transaction junto al create, la generación y la inserción son
+ * una sola unidad; la restricción UNIQUE (organizationId, number) es la
+ * defensa final y la ruta reintenta con el siguiente número ante P2002.
+ */
+export async function nextQuoteNumber(orgId: string, client?: DbLike): Promise<string> {
+  const c = await resolveClient(client)
+  let n = (await c.quote.count({ where: { organizationId: orgId } })) + 1
   let number = `COT-${String(n).padStart(4, '0')}`
   // Evita colisión si se borraron/crearon cotizaciones en paralelo
   for (let guard = 0; guard < 50; guard++) {
-    const exists = await db.quote.findFirst({ where: { organizationId: orgId, number }, select: { id: true } })
+    const exists = await c.quote.findFirst({ where: { organizationId: orgId, number }, select: { id: true } })
     if (!exists) return number
     n += 1
     number = `COT-${String(n).padStart(4, '0')}`

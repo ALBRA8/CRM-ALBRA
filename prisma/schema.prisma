@@ -68,6 +68,13 @@ model User {
   phone          String?
   role           String       @default("member") // owner | admin | member
   isActive       Boolean      @default(true)
+  // Revocación de sesiones PERSISTENTE (segunda reparación): contador por
+  // usuario embebido en cada JWT (`tv`). Cualquier punto que revoca (reset de
+  // contraseña, desactivación, cambio de rol, logout global) incrementa este
+  // contador de forma atómica en BD; los guardas async rechazan el token si
+  // `tv` del token !== valor vigente. Es inmediato, sobrevive a reinicios y
+  // funciona entre instancias porque la autoridad vive en la base de datos.
+  tokenVersion   Int          @default(0)
   avatar         String?
   leadCount      Int          @default(0)    // Fase 2: contador para round-robin de leads
   lastLeadAt     DateTime?                   // Fase 2: último lead asignado (desempate del round-robin)
@@ -250,6 +257,22 @@ model Quote {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, status])
+  // Unicidad del número de cotización POR ORGANIZACIÓN (segunda reparación):
+  // dos organizaciones pueden usar el mismo número, pero dentro de una org el
+  // número es único a nivel BD (defensa en profundidad frente a carreras).
+  @@unique([organizationId, number])
+}
+
+// Cubos de rate limiting PERSISTENTES (segunda reparación): los límites de los
+// endpoints sensibles (login/reset/forgot) se cuentan en BD, no en memoria,
+// para que sean efectivos entre reinicios y entre instancias que compartan la
+// misma base de datos. Limpieza perezosa de cubos vencidos en cada escritura.
+model RateLimitBucket {
+  key     String   @id
+  count   Int      @default(0)
+  resetAt DateTime
+
+  @@index([resetAt])
 }
 
 // Líneas de detalle de una cotización (portado del repo base, ahora relacional)

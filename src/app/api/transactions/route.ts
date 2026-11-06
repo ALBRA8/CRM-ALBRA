@@ -10,7 +10,7 @@ import { handle, json, readBody, requireFields, str, dateOrNull, numOrNull, norm
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const typeRaw = qparam(req, 'type')
     const type = typeRaw ? normalizeTxType(typeRaw) : null
     const startDate = qparam(req, 'startDate')
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/transactions — { type, amount, category?, description, date?, clientId?, method? } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     requireFields(body, ['amount', 'description'])
 

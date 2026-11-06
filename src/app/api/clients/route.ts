@@ -11,7 +11,7 @@ import { loadClientAttrs, saveClientAttrs, serializeClient } from '../_lib/clien
 /** GET /api/clients — listado paginado con búsqueda, filtros y atributos extendidos. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const page = parseIntParam(req, 'page', 1)
     const limit = parseIntParam(req, 'limit', 20, 1, 200)
 
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/clients — crea cliente, dispara workflows y registra auditoría+timeline. */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     requireFields(body, ['name', 'phone'])
 

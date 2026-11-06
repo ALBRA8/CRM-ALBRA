@@ -15,7 +15,7 @@ import { buildQuotePdf } from '../../_lib/pdf'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const id = req.nextUrl.searchParams.get('id')
     if (!id) throw new HttpError(400, 'Falta el parámetro id')
 

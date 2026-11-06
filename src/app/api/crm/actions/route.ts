@@ -50,7 +50,7 @@ async function resolveCaller(req: NextRequest): Promise<{ orgId: string; userId:
 
   // 2) JWT de usuario de la app
   try {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     return { orgId: auth.orgId, userId: auth.userId, role: auth.role }
   } catch {
     return null

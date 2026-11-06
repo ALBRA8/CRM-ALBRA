@@ -13,7 +13,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 export async function GET(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: exportar datos completos es owner/admin (soporta ?token= para descargas)
-    const auth = requirePermission(req, 'export.data')
+    const auth = await requirePermission(req, 'export.data')
     const type = new URL(req.url).searchParams.get('type') || 'clients'
     const orgId = auth.orgId
 

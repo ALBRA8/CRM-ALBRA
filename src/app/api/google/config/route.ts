@@ -13,7 +13,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const client = await getGoogleClientConfig(auth.orgId)
     const refreshToken = await getGoogleRefreshToken(auth.orgId)
     const integration = await db.integration.findUnique({ where: { organizationId: auth.orgId }, select: { enableGoogle: true, googleEmail: true } })
@@ -40,7 +40,7 @@ interface GoogleConfigBody {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = (await req.json().catch(() => ({}))) as GoogleConfigBody
     const clientId = String(body.clientId || '').trim()
     const clientSecret = String(body.clientSecret || '').trim()
@@ -61,7 +61,7 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     await db.integration.updateMany({ where: { organizationId: auth.orgId }, data: { googleClientJsonEnc: null } })
     await clearGoogleConnection(auth.orgId)
     await auditAndTimeline({ orgId: auth.orgId, userId: auth.userId, action: 'updated', entity: 'integration', details: { provider: 'google', cleared: true } })

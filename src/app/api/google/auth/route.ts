@@ -29,7 +29,7 @@ import { getGoogleClientConfig, buildOAuthUrl, exchangeCodeForTokens } from '@/l
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requirePermission(req, 'integrations.*')
+    const auth = await requirePermission(req, 'integrations.*')
     const url = new URL(req.url)
 
     const proto = req.headers.get('x-forwarded-proto')?.split(',')[0].trim()

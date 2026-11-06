@@ -42,7 +42,7 @@ const DAEMON_URL = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const applyFix = new URL(req.url).searchParams.get('fix') === '1'
     const checks: Check[] = []
 

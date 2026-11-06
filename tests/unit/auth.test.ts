@@ -13,6 +13,7 @@ import {
   type SessionPayload,
 } from '@/lib/auth'
 import { issueDownloadTicket } from '@/lib/download-tickets'
+import { FIX } from '../setup/seed-data'
 
 /**
  * Tests unitarios de src/lib/auth.ts (JWT propio HMAC-SHA256 + scrypt + guardas).
@@ -156,9 +157,9 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     expect(admin?.isAdmin).toBe(true)
   })
 
-  it('requireAuth lanza HttpError 401 sin sesión', () => {
+  it('requireAuth lanza HttpError 401 sin sesión', async () => {
     try {
-      requireAuth(requestWithAuth())
+      await requireAuth(requestWithAuth())
       expect.unreachable('requireAuth debía lanzar')
     } catch (err) {
       expect(err).toBeInstanceOf(HttpError)
@@ -166,10 +167,14 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     }
   })
 
-  it('requireAdmin lanza HttpError 403 para miembros no admin', () => {
-    const req = requestWithAuth({ authorization: `Bearer ${signToken({ ...payload(), role: 'member' })}` })
+  it('requireAdmin lanza HttpError 403 para miembros no admin', async () => {
+    // (segunda reparación) requireAuth consulta la BD: se usa un miembro real
+    // del seed (userB, member de org-b) y no un userId ficticio.
+    const req = requestWithAuth({
+      authorization: `Bearer ${signToken({ userId: FIX.userB.id, orgId: FIX.userB.organizationId, role: 'member', email: FIX.userB.email })}`,
+    })
     try {
-      requireAdmin(req)
+      await requireAdmin(req)
       expect.unreachable('requireAdmin debía lanzar')
     } catch (err) {
       expect(err).toBeInstanceOf(HttpError)
@@ -177,9 +182,28 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     }
   })
 
-  it('requireAdmin deja pasar a owner', () => {
-    const auth = requireAdmin(requestWithAuth({ authorization: `Bearer ${signToken(payload())}` }))
-    expect(auth.orgId).toBe('org-1')
+  it('requireAdmin deja pasar a owner con sesión vigente en BD', async () => {
+    const auth = await requireAdmin(
+      requestWithAuth({
+        authorization: `Bearer ${signToken({ userId: FIX.userA.id, orgId: FIX.orgA.id, role: 'owner', email: FIX.userA.email })}`,
+      })
+    )
+    expect(auth.orgId).toBe(FIX.orgA.id)
+  })
+
+  it('requireAuth rechaza un token con tokenVersion distinta de la vigente en BD (revocación persistente)', async () => {
+    // Un token firmado correctamente pero con tv=999 no coincide con la
+    // tokenVersion del usuario en BD → 401, aunque la firma sea válida.
+    const req = requestWithAuth({
+      authorization: `Bearer ${signToken({ userId: FIX.userA.id, orgId: FIX.orgA.id, role: 'owner', email: FIX.userA.email, tv: 999 })}`,
+    })
+    try {
+      await requireAuth(req)
+      expect.unreachable('requireAuth debía rechazar el token con tv obsoleta')
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpError)
+      expect((err as HttpError).status).toBe(401)
+    }
   })
 })
 

@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     // RBAC por operación (contrato rbac-gaps): leer estado/QR/conversaciones es
     // whatsapp.read (rol comercial); el gate va antes del guard de sesión.
-    const auth = requirePermission(req, 'whatsapp.read')
+    const auth = await requirePermission(req, 'whatsapp.read')
     const path = new URL(req.url).searchParams.get('path') || '/status'
     const clean = path.startsWith('/') ? path : `/${path}`
     if (!ALLOWED_GET.some((re) => re.test(clean))) {
@@ -177,7 +177,7 @@ interface ProxyBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as ProxyBody
     const path = String(body.path || '/connect')
     if (!ALLOWED_POST.includes(path)) {
@@ -222,7 +222,7 @@ export async function PUT(req: NextRequest) {
   return handle(async () => {
     // RBAC: actualizar conversaciones (marcar leídas, etc.) es operativo del rol
     // comercial → 'whatsapp.write' antes del guard de sesión.
-    const auth = requirePermission(req, 'whatsapp.write')
+    const auth = await requirePermission(req, 'whatsapp.write')
     const body = (await req.json().catch(() => ({}))) as ProxyBody
     const path = String(body.path || '')
     if (!ALLOWED_PUT.some((re) => re.test(path))) {

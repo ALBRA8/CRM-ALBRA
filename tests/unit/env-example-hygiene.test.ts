@@ -26,6 +26,7 @@ const NON_SECRET_ALLOWED = new Set([
   'http://localhost:9000',
   'true',
   'false',
+  '1', // TRUST_PROXY_HOPS (config no-secreta, segunda reparación §2.C)
   '',
 ])
 

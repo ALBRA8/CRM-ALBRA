@@ -49,7 +49,7 @@ function serialize(h: { id: string; type: string; title: string; description: st
 /** GET /api/clients/:id/history */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await db.client.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true } })
     if (!client) throw new HttpError(404, 'Cliente no encontrado')
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 /** POST /api/clients/:id/history — { serviceType, description, amount?, notes? } */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await db.client.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true, name: true } })
     if (!client) throw new HttpError(404, 'Cliente no encontrado')

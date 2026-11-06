@@ -13,7 +13,7 @@ import { issueDownloadTicket } from '@/lib/download-tickets'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     await readBody(req).catch(() => ({ ok: true as const, body: '{}' }))
     try {
       const { ticket, expiresInSec } = issueDownloadTicket(auth)

@@ -11,7 +11,7 @@ import { serializeOpportunity } from '../_lib/opportunities'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
 
     const [stages, opportunities] = await Promise.all([
       db.pipelineStage.findMany({ where: { organizationId: auth.orgId }, orderBy: { order: 'asc' } }),

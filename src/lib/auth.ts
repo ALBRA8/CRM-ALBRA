@@ -2,7 +2,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { NextRequest } from 'next/server'
 import { can } from './rbac'
 import { redeemDownloadTicket } from './download-tickets'
-import { isSessionInvalidated } from './session-invalidation'
+import { db } from './db'
 
 /**
  * Autenticación JWT sin dependencias externas (HMAC-SHA256 firmado con APP_SECRET)
@@ -31,6 +31,15 @@ export interface SessionPayload {
   email: string
   /** Epoch ms de emisión (para invalidación tras cambio de contraseña). */
   iat?: number
+  /**
+   * tokenVersion vigente al firmar el token (revocación PERSISTENTE, orden §2.A).
+   * La guarda async la coteja contra la BD en cada petición: si difiere, el
+   * token está revocado (reset de contraseña, desactivación, cambio de rol,
+   * logout global). Tokens previos sin `tv` se tratan como versión 0 — los
+   * usuarios nuevos arrancan en 0, así que la compatibilidad se conserva y la
+   * primera revocación los invalida también.
+   */
+  tv?: number
   exp: number
 }
 
@@ -93,6 +102,8 @@ export interface AuthContext {
   role: string
   email: string
   isAdmin: boolean
+  /** tokenVersion embebida en el JWT (para heredarla en tickets de descarga). */
+  tv?: number
 }
 
 /** Cookie de sesión httpOnly (mitigación XSS: el JWT no necesita vivir en localStorage). */
@@ -117,12 +128,15 @@ export function getAuth(req: NextRequest): AuthContext | null {
         orgId: session.orgId,
         role: session.role,
         email: session.email,
+        tv: session.tv,
         // superadmin es administrador también DENTRO de su organización
         // (superconjunto de owner), además de su rol de plataforma.
         isAdmin: session.role === 'owner' || session.role === 'admin' || session.role === 'superadmin',
       }
-      // Revocación tras cambio de contraseña: tokens emitidos antes del cutoff se rechazan.
-      if (session.iat !== undefined && isSessionInvalidated(session.userId, session.iat)) return null
+      // (segunda reparación) La revocación PERSISTENTE por tokenVersion la
+      // aplica assertSessionState() — asíncrona y contra BD — invocada por
+      // requireAuth/requireAdmin/requireSuperAdmin/requirePermission.
+      // getAuth() sigue siendo síncrono para usos internos (tickets).
     }
   }
   if (!ctx) {
@@ -142,16 +156,47 @@ export class HttpError extends Error {
   }
 }
 
-/** Requiere sesión; lanza HttpError 401 si no hay. */
-export function requireAuth(req: NextRequest): AuthContext {
-  const auth = getAuth(req)
-  if (!auth) throw new HttpError(401, 'Token de autorización requerido')
-  return auth
+/**
+ * (segunda reparación — orden §2.A) Verificación del ESTADO DE SESIÓN contra la
+ * base de datos, autoridad única compartida por todas las instancias:
+ *  1. el usuario debe existir;
+ *  2. debe estar activo (la desactivación de un empleado corta su sesión al instante);
+ *  3. la `tv` del JWT debe coincidir con `tokenVersion` vigente (revocación por
+ *     reset de contraseña, cambio de rol o logout global);
+ *  4. la organización del token debe seguir siendo la del usuario (el JWT no
+ *     puede "viajar" entre organizaciones).
+ *
+ * FAIL-CLOSED: cualquier fallo de BD NO autoriza — la excepción sube y la ruta
+ * responde 500 sin ejecutar la operación de negocio.
+ */
+async function assertSessionState(ctx: AuthContext): Promise<AuthContext> {
+  const user = await db.user.findUnique({
+    where: { id: ctx.userId },
+    select: { isActive: true, tokenVersion: true, organizationId: true },
+  })
+  if (!user || !user.isActive) {
+    throw new HttpError(401, 'Sesión revocada o usuario inactivo')
+  }
+  const currentVersion = user.tokenVersion ?? 0
+  if ((ctx.tv ?? 0) !== currentVersion) {
+    throw new HttpError(401, 'Sesión revocada: vuelve a iniciar sesión')
+  }
+  if (user.organizationId !== ctx.orgId) {
+    throw new HttpError(401, 'Sesión inválida para esta organización')
+  }
+  return ctx
 }
 
-/** Requiere rol admin/owner (para config sensible como Nicho, equipo, integraciones). */
-export function requireAdmin(req: NextRequest): AuthContext {
-  const auth = requireAuth(req)
+/** Requiere sesión VÁLIDA Y VIGENTE; lanza HttpError 401 si no. (async: consulta BD) */
+export async function requireAuth(req: NextRequest): Promise<AuthContext> {
+  const auth = getAuth(req)
+  if (!auth) throw new HttpError(401, 'Token de autorización requerido')
+  return await assertSessionState(auth)
+}
+
+/** Requiere rol admin/owner con sesión vigente. (async: consulta BD) */
+export async function requireAdmin(req: NextRequest): Promise<AuthContext> {
+  const auth = await requireAuth(req)
   if (!auth.isAdmin) throw new HttpError(403, 'Se requieren permisos de administrador')
   return auth
 }
@@ -166,8 +211,8 @@ export function requireAdmin(req: NextRequest): AuthContext {
  * vida de usuarios prohibe crear/promover superadmin): solo existe por
  * promoción directa en BD (scripts/promote-superadmin.mjs).
  */
-export function requireSuperAdmin(req: NextRequest): AuthContext {
-  const auth = requireAuth(req)
+export async function requireSuperAdmin(req: NextRequest): Promise<AuthContext> {
+  const auth = await requireAuth(req)
   if (auth.role !== 'superadmin') {
     throw new HttpError(403, 'Se requiere rol de superadministrador de plataforma')
   }
@@ -179,8 +224,8 @@ export function requireSuperAdmin(req: NextRequest): AuthContext {
  * la UI puede ocultar botones, pero aquí se decide de verdad. Soporta
  * comodines ('settings.*' concede 'settings.write').
  */
-export function requirePermission(req: NextRequest, capability: string): AuthContext {
-  const auth = requireAuth(req)
+export async function requirePermission(req: NextRequest, capability: string): Promise<AuthContext> {
+  const auth = await requireAuth(req)
   if (!can(auth.role, capability)) {
     throw new HttpError(403, `Sin permiso para esta acción (${capability})`)
   }

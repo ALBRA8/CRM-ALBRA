@@ -17,7 +17,7 @@ async function getClientOr404(orgId: string, id: string) {
 /** GET /api/clients/:id — detalle del cliente con atributos extendidos. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await getClientOr404(auth.orgId, id)
     const attrsMap = await loadClientAttrs(auth.orgId, [client.id])
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 /** PUT /api/clients/:id — actualización parcial (inline edit del detalle). */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     await getClientOr404(auth.orgId, id)
     const body = await readBody(req)
@@ -68,7 +68,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/clients/:id — elimina el cliente y sus datos en cascada. */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await getClientOr404(auth.orgId, id)
 

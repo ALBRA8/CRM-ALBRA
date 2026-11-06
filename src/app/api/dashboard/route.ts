@@ -12,7 +12,7 @@ import { parseResMeta } from '../_lib/reservations'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const orgId = auth.orgId
     const now = new Date()
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)

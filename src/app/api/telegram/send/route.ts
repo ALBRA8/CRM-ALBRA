@@ -10,7 +10,7 @@ import { recordTimelineEvent } from '@/lib/timeline'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as { chatId?: string | number; text?: string; clientId?: string }
     requireFields(body as unknown as Record<string, unknown>, ['chatId', 'text'])
 

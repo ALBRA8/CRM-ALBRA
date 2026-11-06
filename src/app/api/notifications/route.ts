@@ -7,7 +7,7 @@ import { handle, json, readBody, str, qparam } from '../_lib/shared'
 /** GET /api/notifications — últimas 50 + contador de no leídas. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const limit = Math.min(parseInt(qparam(req, 'limit') ?? '50', 10) || 50, 200)
     const [notifications, unread] = await Promise.all([
       db.notification.findMany({
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/notifications — crea una notificación interna. */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     if (!str(body.title)) {
       return json({ error: 'El título es requerido' }, { status: 400 })

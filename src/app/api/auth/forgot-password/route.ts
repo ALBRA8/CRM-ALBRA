@@ -3,7 +3,7 @@ import { randomBytes, createHash } from 'crypto'
 import { db } from '@/lib/db'
 import { handle, json, readBody, requireFields, str } from '../../_lib/shared'
 import { HttpError } from '@/lib/auth'
-import { rateLimit, clientIp } from '@/lib/rate-limit'
+import { dbRateLimit, clientIp } from '@/lib/rate-limit'
 
 /**
  * POST /api/auth/forgot-password — genera resetToken con 1h de validez.
@@ -19,7 +19,8 @@ export async function POST(req: NextRequest) {
     const email = (str(body.email) as string).toLowerCase()
 
     const ip = clientIp(req)
-    if (!rateLimit(`forgot:${ip}:${email}`, 5, 3_600_000).ok) {
+    // (segunda reparación §2.C) límite PERSISTENTE en BD: 5 solicitudes/h por IP+cuenta.
+    if (!(await dbRateLimit(`forgot:${ip}:${email}`, 5, 3_600_000)).ok) {
       throw new HttpError(429, 'Demasiadas solicitudes. Inténtalo más tarde.')
     }
 

@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     await createStandardPipeline(org.id)
     await createOrgSettings(org.id)
 
-    const token = signToken({ userId: user.id, orgId: org.id, role: user.role, email: user.email })
+    const token = signToken({ userId: user.id, orgId: org.id, role: user.role, email: user.email, tv: user.tokenVersion })
     return jsonWithSession({
       token,
       user: { id: user.id, name: user.name, email: user.email, company: user.company, phone: user.phone, role: user.role, avatar: user.avatar },
