@@ -5,6 +5,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 import { handle, json, readBody, requireFields, str, dateOrNull, numOrNull, qparam } from '../_lib/shared'
 import { loadClientAttrs } from '../_lib/clients'
 import { buildOppMeta, oppAmountFrom, serializeOpportunity } from '../_lib/opportunities'
+import { stripForeignClients } from '../_lib/multitenant'
 
 /** GET /api/opportunities — listado con client y stage incluidos. */
 export async function GET(req: NextRequest) {
@@ -28,12 +29,14 @@ export async function GET(req: NextRequest) {
       take: limit,
       include: {
         stage: true,
-        client: { select: { id: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
+        client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
       },
     })
 
-    const attrsMap = await loadClientAttrs(auth.orgId, opportunities.map((o) => o.client?.id).filter((x): x is string => Boolean(x)))
-    return json({ opportunities: opportunities.map((o) => serializeOpportunity(o, o.client ? attrsMap.get(o.client.id) : undefined)) })
+    // CUARTA FASE: referencias históricas inconsistentes no filtran PII de otra org
+    const safeOpportunities = stripForeignClients(opportunities, auth.orgId)
+    const attrsMap = await loadClientAttrs(auth.orgId, safeOpportunities.map((o) => o.client?.id).filter((x): x is string => Boolean(x)))
+    return json({ opportunities: safeOpportunities.map((o) => serializeOpportunity(o, o.client ? attrsMap.get(o.client.id) : undefined)) })
   })
 }
 

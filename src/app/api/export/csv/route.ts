@@ -5,6 +5,7 @@ import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { buildCsv } from '@/lib/csv'
 import { auditAndTimeline } from '@/lib/api-helpers'
+import { stripForeignClients } from '../../_lib/multitenant'
 
 /**
  * GET /api/export/csv?type=clients|services|quotes|transactions — CSV con BOM UTF-8.
@@ -36,11 +37,13 @@ export async function GET(req: NextRequest) {
       const quotes = await db.quote.findMany({
         where: { organizationId: orgId },
         orderBy: { createdAt: 'desc' },
-        include: { client: { select: { name: true } } },
+        include: { client: { select: { organizationId: true, name: true } } },
       })
+      // CUARTA FASE: referencias históricas inconsistentes no exportan PII de otra org
+      const safeQuotes = stripForeignClients(quotes, orgId)
       csv = buildCsv(
         ['number', 'client', 'status', 'subtotal', 'tax', 'total', 'currency', 'createdAt'],
-        quotes.map((q) => [q.number, q.client?.name || '', q.status, q.subtotal, q.tax, q.total, q.currency, q.createdAt.toISOString()])
+        safeQuotes.map((q) => [q.number, q.client?.name || '', q.status, q.subtotal, q.tax, q.total, q.currency, q.createdAt.toISOString()])
       )
     } else if (type === 'transactions') {
       // Caso faltante (auditoría Antigravity, importante #1): el botón Exportar CSV
@@ -48,11 +51,13 @@ export async function GET(req: NextRequest) {
       const txs = await db.transaction.findMany({
         where: { organizationId: orgId },
         orderBy: { date: 'desc' },
-        include: { client: { select: { name: true } } },
+        include: { client: { select: { organizationId: true, name: true } } },
       })
+      // CUARTA FASE: referencias históricas inconsistentes no exportan PII de otra org
+      const safeTxs = stripForeignClients(txs, orgId)
       csv = buildCsv(
         ['date', 'type', 'amount', 'currency', 'category', 'description', 'method', 'client', 'createdAt'],
-        txs.map((t) => [t.date.toISOString().split('T')[0], t.type, t.amount, t.currency, t.category || '', t.description || '', t.method || '', t.client?.name || '', t.createdAt.toISOString()])
+        safeTxs.map((t) => [t.date.toISOString().split('T')[0], t.type, t.amount, t.currency, t.category || '', t.description || '', t.method || '', t.client?.name || '', t.createdAt.toISOString()])
       )
     } else {
       return json({ error: 'type debe ser clients | services | quotes | transactions' }, { status: 400 })

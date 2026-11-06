@@ -5,6 +5,7 @@ import { auditAndTimeline, parseIntParam } from '@/lib/api-helpers'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { handle, json, readBody, requireFields, str, dateOrNull, numOrNull, qparam } from '../_lib/shared'
 import { buildResMeta, serializeReservation } from '../_lib/reservations'
+import { stripForeignClients } from '../_lib/multitenant'
 
 /** GET /api/reservations — filtros: upcoming, clientId, startDate, endDate, status. */
 export async function GET(req: NextRequest) {
@@ -35,10 +36,11 @@ export async function GET(req: NextRequest) {
       where,
       orderBy: { startsAt: upcoming || startDate ? 'asc' : 'desc' },
       take: limit,
-      include: { client: { select: { id: true, name: true, email: true, phone: true, address: true } } },
+      include: { client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, address: true } } },
     })
 
-    return json({ reservations: reservations.map(serializeReservation) })
+    // CUARTA FASE: referencias históricas inconsistentes no filtran PII de otra org
+    return json({ reservations: stripForeignClients(reservations, auth.orgId).map(serializeReservation) })
   })
 }
 

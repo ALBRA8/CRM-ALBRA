@@ -7,6 +7,7 @@ import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { handle, json, readBody, str, dateOrNull, numOrNull, clamp } from '../../_lib/shared'
 import { loadClientAttrs } from '../../_lib/clients'
 import { computeQuoteTotals, itemsFromBody, quoteItemRows, quoteDiscountAmount, serializeQuote } from '../../_lib/quotes'
+import { stripForeignClient } from '../../_lib/multitenant'
 
 const QUOTE_STATUS_LABELS: Record<string, string> = {
   draft: 'Borrador',
@@ -24,15 +25,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const quote = await db.quote.findFirst({
       where: { id, organizationId: auth.orgId },
       include: {
-        client: { select: { id: true, name: true, email: true, phone: true, address: true } },
+        client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, address: true } },
         opportunity: { select: { id: true, title: true } },
         items: { orderBy: { position: 'asc' } },
       },
     })
     if (!quote) throw new HttpError(404, 'Cotización no encontrada')
 
-    const attrs = quote.client ? (await loadClientAttrs(auth.orgId, [quote.client.id])).get(quote.client.id) : undefined
-    return json({ quote: serializeQuote(quote, { clientAttrs: attrs }) })
+    // CUARTA FASE: referencias históricas inconsistentes no filtran PII de otra org
+    const safeQuote = stripForeignClient(quote, auth.orgId)
+    const attrs = safeQuote.client ? (await loadClientAttrs(auth.orgId, [safeQuote.client.id])).get(safeQuote.client.id) : undefined
+    return json({ quote: serializeQuote(safeQuote, { clientAttrs: attrs }) })
   })
 }
 
@@ -112,7 +115,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         where: { id },
         data,
         include: {
-          client: { select: { id: true, name: true, email: true, phone: true, address: true } },
+          client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, address: true } },
           opportunity: { select: { id: true, title: true } },
           items: { orderBy: { position: 'asc' } },
         },
@@ -189,8 +192,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       })
     }
 
-    const attrs = updated.client ? (await loadClientAttrs(auth.orgId, [updated.client.id])).get(updated.client.id) : undefined
-    return json({ quote: serializeQuote(updated, { clientAttrs: attrs }) })
+    // CUARTA FASE: la respuesta usa el cliente saneado (referencias históricas inconsistentes)
+    const safeUpdated = stripForeignClient(updated, auth.orgId)
+    const attrs = safeUpdated.client ? (await loadClientAttrs(auth.orgId, [safeUpdated.client.id])).get(safeUpdated.client.id) : undefined
+    return json({ quote: serializeQuote(safeUpdated, { clientAttrs: attrs }) })
   })
 }
 

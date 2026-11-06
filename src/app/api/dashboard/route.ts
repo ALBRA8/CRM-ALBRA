@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth'
 import { handle, json, monthKey, monthLabel } from '../_lib/shared'
 import { loadClientAttrs } from '../_lib/clients'
+import { stripForeignClients } from '../_lib/multitenant'
 import { parseOppMeta } from '../_lib/opportunities'
 import { parseResMeta } from '../_lib/reservations'
 
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
         where: { organizationId: orgId },
         include: {
           stage: true,
-          client: { select: { id: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
+          client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
         },
       }),
       db.opportunity.count({ where: { organizationId: orgId, status: 'won' } }),
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
         where: { organizationId: orgId, startsAt: { gte: now, lte: in7Days }, status: { not: 'cancelled' } },
         orderBy: { startsAt: 'asc' },
         take: 8,
-        include: { client: { select: { id: true, name: true } } },
+        include: { client: { select: { id: true, organizationId: true, name: true } } },
       }),
       db.timelineEvent.findMany({
         where: { organizationId: orgId },

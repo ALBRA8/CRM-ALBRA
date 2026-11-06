@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requireAuth, HttpError } from '@/lib/auth'
 import { handle } from '../../_lib/shared'
 import { quoteDiscountAmount } from '../../_lib/quotes'
+import { stripForeignClient } from '../../_lib/multitenant'
 import { buildQuotePdf } from '../../_lib/pdf'
 
 /**
@@ -19,15 +20,17 @@ export async function GET(req: NextRequest) {
     const id = req.nextUrl.searchParams.get('id')
     if (!id) throw new HttpError(400, 'Falta el parámetro id')
 
-    const quote = await db.quote.findFirst({
+    const quoteRaw = await db.quote.findFirst({
       where: { id, organizationId: auth.orgId },
       include: {
         items: { orderBy: { position: 'asc' } },
-        client: { select: { name: true, email: true, phone: true, address: true } },
+        client: { select: { organizationId: true, name: true, email: true, phone: true, address: true } },
         opportunity: { select: { title: true } },
       },
     })
-    if (!quote) throw new HttpError(404, 'Cotización no encontrada')
+    if (!quoteRaw) throw new HttpError(404, 'Cotización no encontrada')
+    // CUARTA FASE: referencias históricas inconsistentes no filtran PII de otra org al PDF
+    const quote = stripForeignClient(quoteRaw, auth.orgId)
 
     const org = await db.organization.findUnique({
       where: { id: auth.orgId },

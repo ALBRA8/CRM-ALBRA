@@ -7,6 +7,7 @@ import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { handle, json, readBody, str, numOrNull } from '../../_lib/shared'
 import { notifyWhatspowerStageChange } from '@/lib/whatspower-bridge'
 import { loadClientAttrs } from '../../_lib/clients'
+import { stripForeignClient } from '../../_lib/multitenant'
 import { buildOppMeta, oppAmountFrom, parseOppMeta, serializeOpportunity } from '../../_lib/opportunities'
 
 /** GET /api/opportunities/:id */
@@ -18,13 +19,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       where: { id, organizationId: auth.orgId },
       include: {
         stage: true,
-        client: { select: { id: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
+        client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
       },
     })
     if (!opp) throw new HttpError(404, 'Oportunidad no encontrada')
 
-    const attrs = opp.client ? (await loadClientAttrs(auth.orgId, [opp.client.id])).get(opp.client.id) : undefined
-    return json({ opportunity: serializeOpportunity(opp, attrs) })
+    // CUARTA FASE: referencias históricas inconsistentes no filtran PII de otra org
+    const safeOpp = stripForeignClient(opp, auth.orgId)
+    const attrs = safeOpp.client ? (await loadClientAttrs(auth.orgId, [safeOpp.client.id])).get(safeOpp.client.id) : undefined
+    return json({ opportunity: serializeOpportunity(safeOpp, attrs) })
   })
 }
 

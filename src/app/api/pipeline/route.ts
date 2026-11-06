@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth'
 import { handle, json } from '../_lib/shared'
 import { loadClientAttrs } from '../_lib/clients'
+import { stripForeignClients } from '../_lib/multitenant'
 import { serializeOpportunity } from '../_lib/opportunities'
 
 /**
@@ -20,12 +21,14 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: 'desc' },
         include: {
           stage: true,
-          client: { select: { id: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
+          client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
         },
       }),
     ])
 
-    const clientIds = opportunities.map((o) => o.client?.id).filter((x): x is string => Boolean(x))
+    // CUARTA FASE: referencias históricas inconsistentes no filtran PII de otra org
+    const safeOpportunities = stripForeignClients(opportunities, auth.orgId)
+    const clientIds = safeOpportunities.map((o) => o.client?.id).filter((x): x is string => Boolean(x))
     const attrsMap = await loadClientAttrs(auth.orgId, clientIds)
 
     const serialized = opportunities.map((o) => {

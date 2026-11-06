@@ -4,6 +4,7 @@ import { requireAuth, HttpError } from '@/lib/auth'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { handle, json, readBody, str, dateOrNull, numOrNull } from '../../_lib/shared'
 import { buildResMeta, parseResMeta, serializeReservation } from '../../_lib/reservations'
+import { stripForeignClient } from '../../_lib/multitenant'
 
 /** PUT /api/reservations/:id — actualización parcial (estado, fecha, duración, etc.). */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -45,7 +46,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const updated = await db.reservation.update({
       where: { id },
       data,
-      include: { client: { select: { id: true, name: true, email: true, phone: true, address: true } } },
+      include: { client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, address: true } } },
     })
 
     await auditAndTimeline({
@@ -62,7 +63,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         : {}),
     })
 
-    return json({ reservation: serializeReservation(updated) })
+    return json({ reservation: serializeReservation(stripForeignClient(updated, auth.orgId)) })
   })
 }
 
@@ -77,7 +78,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const updated = await db.reservation.update({
       where: { id },
       data: { status: 'cancelled' },
-      include: { client: { select: { id: true, name: true, email: true, phone: true, address: true } } },
+      include: { client: { select: { id: true, organizationId: true, name: true, email: true, phone: true, address: true } } },
     })
     await auditAndTimeline({
       orgId: auth.orgId,
@@ -88,6 +89,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       details: { name: existing.title, cancelled: true },
       clientId: updated.clientId,
     })
-    return json({ success: true, reservation: serializeReservation(updated) })
+    return json({ success: true, reservation: serializeReservation(stripForeignClient(updated, auth.orgId)) })
   })
 }
