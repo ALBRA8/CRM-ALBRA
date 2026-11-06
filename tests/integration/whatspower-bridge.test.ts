@@ -93,10 +93,10 @@ describe('whatspower-bridge: contrato inbound (HMAC)', () => {
     expect(body.contact.name).toBe('E2E WhatsPower CRM 2026')
     expect(body.message.text).toBe('Quiero información del plan')
 
-    // Firma HMAC verificable con el mismo algoritmo del receptor (WhatsPower verifyHmac)
-    const expected = createHmac('sha256', SECRET).update(captured!.raw, 'utf8').digest('hex')
+    // Firma HMAC verificable con el mismo algoritmo v2 del receptor (WhatsPower checkWebhookSecurity)
+    const expected = createHmac('sha256', SECRET).update(`${captured!.ts}.${captured!.raw}`, 'utf8').digest('hex')
     expect(captured!.sig).toBe(expected)
-    expect(signWhatspowerPayload(captured!.raw, SECRET)).toBe(expected)
+    expect(signWhatspowerPayload(String(captured!.ts), captured!.raw, SECRET)).toBe(expected)
 
     // Timestamp anti-replay dentro de la ventana de 300s
     const ts = Number(captured!.ts)

@@ -1,8 +1,11 @@
 import type { NextRequest } from 'next/server'
+import { createHash } from 'crypto'
 import { db } from '@/lib/db'
 import { hashPassword, HttpError } from '@/lib/auth'
 import { handle, json, readBody, requireFields, str } from '../../_lib/shared'
 import { auditAndTimeline } from '@/lib/api-helpers'
+import { invalidateSessions } from '@/lib/session-invalidation'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
 
 /** POST /api/auth/reset-password — valida token+exp y actualiza la contraseña. */
 export async function POST(req: NextRequest) {
@@ -13,7 +16,14 @@ export async function POST(req: NextRequest) {
     const password = str(body.password) as string
     if (password.length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres')
 
-    const user = await db.user.findFirst({ where: { resetToken: token } })
+    // Anti abuso del endpoint (reparación integral): 10 intentos/h por IP.
+    if (!rateLimit(`reset:${clientIp(req)}`, 10, 3_600_000).ok) {
+      throw new HttpError(429, 'Demasiados intentos. Inténtalo más tarde.')
+    }
+
+    // El token se compara por SHA-256 (nunca se almacena en claro).
+    const tokenHash = createHash('sha256').update(token).digest('hex')
+    const user = await db.user.findFirst({ where: { resetToken: tokenHash } })
     if (!user || !user.resetTokenExp || user.resetTokenExp.getTime() < Date.now()) {
       throw new HttpError(400, 'Token inválido o expirado')
     }
@@ -22,6 +32,8 @@ export async function POST(req: NextRequest) {
       where: { id: user.id },
       data: { passwordHash: hashPassword(password), resetToken: null, resetTokenExp: null },
     })
+    // Revoca sesiones activas emitidas antes de este momento (reparación integral).
+    invalidateSessions(user.id)
     await auditAndTimeline({ orgId: user.organizationId, userId: user.id, action: 'updated', entity: 'user', entityId: user.id, details: { name: user.name, field: 'password' } })
 
     return json({ message: 'Contraseña actualizada correctamente' })

@@ -1,6 +1,8 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { NextRequest } from 'next/server'
 import { can } from './rbac'
+import { redeemDownloadTicket } from './download-tickets'
+import { isSessionInvalidated } from './session-invalidation'
 
 /**
  * Autenticación JWT sin dependencias externas (HMAC-SHA256 firmado con APP_SECRET)
@@ -27,6 +29,8 @@ export interface SessionPayload {
   orgId: string
   role: string
   email: string
+  /** Epoch ms de emisión (para invalidación tras cambio de contraseña). */
+  iat?: number
   exp: number
 }
 
@@ -58,7 +62,7 @@ function b64url(input: Buffer | string): string {
 
 export function signToken(payload: Omit<SessionPayload, 'exp'>, days = 7): string {
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-  const body: SessionPayload = { ...payload, exp: Date.now() + days * 86400_000 }
+  const body: SessionPayload = { ...payload, iat: Date.now(), exp: Date.now() + days * 86400_000 }
   const claims = b64url(JSON.stringify(body))
   const sig = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
   return `${header}.${claims}.${sig}`
@@ -97,27 +101,37 @@ export const SESSION_COOKIE = 'albra_session'
 export function getAuth(req: NextRequest): AuthContext | null {
   const header = req.headers.get('authorization') || ''
   // Prioridad: 1) Bearer (pestaña activa, evita conflictos multi-cuenta),
-  // 2) cookie httpOnly (persistencia tras F5 sin token en localStorage),
-  // 3) ?token= (descargas directas CSV/PDF/backup).
+  // 2) cookie httpOnly (persistencia tras F5 sin token en localStorage).
+  // (reparación integral 2026-11-06) El JWT YA NO se acepta en la URL (?token=):
+  // las descargas directas usan tickets de un solo uso (?ticket=, ver
+  // download-tickets.ts y POST /api/download-ticket). Un JWT en URL queda
+  // registrado en proxies/historial y se reenvía por Referer.
   let token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) token = req.cookies.get(SESSION_COOKIE)?.value ?? null
-  if (!token) {
-    // endpoints de descarga (csv/backup/pdf) admiten ?token=
+  let ctx: AuthContext | null = null
+  if (token) {
+    const session = verifyToken(token)
+    if (session) {
+      ctx = {
+        userId: session.userId,
+        orgId: session.orgId,
+        role: session.role,
+        email: session.email,
+        // superadmin es administrador también DENTRO de su organización
+        // (superconjunto de owner), además de su rol de plataforma.
+        isAdmin: session.role === 'owner' || session.role === 'admin' || session.role === 'superadmin',
+      }
+      // Revocación tras cambio de contraseña: tokens emitidos antes del cutoff se rechazan.
+      if (session.iat !== undefined && isSessionInvalidated(session.userId, session.iat)) return null
+    }
+  }
+  if (!ctx) {
+    // Descargas directas: ticket de un solo uso (60 s) canjeable por contexto.
     const url = new URL(req.url)
-    token = url.searchParams.get('token')
+    const ticket = url.searchParams.get('ticket')
+    if (ticket) ctx = redeemDownloadTicket(ticket)
   }
-  if (!token) return null
-  const session = verifyToken(token)
-  if (!session) return null
-  return {
-    userId: session.userId,
-    orgId: session.orgId,
-    role: session.role,
-    email: session.email,
-    // superadmin es administrador también DENTRO de su organización
-    // (superconjunto de owner), además de su rol de plataforma.
-    isAdmin: session.role === 'owner' || session.role === 'admin' || session.role === 'superadmin',
-  }
+  return ctx
 }
 
 export class HttpError extends Error {

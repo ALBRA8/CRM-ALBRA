@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { verifyPassword, signToken, HttpError } from '@/lib/auth'
 import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { auditAndTimeline } from '@/lib/api-helpers'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
 
 /** POST /api/auth/login — verifica credenciales y devuelve { token, user }. */
 export async function POST(req: NextRequest) {
@@ -12,6 +13,15 @@ export async function POST(req: NextRequest) {
 
     const email = (str(body.email) as string).toLowerCase()
     const password = str(body.password) as string
+
+    // Anti fuerza bruta (reparación integral 2026-11-06): ventana deslizante
+    // por IP+cuenta (10/min) y por IP (30/min). Sin revelar cuál de las dos falló.
+    const ip = clientIp(req)
+    const perAccount = rateLimit(`login:acct:${ip}:${email}`, 10, 60_000)
+    const perIp = rateLimit(`login:ip:${ip}`, 30, 60_000)
+    if (!perAccount.ok || !perIp.ok) {
+      throw new HttpError(429, 'Demasiados intentos de inicio de sesión. Inténtalo más tarde.')
+    }
 
     const user = await db.user.findUnique({ where: { email } })
     if (!user || !verifyPassword(password, user.passwordHash)) {

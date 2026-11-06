@@ -53,9 +53,13 @@ function sharedSecret(): string | null {
   return s && s.trim() ? s.trim() : null
 }
 
-/** Firma del mismo formato que WHATSPOWER verifica en /api/inbound (hex puro, sin prefijo). */
-export function signWhatspowerPayload(rawBody: string, secret: string): string {
-  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
+/**
+ * Firma v2 (reparación integral 2026-11-06): el timestamp queda LIGADO a la
+ * firma. Canonical: `${timestamp}.${rawBody}` — igual formato que WHATSPOWER
+ * verifica en /api/inbound con checkWebhookSecurity v2 (hex puro, sin prefijo).
+ */
+export function signWhatspowerPayload(timestamp: string | number, rawBody: string, secret: string): string {
+  return createHmac('sha256', secret).update(`${String(timestamp)}.${rawBody}`, 'utf8').digest('hex')
 }
 
 export interface WhatspowerInboundInput {
@@ -105,7 +109,8 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
     message: { text: input.text },
   }
   const rawBody = JSON.stringify(payload)
-  const signature = signWhatspowerPayload(rawBody, secret)
+  const ts = String(Date.now())
+  const signature = signWhatspowerPayload(ts, rawBody, secret)
 
   try {
     const res = await fetch(inboundUrl(), {
@@ -113,7 +118,7 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
       headers: {
         'Content-Type': 'application/json',
         'X-Signature-SHA256': signature,
-        'X-Timestamp': String(Date.now()),
+        'X-Timestamp': ts,
       },
       body: rawBody,
       signal: AbortSignal.timeout(INBOUND_TIMEOUT_MS),

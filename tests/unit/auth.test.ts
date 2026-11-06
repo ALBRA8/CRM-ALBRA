@@ -12,6 +12,7 @@ import {
   HttpError,
   type SessionPayload,
 } from '@/lib/auth'
+import { issueDownloadTicket } from '@/lib/download-tickets'
 
 /**
  * Tests unitarios de src/lib/auth.ts (JWT propio HMAC-SHA256 + scrypt + guardas).
@@ -24,8 +25,9 @@ function payload(): Omit<SessionPayload, 'exp'> {
   return { userId: 'u-1', orgId: 'org-1', role: 'owner', email: 'u1@test.albra' }
 }
 
-function requestWithAuth(init: { authorization?: string; token?: string } = {}): NextRequest {
-  const url = new URL(init.token ? `${BASE_URL}?token=${encodeURIComponent(init.token)}` : BASE_URL)
+function requestWithAuth(init: { authorization?: string; token?: string; ticket?: string } = {}): NextRequest {
+  const qs = init.token ? `?token=${encodeURIComponent(init.token)}` : init.ticket ? `?ticket=${encodeURIComponent(init.ticket)}` : ''
+  const url = new URL(`${BASE_URL}${qs}`)
   const headers = new Headers()
   if (init.authorization) headers.set('authorization', init.authorization)
   return new NextRequest(url, { headers })
@@ -124,9 +126,21 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     expect(res?.isAdmin).toBe(true) // role owner
   })
 
-  it('getAuth admite ?token= (descargas CSV/PDF/backup)', () => {
+  it('getAuth RECHAZA ?token= (JWT en URL eliminado en reparación integral)', () => {
     const res = getAuth(requestWithAuth({ token: signToken(payload()) }))
-    expect(res?.userId).toBe('u-1')
+    expect(res).toBeNull()
+  })
+
+  it('getAuth acepta ?ticket= de un solo uso y lo consume (descargas seguras)', () => {
+    const token = signToken(payload())
+    const ctx = getAuth(requestWithAuth({ authorization: `Bearer ${token}` }))
+    expect(ctx).not.toBeNull()
+    const issued = issueDownloadTicket(ctx!)
+    const viaTicket = getAuth(requestWithAuth({ ticket: issued.ticket }))
+    expect(viaTicket?.userId).toBe('u-1')
+    // El ticket se consumió: no sirve para una segunda petición
+    const again = getAuth(requestWithAuth({ token: issued.ticket }))
+    expect(again).toBeNull()
   })
 
   it('getAuth devuelve null sin token, con basura o con token firmado por otro secreto', () => {
