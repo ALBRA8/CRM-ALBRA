@@ -8,7 +8,7 @@ import { createHmac, randomUUID } from 'crypto'
  * 1. Inbound Bridge — CRM reenvía mensajes entrantes de WhatsApp a
  *    `POST {WHATSPOWER}/api/inbound` con firma HMAC-SHA256:
  *      header X-Signature-SHA256: <hex hmac-sha256(rawBody, secret)>
- *      header X-Timestamp: <epoch ms> (ventana anti-replay 300s en WhatsPower)
+ *      header X-Timestamp: <epoch ms> — LIGADO a la firma (canonical `${ts}.${body}`, v2)
  *      body: { eventId, orgId, contact: { phone, name? }, message: { text } }
  *    WHATSPOWER valida la firma con su AGENTIC_2A_WEBHOOK_SECRET/WEBHOOK_SECRET.
  *
@@ -84,7 +84,7 @@ export interface WhatspowerStageChangeInput {
 
 interface WhatspowerBridgeResult {
   sent: boolean
-  skipped: 'disabled' | 'no_secret' | 'inbound_error'
+  skipped: 'disabled' | 'no_secret' | 'no_config' | 'inbound_error'
   status?: number
   error?: string
 }
@@ -154,10 +154,19 @@ export async function notifyWhatspowerStageChange(input: WhatspowerStageChangeIn
   }
   const rawBody = JSON.stringify(payload)
 
+  // (reparación integral) /api/crm/stage-change es administrativa en WHATSPOWER:
+  // exige Bearer INTERNAL_API_SECRET. Sin el header la llamada moría en 401 y los
+  // CRM Stage Triggers nunca disparaban (fallo silencioso fire-and-forget).
+  const internalSecret = process.env.WHATSPOWER_INTERNAL_API_SECRET || process.env.WHATSPOWER_WEBHOOK_SECRET || ''
+  if (!internalSecret) {
+    console.warn('[whatspower-bridge] stage-change omitido: falta WHATSPOWER_INTERNAL_API_SECRET')
+    return { sent: false, skipped: 'no_config', status: 0 }
+  }
+
   try {
     const res = await fetch(stageUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${internalSecret}` },
       body: rawBody,
       signal: AbortSignal.timeout(STAGE_TIMEOUT_MS),
     })

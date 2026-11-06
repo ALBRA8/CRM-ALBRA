@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { requireAdmin, HttpError } from '@/lib/auth'
+import { invalidateSessions } from '@/lib/session-invalidation'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { handle, json, readBody, str } from '../../_lib/shared'
 
@@ -35,6 +36,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     if ('isActive' in body && member.role !== 'owner') {
       data.isActive = body.isActive === true || body.isActive === 'true'
+      // (reparación integral) desactivar/activar revoca sesiones vigentes: los JWT
+      // emitidos antes de este momento dejan de aceptarse (cutoff iat).
+      invalidateSessions(member.id)
     }
 
     const updated = await db.user.update({
@@ -71,6 +75,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     if (member.id === auth.userId) throw new HttpError(400, 'No puedes desactivarte a ti mismo')
 
     await db.user.update({ where: { id }, data: { isActive: false } })
+    // (reparación integral) el cesado pierde acceso inmediato a la API
+    invalidateSessions(id)
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,

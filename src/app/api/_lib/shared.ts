@@ -122,9 +122,17 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
     if (err instanceof HttpErrorLike || (typeof status === 'number' && typeof message === 'string')) {
       return NextResponse.json({ error: message }, { status: typeof status === 'number' ? status : 500 })
     }
-    const fallback = err instanceof Error ? err.message : 'Error interno del servidor'
+    // (reparación integral) Mapeo de errores conocidos de Prisma: la fuga cruda del
+    // mensaje exponía índices/SQL al cliente y devolvía 500 para errores de negocio.
+    const prismaCode = (err as { code?: unknown })?.code
+    if (prismaCode === 'P2002') {
+      return NextResponse.json({ error: 'El valor ya existe (restricción de unicidad)' }, { status: 409 })
+    }
+    if (prismaCode === 'P2025') {
+      return NextResponse.json({ error: 'Recurso no encontrado' }, { status: 404 })
+    }
     console.error('[api]', err)
-    return NextResponse.json({ error: fallback }, { status: 500 })
+    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
   }
 }
 

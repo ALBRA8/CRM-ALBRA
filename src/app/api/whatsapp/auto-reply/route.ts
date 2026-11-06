@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { llmChat } from '@/lib/ai'
 import { isAgentBridgeEnabled, executeAgentQuery } from '@/lib/albra-agent-bridge'
 import { recordTimelineEvent } from '@/lib/timeline'
-import { buildNichoContext } from '@/lib/integrations'
+import { safeEquals, buildNichoContext } from '@/lib/integrations'
 import { buildKnowledgeContext } from '@/lib/knowledge'
 import { recallContext, recallStyleLessons, rememberMessage, maybeConsolidate } from '@/lib/memory'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     // 1) Canal interno server-to-server: fail-closed sin secreto configurado.
     const internalSecret = process.env.INTERNAL_API_SECRET
     const provided = req.headers.get('x-internal-secret') || ''
-    if (!internalSecret || !provided || provided !== internalSecret) {
+    if (!safeEquals(provided, internalSecret)) {
       return json({ error: 'Canal interno no autorizado' }, { status: 401 })
     }
 

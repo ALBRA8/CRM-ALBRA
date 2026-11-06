@@ -51,7 +51,7 @@ describe('auth guard — GET /api/clients', () => {
     // Flujo nuevo: emitir ticket autenticado y usarlo en la descarga
     const ticketRes = await downloadTicketPOST(req('/api/download-ticket', { method: 'POST', token: tokenA() }))
     expect(ticketRes.status).toBe(200)
-    const { ticket } = await jsonBody(ticketRes)
+    const { ticket } = (await jsonBody(ticketRes)) as { ticket: string }
     const res = await clientsGET(req(`/api/clients?ticket=${encodeURIComponent(ticket)}`))
     expect(res.status).toBe(200)
     // Segunda descarga con el mismo ticket → 401 (consumido)
