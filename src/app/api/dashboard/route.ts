@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth'
 import { handle, json, monthKey, monthLabel } from '../_lib/shared'
-import { loadClientAttrs } from '../_lib/clients'
+import { loadClientAttrs, stripForeignClients } from '../_lib/clients'
 import { parseOppMeta } from '../_lib/opportunities'
 import { parseResMeta } from '../_lib/reservations'
 
@@ -57,6 +57,13 @@ export async function GET(req: NextRequest) {
         take: 10,
       }),
     ])
+
+    // ---- B1: aislamiento de referencias históricas cross-org
+    // Relaciones creadas antes del endurecido multi-tenant pueden apuntar a un
+    // cliente de OTRA organización (FK por id). Antes de serializar se
+    // neutraliza toda referencia cuyo cliente no pertenezca a esta org: sin
+    // esto, el include de Prisma expondría nombre/email/teléfono ajenos.
+    await stripForeignClients(orgId, [...opportunities, ...upcomingReservations, ...timelineEvents])
 
     // ---- Clientes por estado
     const countByStatus = new Map(statusCounts.map((s) => [s.status, s._count]))

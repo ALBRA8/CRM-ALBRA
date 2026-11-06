@@ -106,6 +106,42 @@ export async function loadClientAttrs(orgId: string, clientIds: string[]): Promi
   return result
 }
 
+/**
+ * B1 — Aislamiento de referencias históricas cross-org en respuestas agregadas.
+ *
+ * Relaciones creadas antes del endurecido multi-tenant pueden apuntar (por FK
+ * de id) a un cliente de OTRA organización: el include de Prisma sigue la FK
+ * y serializaría nombre/email/teléfono ajenos. Esta función valida cada
+ * referencia de la carga contra la allowlist de la org (UNA query
+ * `id IN (...) AND organizationId = org`) y neutraliza las foráneas ANTES de
+ * serializar: `clientId → null` y `client → null` (si la fila trae el include).
+ *
+ * Devuelve cuántas referencias foráneas fueron neutralizadas (0 = nada que
+ * limpiar). El dato de la propia org (la fila oportunidad/reserva/evento) no
+ * se toca: solo la REFERENCIA al cliente ajeno.
+ */
+export async function stripForeignClients(
+  orgId: string,
+  refs: Array<{ clientId: string | null; client?: unknown }>
+): Promise<number> {
+  const ids = Array.from(new Set(refs.map((r) => r.clientId).filter((x): x is string => Boolean(x))))
+  if (ids.length === 0) return 0
+  const own = await db.client.findMany({
+    where: { id: { in: ids }, organizationId: orgId },
+    select: { id: true },
+  })
+  const allowed = new Set(own.map((c) => c.id))
+  let stripped = 0
+  for (const ref of refs) {
+    if (ref.clientId && !allowed.has(ref.clientId)) {
+      ref.clientId = null
+      if ('client' in ref) ref.client = null
+      stripped++
+    }
+  }
+  return stripped
+}
+
 /** Temperatura heurística basada en recencia de contacto (fallback si no está almacenada). */
 export function computeTemperature(lastContactAt: Date | null, createdAt: Date): string {
   const base = lastContactAt ?? createdAt
