@@ -73,3 +73,37 @@ El commit 658740b fue **localizado y verificado en ALBRA8/YOUTUBE-AUTOMATION** (
 
 ## Conclusión
 CRM multi-tenant con P0.1–P0.4 verificados directamente en código y con la suite completa en verde (464/464, tsc 0 errores, build OK, escáner de secretos limpio). El bloqueo de seguridad restante en ESTE repositorio es la exposición histórica de artefactos E2E en el historial git (valores muertos, verificados) que requiere purga con filter-repo y force-push autorizado por el propietario, y el baseline de lint preexistente.
+
+
+## Cierre de bloqueos B1–B4 — 2026-11-06
+
+**Alcance:** cambios correctivos publicados en ramas independientes de CRM-ALBRA, WHATSPOWER y WHATSPOWER-ULTRA. Esta anotación documenta el estado de las ramas correctivas; no afirma que estén desplegadas ni integradas en `main`.
+
+### Ramas y evidencia remota
+
+| Repositorio | Rama | Commit publicado | GitHub Actions |
+|---|---|---|---|
+| ALBRA8/CRM-ALBRA | `fix/b1-dashboard-org-isolation` | `f9e36f2f7dbe02f22809615910be1f5c8f3af7cf` | [Run 42314688847 — success](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/42314688847) |
+| ALBRA8/WHATSPOWER | `fix/b2-uncertain-b3-org-identity` | `618bcba95db95304ee2abf84f0458a76597393a0` | [Run 42314696590 — success](https://github.com/ALBRA8/WHATSPOWER/actions/runs/42314696590) |
+| ALBRA8/WHATSPOWER-ULTRA | `fix/b3-org-identity-b4-null-org` | `d6d0cc2dd28ad3c3dd86e7c73596a139add3264d` | [Run 42314700665 — success](https://github.com/ALBRA8/WHATSPOWER-ULTRA/actions/runs/42314700665) |
+
+Los heads de las tres ramas y los resultados de Actions se consultaron directamente en GitHub el 2026-11-06. Los enlaces corresponden a los SHA indicados.
+
+### Bloqueos tratados
+
+- **B1 — CRM:** el endpoint `src/app/api/dashboard/route.ts` invoca el saneamiento `stripForeignClients` antes de responder. Se reportó una prueba de regresión que reproduce una referencia histórica cruzada y comprueba que la PII del cliente ajeno no aparece. Resultado de suite/build comunicado por la ejecución: 504/504, TypeScript OK, lint ratchet OK y build OK.
+- **B2 — WHATSPOWER:** los resultados ambiguos de transporte (errores de red, timeout y 5xx) se encaminan a `UNCERTAIN` y requieren reconciliación; no deben habilitar reintentos ciegos. La idempotency key se transmite, pero no se certifica que el daemon externo la aplique. El modelo de entrega se mantiene como at-least-once; no se promete exactly-once. Suite comunicada: 137/137 y TypeScript OK.
+- **B3 — identidad entre servicios:** se añadieron credenciales vinculadas a organización y validación fail-closed en los caminos internos indicados; ULTRA envía identidad de organización y WHATSPOWER la valida. Se reportaron pruebas negativas de acceso cruzado. Suite comunicada para ULTRA: 76/76 en la fase de identidad.
+- **B4 — ULTRA:** el claim y el despacho comprueban que el ítem tenga organización verificable y coincidente con la campaña; filas sin identidad verificable se ponen en cuarentena. Suite comunicada tras integrar los tests B4: 85/85.
+
+### Nivel de verificación y límites
+
+- **Verificado directamente en esta sesión:** existencia de las tres ramas, SHA completos de sus heads, contenido remoto de los puntos de entrada principales y estado `success` de los tres runs de GitHub Actions asociados a esos SHA.
+- **Reportado por la ejecución correctiva, no repetido independientemente en esta sesión:** conteos detallados de suites, build local y pruebas específicas rojas/verdes.
+- **Integración entre servicios:** se comunicó un resultado 15/15. Antes de tratarlo como certificación independiente, revisar el artefacto reproducible y distinguir cada escenario ejecutado contra servicios reales de los escenarios con mocks.
+- **Riesgo externo abierto:** la aplicación efectiva de idempotencia en el daemon Baileys no quedó certificada por la evidencia consultada aquí. Mantener la protección UNCERTAIN/reconciliación y el modelo at-least-once.
+- **Estado de entrega:** cambios publicados en ramas correctivas; sin PR, merge ni despliegue. No se modificaron `main` ni `stable-production` como parte de esta anotación.
+
+### Siguiente paso
+
+Realizar una revisión final independiente de los diffs exactos y de los artefactos de prueba, priorizando la idempotencia efectiva del daemon y la clasificación real/mock de la integración. Si esa revisión no encuentra bloqueos, preparar los tres PR para revisión humana; abrirlos solo con autorización expresa. No desplegar ni activar envíos reales como parte de esa preparación.
