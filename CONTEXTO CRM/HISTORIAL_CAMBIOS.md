@@ -37,6 +37,10 @@ Se mencionaron previamente ramas saas-development y stable-production; confirmar
 - **P0.1–P0.4 verificados directamente** (commits en main; suites de aislamiento en verde). Suite completa 464/464 en 51 archivos (74s); tsc 0 errores; build OK; lint con baseline preexistente de 358 errores (0 en archivos de esta sesión).
 - Servicios :3000 y :3002 operativos durante toda la sesión, sin interrupciones.
 
+## 2026-11-06 — FUSIÓN de ramas de reparación (repair/integral + fix/b1)
+Ambas líneas de trabajo se conservan en el historial:
+
+### Línea repair/integral-20261106
 ## Reparación General Integral — 2026-11-06 (rama repair/integral-20261106, B1→B9)
 
 - **B1**: JWT restringido fuera de URLs — `?token=` SOLO en endpoints de descarga con opt-in (`DOWNLOAD_AUTH_OPTS`), download-tokens de 5 min (purpose='download') y `Referrer-Policy: no-referrer`. Antes el JWT de 7 días se aceptaba por query en TODAS las rutas.
@@ -50,3 +54,22 @@ Se mencionaron previamente ramas saas-development y stable-production; confirmar
 - **B9**: puente CRM→WHATSPOWER actualizado al contrato HMAC v2 (`timestamp.body` — mismo timestamp firmado y enviado) coordinado con 2A y 2B; `docs/INTEGRATION_CONTRACT.md` v1.1.0.
 - **Verificación**: suite local 501/506 (los 5 fallos restantes son del trabajo CONCURRENTE de terceros en archivos sin seguimiento — chat/agent WIP; en checkout limpio `harness-independence` pasa 4/4, verificado con worktree temporal). tsc limpio en el árbol versionado. `security:scan` y `security:scan:history` exit 0 (33 dummies en allowlist explícita; 78 hallazgos históricos en baseline con estado ROTACION-PENDIENTE).
 - **NOTA de concurrencia**: durante la ejecución, un agente de terceros operaba el mismo repositorio (WIP sin seguimiento de chat/agent y checkouts de rama). La reparación se preservó íntegra en `repair/integral-20261106` sin tocar su trabajo.
+
+### Línea fix/b1-dashboard-org-isolation (absorbida)
+## Bloqueos B1–B4 publicados — 2026-11-06
+
+- CRM-ALBRA: rama `fix/b1-dashboard-org-isolation`, commit `f9e36f2f7dbe02f22809615910be1f5c8f3af7cf`; saneamiento de clientes ajenos invocado en dashboard. CI [42314688847](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/42314688847): success.
+- WHATSPOWER: rama `fix/b2-uncertain-b3-org-identity`, commit `618bcba95db95304ee2abf84f0458a76597393a0`; transporte ambiguo a UNCERTAIN y credencial interna vinculada a organización. CI [42314696590](https://github.com/ALBRA8/WHATSPOWER/actions/runs/42314696590): success.
+- WHATSPOWER-ULTRA: rama `fix/b3-org-identity-b4-null-org`, commit `d6d0cc2dd28ad3c3dd86e7c73596a139add3264d`; identidad por organización y cuarentena/rechazo de ítems sin organización verificable. CI [42314700665](https://github.com/ALBRA8/WHATSPOWER-ULTRA/actions/runs/42314700665): success.
+- Los tres heads y runs se verificaron directamente en GitHub. Los conteos de tests/build e integración 15/15 son resultados comunicados por la ejecución correctiva y quedan etiquetados como tales hasta revisión independiente de sus artefactos.
+- Riesgo pendiente de confirmación: idempotencia realmente aplicada por el daemon Baileys; no se afirma exactly-once. Sin PR, merge ni despliegue; main y stable-production no se tocaron.
+- Próximo hito: revisión independiente final de diffs y evidencias; después preparar tres PR para revisión humana, sin abrirlos hasta autorización expresa.
+
+
+## Revisión independiente final — B2 sigue bloqueado (2026-11-06)
+
+- CRM B1 y ULTRA B4 revisados en código y pruebas; CI success en sus SHA de código.
+- WHATSPOWER B2 no queda cerrado: el daemon Baileys no consume ni persiste la clave de idempotencia que le transmite el transporte. El journal puede re-ejecutar un efecto PENDING tras expirar el lease; la reconciliación vuelve a ejecutar el pendiente. La prueba actual no simula aceptación externa seguida de pérdida de respuesta.
+- B3 tiene validación por organización en el servidor 2A y credenciales por org en ULTRA, pero no se acreditó una prueba entre procesos reales en esta rama.
+- `contracts-integration.test.ts` usa stubs para daemon y 2A; no es integración real de los tres servicios. No se certifica 15/15 real.
+- Próximo paso: corregir B2 en daemon + journal con deduplicación durable scoped por org y comportamiento no-reenvío para PENDING/UNCERTAIN; agregar crash-window test y luego ejecutar integración real multi-proceso. No abrir PR hasta cerrar el bloqueo.

@@ -11,7 +11,7 @@ import { recordTimelineEvent } from '@/lib/timeline'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as { to?: string; subject?: string; html?: string; clientId?: string }
     requireFields(body as unknown as Record<string, unknown>, ['to', 'subject'])
     const to = String(body.to).trim()

@@ -1,8 +1,8 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { NextRequest } from 'next/server'
 import { can } from './rbac'
-import { isSessionRevoked, scheduleRefreshSessionVersion } from './session-version'
-import { logSecurityEvent } from './security-log'
+import { redeemDownloadTicket } from './download-tickets'
+import { db } from './db'
 
 /**
  * Autenticación JWT sin dependencias externas (HMAC-SHA256 firmado con APP_SECRET)
@@ -29,11 +29,18 @@ export interface SessionPayload {
   orgId: string
   role: string
   email: string
+  /** Epoch ms de emisión (para invalidación tras cambio de contraseña). */
+  iat?: number
+  /**
+   * tokenVersion vigente al firmar el token (revocación PERSISTENTE, orden §2.A).
+   * La guarda async la coteja contra la BD en cada petición: si difiere, el
+   * token está revocado (reset de contraseña, desactivación, cambio de rol,
+   * logout global). Tokens previos sin `tv` se tratan como versión 0 — los
+   * usuarios nuevos arrancan en 0, así que la compatibilidad se conserva y la
+   * primera revocación los invalida también.
+   */
+  tv?: number
   exp: number
-  /** presence de token de descarga: SOLO válido en ?token= de endpoints de descarga */
-  purpose?: 'download'
-  /** B4: versión del usuario con la que se firmó el token (revocación de sesiones) */
-  tokenVersion?: number
 }
 
 // ---------- Contraseñas (scrypt) ----------
@@ -64,26 +71,7 @@ function b64url(input: Buffer | string): string {
 
 export function signToken(payload: Omit<SessionPayload, 'exp'>, days = 7): string {
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-  const body: SessionPayload = { ...payload, exp: Date.now() + days * 86400_000 }
-  const claims = b64url(JSON.stringify(body))
-  const sig = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
-  return `${header}.${claims}.${sig}`
-}
-
-/**
- * Token de DESCARGA de corta vida (reparación integral B1).
- *
- * Motivo: el JWT de sesión (7 días) no debe colarse en URLs (?token=) porque
- * queda en historial del navegador, logs de proxy y cabecera Referer. Para las
- * descargas directas (<a href>, window.open) se emite un token dedicado con
- * `purpose: 'download'` y expiración de 5 minutos; los endpoints de descarga
- * lo aceptan solo en `?token=` y NUNCA fuera de ellos.
- */
-export const DOWNLOAD_TOKEN_TTL_SECONDS = 300
-
-export function signDownloadToken(payload: Omit<SessionPayload, 'exp' | 'purpose'>, ttlSeconds = DOWNLOAD_TOKEN_TTL_SECONDS): string {
-  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-  const body: SessionPayload = { ...payload, purpose: 'download', exp: Date.now() + ttlSeconds * 1000 }
+  const body: SessionPayload = { ...payload, iat: Date.now(), exp: Date.now() + days * 86400_000 }
   const claims = b64url(JSON.stringify(body))
   const sig = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
   return `${header}.${claims}.${sig}`
@@ -114,78 +102,50 @@ export interface AuthContext {
   role: string
   email: string
   isAdmin: boolean
-  /** B4: tokenVersion del usuario embebida en el JWT (para heredarla en download-tokens) */
-  tokenVersion?: number
+  /** tokenVersion embebida en el JWT (para heredarla en tickets de descarga). */
+  tv?: number
 }
 
 /** Cookie de sesión httpOnly (mitigación XSS: el JWT no necesita vivir en localStorage). */
 export const SESSION_COOKIE = 'albra_session'
 
-/**
- * Opciones de autenticación por ruta (reparación integral B1).
- *
- * `allowQueryToken` es un OPT-IN EXPLÍCITO: el JWT ya NO se acepta por
- * `?token=` en todas las rutas (quedaba expuesto en historial, logs y Referer).
- * Solo los endpoints de DESCARGA (export/csv, reports/pdf, reports/excel,
- * quotes/pdf, backup) lo permiten, y allí aceptan además el download-token de
- * corta vida (`purpose: 'download'`, 5 min) emitido por /api/auth/download-token.
- */
-export interface GetAuthOptions {
-  allowQueryToken?: boolean
-}
-
-/** Opciones para endpoints de descarga: única vía legítima de ?token=. */
-export const DOWNLOAD_AUTH_OPTS: GetAuthOptions = { allowQueryToken: true }
-
-function toAuthContext(session: SessionPayload): AuthContext | null {
-  // B4 revocación: si el usuario ya lleva una versión mayor que la firmada en
-  // el token (logout / reset de contraseña / desactivación), la sesión muere.
-  if (isSessionRevoked(session.userId, session.tokenVersion)) return null
-  // Convergencia multi-proceso: refresco perezoso de la versión vigente.
-  scheduleRefreshSessionVersion(session.userId)
-  return {
-    userId: session.userId,
-    orgId: session.orgId,
-    role: session.role,
-    email: session.email,
-    // superadmin es administrador también DENTRO de su organización
-    // (superconjunto de owner), además de su rol de plataforma.
-    isAdmin: session.role === 'owner' || session.role === 'admin' || session.role === 'superadmin',
-    tokenVersion: session.tokenVersion,
-  }
-}
-
-export function getAuth(req: NextRequest, opts: GetAuthOptions = {}): AuthContext | null {
-  const allowQueryToken = opts.allowQueryToken === true
-
-  // 1) Bearer (pestaña activa, evita conflictos multi-cuenta)
-  // 2) cookie httpOnly (persistencia tras F5 sin token en localStorage)
+export function getAuth(req: NextRequest): AuthContext | null {
   const header = req.headers.get('authorization') || ''
+  // Prioridad: 1) Bearer (pestaña activa, evita conflictos multi-cuenta),
+  // 2) cookie httpOnly (persistencia tras F5 sin token en localStorage).
+  // (reparación integral 2026-11-06) El JWT YA NO se acepta en la URL (?token=):
+  // las descargas directas usan tickets de un solo uso (?ticket=, ver
+  // download-tickets.ts y POST /api/download-ticket). Un JWT en URL queda
+  // registrado en proxies/historial y se reenvía por Referer.
   let token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) token = req.cookies.get(SESSION_COOKIE)?.value ?? null
-
+  let ctx: AuthContext | null = null
   if (token) {
     const session = verifyToken(token)
-    if (!session) return null
-    // Un download-token NUNCA autentica por Bearer/cookie ni en rutas
-    // normales: solo por ?token= en endpoints de descarga.
-    if (session.purpose === 'download') return null
-    return toAuthContext(session)
-  }
-
-  // 3) ?token= SOLO con opt-in explícito (endpoints de descarga). Acepta el JWT
-  // de sesión por compatibilidad con los enlaces ya emitidos, y el
-  // download-token de corta vida como vía recomendada.
-  if (allowQueryToken) {
-    const queryToken = new URL(req.url).searchParams.get('token')
-    if (queryToken) {
-      const session = verifyToken(queryToken)
-      if (!session) return null
-      return toAuthContext(session)
+    if (session) {
+      ctx = {
+        userId: session.userId,
+        orgId: session.orgId,
+        role: session.role,
+        email: session.email,
+        tv: session.tv,
+        // superadmin es administrador también DENTRO de su organización
+        // (superconjunto de owner), además de su rol de plataforma.
+        isAdmin: session.role === 'owner' || session.role === 'admin' || session.role === 'superadmin',
+      }
+      // (segunda reparación) La revocación PERSISTENTE por tokenVersion la
+      // aplica assertSessionState() — asíncrona y contra BD — invocada por
+      // requireAuth/requireAdmin/requireSuperAdmin/requirePermission.
+      // getAuth() sigue siendo síncrono para usos internos (tickets).
     }
   }
-
-  return null
+  if (!ctx) {
+    // Descargas directas: ticket de un solo uso (60 s) canjeable por contexto.
+    const url = new URL(req.url)
+    const ticket = url.searchParams.get('ticket')
+    if (ticket) ctx = redeemDownloadTicket(ticket)
+  }
+  return ctx
 }
 
 export class HttpError extends Error {
@@ -196,16 +156,47 @@ export class HttpError extends Error {
   }
 }
 
-/** Requiere sesión; lanza HttpError 401 si no hay. */
-export function requireAuth(req: NextRequest, opts: GetAuthOptions = {}): AuthContext {
-  const auth = getAuth(req, opts)
-  if (!auth) throw new HttpError(401, 'Token de autorización requerido')
-  return auth
+/**
+ * (segunda reparación — orden §2.A) Verificación del ESTADO DE SESIÓN contra la
+ * base de datos, autoridad única compartida por todas las instancias:
+ *  1. el usuario debe existir;
+ *  2. debe estar activo (la desactivación de un empleado corta su sesión al instante);
+ *  3. la `tv` del JWT debe coincidir con `tokenVersion` vigente (revocación por
+ *     reset de contraseña, cambio de rol o logout global);
+ *  4. la organización del token debe seguir siendo la del usuario (el JWT no
+ *     puede "viajar" entre organizaciones).
+ *
+ * FAIL-CLOSED: cualquier fallo de BD NO autoriza — la excepción sube y la ruta
+ * responde 500 sin ejecutar la operación de negocio.
+ */
+async function assertSessionState(ctx: AuthContext): Promise<AuthContext> {
+  const user = await db.user.findUnique({
+    where: { id: ctx.userId },
+    select: { isActive: true, tokenVersion: true, organizationId: true },
+  })
+  if (!user || !user.isActive) {
+    throw new HttpError(401, 'Sesión revocada o usuario inactivo')
+  }
+  const currentVersion = user.tokenVersion ?? 0
+  if ((ctx.tv ?? 0) !== currentVersion) {
+    throw new HttpError(401, 'Sesión revocada: vuelve a iniciar sesión')
+  }
+  if (user.organizationId !== ctx.orgId) {
+    throw new HttpError(401, 'Sesión inválida para esta organización')
+  }
+  return ctx
 }
 
-/** Requiere rol admin/owner (para config sensible como Nicho, equipo, integraciones). */
-export function requireAdmin(req: NextRequest, opts: GetAuthOptions = {}): AuthContext {
-  const auth = requireAuth(req, opts)
+/** Requiere sesión VÁLIDA Y VIGENTE; lanza HttpError 401 si no. (async: consulta BD) */
+export async function requireAuth(req: NextRequest): Promise<AuthContext> {
+  const auth = getAuth(req)
+  if (!auth) throw new HttpError(401, 'Token de autorización requerido')
+  return await assertSessionState(auth)
+}
+
+/** Requiere rol admin/owner con sesión vigente. (async: consulta BD) */
+export async function requireAdmin(req: NextRequest): Promise<AuthContext> {
+  const auth = await requireAuth(req)
   if (!auth.isAdmin) throw new HttpError(403, 'Se requieren permisos de administrador')
   return auth
 }
@@ -220,8 +211,8 @@ export function requireAdmin(req: NextRequest, opts: GetAuthOptions = {}): AuthC
  * vida de usuarios prohibe crear/promover superadmin): solo existe por
  * promoción directa en BD (scripts/promote-superadmin.mjs).
  */
-export function requireSuperAdmin(req: NextRequest, opts: GetAuthOptions = {}): AuthContext {
-  const auth = requireAuth(req, opts)
+export async function requireSuperAdmin(req: NextRequest): Promise<AuthContext> {
+  const auth = await requireAuth(req)
   if (auth.role !== 'superadmin') {
     throw new HttpError(403, 'Se requiere rol de superadministrador de plataforma')
   }
@@ -233,11 +224,9 @@ export function requireSuperAdmin(req: NextRequest, opts: GetAuthOptions = {}): 
  * la UI puede ocultar botones, pero aquí se decide de verdad. Soporta
  * comodines ('settings.*' concede 'settings.write').
  */
-export function requirePermission(req: NextRequest, capability: string, opts: GetAuthOptions = {}): AuthContext {
-  const auth = requireAuth(req, opts)
+export async function requirePermission(req: NextRequest, capability: string): Promise<AuthContext> {
+  const auth = await requireAuth(req)
   if (!can(auth.role, capability)) {
-    // B8: observabilidad de seguridad — denegación RBAC (403) registrada.
-    logSecurityEvent('rbac.denied', { userId: auth.userId, orgId: auth.orgId, role: auth.role, capability })
     throw new HttpError(403, `Sin permiso para esta acción (${capability})`)
   }
   return auth

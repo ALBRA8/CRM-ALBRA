@@ -38,7 +38,7 @@ async function requireClient(orgId: string, clientId: string) {
 /** GET /api/clients/:id/preferences */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     await requireClient(auth.orgId, id)
 
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
  */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await requireClient(auth.orgId, id)
     const body = await readBody(req)

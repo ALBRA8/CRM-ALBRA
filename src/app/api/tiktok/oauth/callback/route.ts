@@ -21,7 +21,7 @@ import {
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const url = new URL(req.url)
     const fail = (code: string) => {
       const u = new URL('/settings?tab=tiktok', req.url)

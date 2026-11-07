@@ -8,7 +8,7 @@ import { buildResMeta, parseResMeta, serializeReservation } from '../../_lib/res
 /** PUT /api/reservations/:id — actualización parcial (estado, fecha, duración, etc.). */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const existing = await db.reservation.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!existing) throw new HttpError(404, 'Reserva no encontrada')
@@ -69,7 +69,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/reservations/:id — cancela la reserva (status=cancelled). */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const existing = await db.reservation.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!existing) throw new HttpError(404, 'Reserva no encontrada')

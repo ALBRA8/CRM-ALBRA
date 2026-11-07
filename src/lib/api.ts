@@ -617,37 +617,17 @@ class ApiClient {
     return res.json()
   }
 
-  /**
-   * Token de descarga de corta vida (reparación integral B1).
-   * Canjea la sesión por un download-token (5 min, purpose='download') para
-   * usarlo en URLs de descarga directa en lugar del JWT de sesión de 7 días
-   * (que quedaba en historial, logs y Referer).
-   */
-  async mintDownloadToken(): Promise<string | null> {
-    try {
-      const res = await this.request('/auth/download-token', { method: 'POST' }) as { token?: string }
-      return res.token || null
-    } catch {
-      return null
-    }
-  }
-
-  private async downloadUrl(base: string): Promise<string> {
-    const dl = await this.mintDownloadToken()
-    return dl ? `${base}&token=${encodeURIComponent(dl)}` : base
-  }
-
-  async getExportCsvUrl(type: string): Promise<string> {
-    return this.downloadUrl(`${API_BASE}/export/csv?type=${type}`)
+  getExportCsvUrl(type: string) {
+    return `${API_BASE}/export/csv?type=${type}${this.token ? '&token=' + this.token : ''}`
   }
 
   // Report exports (PDF/Excel)
-  async getReportPdfUrl(period: string): Promise<string> {
-    return this.downloadUrl(`${API_BASE}/reports/pdf?period=${period}`)
+  getReportPdfUrl(period: string) {
+    return `${API_BASE}/reports/pdf?period=${period}${this.token ? '&token=' + this.token : ''}`
   }
 
-  async getReportExcelUrl(period: string): Promise<string> {
-    return this.downloadUrl(`${API_BASE}/reports/excel?period=${period}`)
+  getReportExcelUrl(period: string) {
+    return `${API_BASE}/reports/excel?period=${period}${this.token ? '&token=' + this.token : ''}`
   }
 
   async downloadReportPdf(period: string) {

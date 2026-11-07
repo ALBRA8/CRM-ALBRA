@@ -1,36 +1,34 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { SESSION_COOKIE, getAuth } from '@/lib/auth'
-import { bumpTokenVersionForUser } from '@/lib/session-version'
+import { getAuth, SESSION_COOKIE } from '@/lib/auth'
+import { bumpTokenVersion } from '@/lib/session-invalidation'
+import { readBody } from '../../_lib/shared'
 
 /**
- * POST /api/auth/logout — borra la cookie de sesión httpOnly y REVOKA el JWT
- * (reparación integral B4): incrementa tokenVersion del usuario para que el
- * token de 7 días ya emitido deje de ser aceptado de inmediato (antes solo se
- * borraba la cookie y el JWT seguía vivo en cualquier otro canal).
+ * POST /api/auth/logout — borra la cookie de sesión httpOnly.
  * El cliente además limpia su estado en memoria (store zustand).
- * Idempotente: llamarla sin sesión es seguro (solo expira la cookie).
+ * Idempotente: llamarla sin cookie es seguro.
+ *
+ * (segunda reparación) Con { allDevices: true } y sesión válida, además revoca
+ * PERSISTENTEMENTE todos los JWT del usuario (bump de tokenVersion): la sesión
+ * actual y cualquier otra emitida dejan de funcionar en todas las instancias.
  */
 export async function POST(req: NextRequest) {
-  // Revocación best-effort: si la llamada trae sesión (Bearer o cookie),
-  // se incrementa la versión del usuario en BD y en el caché del proceso.
+  let allDevices = false
   try {
-    const auth = getAuth(req)
-    if (auth) {
-      const updated = await db.user.update({
-        where: { id: auth.userId },
-        data: { tokenVersion: { increment: 1 } },
-        select: { id: true, tokenVersion: true },
-      })
-      bumpTokenVersionForUser(updated.id, updated.tokenVersion)
-    }
+    const body = await readBody(req)
+    allDevices = body.allDevices === true || body.allDevices === 'true'
   } catch {
-    // Sin sesión válida o error transitorio: el logout sigue siendo idempotente
-    // y la cookie se expira igualmente.
+    // cuerpo ausente o no-JSON: logout simple
   }
-
-  const res = NextResponse.json({ ok: true })
+  if (allDevices) {
+    const auth = getAuth(req) // verificación barata: firma+exp; el bump exige identidad concreta
+    if (auth) {
+      await bumpTokenVersion(auth.userId).catch(() => null) // fail-safe: el logout no se rompe por BD
+    }
+  }
+  const res = NextResponse.json({ ok: true, allDevices })
   res.cookies.set({
     name: SESSION_COOKIE,
     value: '',

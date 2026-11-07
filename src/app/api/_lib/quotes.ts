@@ -1,6 +1,19 @@
-import type { Opportunity, Quote, QuoteItem } from '@prisma/client'
+import type { Opportunity, Quote, QuoteItem, PrismaClient } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { isObjArray, num, str } from './shared'
 import { serializeClientRef } from './clients'
+
+/** Cliente Prisma transaccional (para operaciones dentro de $transaction). */
+export type TxClient = Prisma.TransactionClient
+/** Cliente por defecto cuando no se pasa un tx: el db global (PrismaClient). */
+type DbLike = TxClient | PrismaClient
+
+/** Resuelve el cliente a usar (tx explícito o el db global con import perezoso). */
+async function resolveClient(client?: DbLike): Promise<DbLike> {
+  if (client) return client
+  const { db } = await import('@/lib/db')
+  return db
+}
 
 /**
  * Cotizaciones: `number` se expone también como `quoteNumber` (el frontend lo
@@ -48,17 +61,36 @@ export function quoteItemRows(items: QuoteItemParsed[], organizationId?: string)
   }))
 }
 
-/** Número secuencial COT-0001 por organización (a prueba de colisiones simples). */
-export async function nextQuoteNumber(orgId: string): Promise<string> {
-  const { db } = await import('@/lib/db')
-  let n = (await db.quote.count({ where: { organizationId: orgId } })) + 1
-  let number = `COT-${String(n).padStart(4, '0')}`
-  // Evita colisión si se borraron/crearon cotizaciones en paralelo
+/** ¿Es un error P2002 (violación de unicidad) de Prisma? */
+export function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string })?.code === 'P2002'
+}
+
+/**
+ * Número secuencial COT-0001 por organización.
+ *
+ * (segunda reparación §2.E) ASIGNACIÓN ATÓMICA: el número sale de un contador
+ * por organización incrementado con UN solo statement (upsert + RETURNING) —
+ * sin transacción interactiva en el camino caliente. N creaciones concurrentes
+ * serializan limpiamente en SQLite y cada una recibe un número distinto. La
+ * restricción UNIQUE (organizationId, number) es la defensa final y la ruta
+ * reintenta ante P2002 (p. ej. tras una restauración que sufijó números).
+ */
+export async function nextQuoteNumber(orgId: string, client?: DbLike): Promise<string> {
+  const c = await resolveClient(client)
+  const key = `quote:${orgId}`
+  const rows = await c.$queryRaw<{ value: number | bigint }[]>(
+    Prisma.sql`INSERT INTO "OrgCounter" ("key", "value") VALUES (${key}, 1)
+      ON CONFLICT("key") DO UPDATE SET "value" = "OrgCounter"."value" + 1
+      RETURNING "value"`
+  )
+  let n = Number(rows[0]?.value ?? 1)
+  // Salta números ya ocupados (restauraciones con sufijos, datos previos al contador)
   for (let guard = 0; guard < 50; guard++) {
-    const exists = await db.quote.findFirst({ where: { organizationId: orgId, number }, select: { id: true } })
+    const number = `COT-${String(n).padStart(4, '0')}`
+    const exists = await c.quote.findFirst({ where: { organizationId: orgId, number }, select: { id: true } })
     if (!exists) return number
     n += 1
-    number = `COT-${String(n).padStart(4, '0')}`
   }
   return `COT-${Date.now().toString().slice(-6)}`
 }

@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       const { processed, results } = await runDueJobs()
       return json({ processed, runs: results, via: 'cron-secret' })
     }
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     if (!auth.isAdmin) return json({ error: 'Se requieren permisos de administrador' }, { status: 403 })
     const { processed, results } = await runDueJobs({ orgId: auth.orgId })
     return json({ processed, runs: results, via: 'session', orgId: auth.orgId })

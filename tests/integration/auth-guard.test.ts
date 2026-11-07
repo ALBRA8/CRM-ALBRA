@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { GET as clientsGET } from '@/app/api/clients/route'
+import { POST as downloadTicketPOST } from '@/app/api/download-ticket/route'
 import { POST as logoutPOST } from '@/app/api/auth/logout/route'
 import { POST as demoPOST } from '@/app/api/auth/demo/route'
 import { FIX, jsonBody, req, tokenA, tokenB } from '../helpers'
@@ -43,12 +44,19 @@ describe('auth guard — GET /api/clients', () => {
     expect(Array.isArray(body.clients)).toBe(true)
   })
 
-  it('REPARACIÓN B1: RECHAZA ?token= en ruta NO-descarga con 401 (antes autenticaba: inseguro)', async () => {
-    // El JWT por query quedaba en historial/logs/Referer; ahora solo los
-    // endpoints de descarga (export/csv, reports/pdf, reports/excel, quotes/pdf)
-    // aceptan ?token= mediante opt-in explícito. /api/clients NO es descarga.
-    const res = await clientsGET(req(`/api/clients?token=${encodeURIComponent(tokenA())}`))
-    expect(res.status).toBe(401)
+  it('rechaza ?token= (JWT en URL eliminado) y acepta ?ticket= de un solo uso', async () => {
+    // Vector viejo cerrado: el JWT en URL ya no autentica
+    const oldWay = await clientsGET(req(`/api/clients?token=${encodeURIComponent(tokenA())}`))
+    expect(oldWay.status).toBe(401)
+    // Flujo nuevo: emitir ticket autenticado y usarlo en la descarga
+    const ticketRes = await downloadTicketPOST(req('/api/download-ticket', { method: 'POST', token: tokenA() }))
+    expect(ticketRes.status).toBe(200)
+    const { ticket } = (await jsonBody(ticketRes)) as { ticket: string }
+    const res = await clientsGET(req(`/api/clients?ticket=${encodeURIComponent(ticket)}`))
+    expect(res.status).toBe(200)
+    // Segunda descarga con el mismo ticket → 401 (consumido)
+    const res2 = await clientsGET(req(`/api/clients?ticket=${encodeURIComponent(ticket)}`))
+    expect(res2.status).toBe(401)
   })
 })
 

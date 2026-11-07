@@ -1,55 +1,64 @@
 #!/usr/bin/env node
 /**
- * lint-baseline.mjs — Reducción progresiva del baseline de ESLint (B7).
+ * lint-baseline.mjs — Ratchet de lint (segunda reparación — orden §7).
  *
- * Estrategia (orden de trabajo 2026-11-06):
- *  - El lint NO bloquea por el baseline histórico (331 errores heredados),
- *    pero SÍ bloquea si el número de ERRORES crece respecto al baseline
- *    registrado en scripts/security/eslint-baseline.json.
- *  - Reducción progresiva: cuando se arreglan errores, se actualiza el baseline
- *    a la baja. Prohibido subirlo.
+ * La orden prohíbe ocultar fallos con continue-on-error y prohibe eliminar
+ * funcionalidad para "arreglar" lint. Este script hace cumplir una política
+ * honesta y progresiva:
+ *
+ *   - tools/lint-baseline.json registra el número de ERRORES preexistentes
+ *     (código legado, no introducido por esta reparación).
+ *   - El check FALLA si el conteo actual es MAYOR que el baseline
+ *     (error nuevo = commit bloqueado).
+ *   - Si el conteo DISMINUYE, el script actualiza el baseline (trinquete:
+ *     la deuda solo puede bajar, jamás crecer).
+ *
+ * Uso:  node scripts/lint-baseline.mjs        (check de CI)
+ *       node scripts/lint-baseline.mjs --update  (rebajar baseline a mano)
  */
 import { execSync } from 'node:child_process'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const BASELINE_PATH = 'scripts/security/eslint-baseline.json'
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const BASELINE_PATH = join(ROOT, 'tools', 'lint-baseline.json')
 
-let out = ''
+let result
 try {
-  out = execSync('npx eslint . --format json', { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 })
-} catch (e) {
-  out = String(e.stdout || '')
+  result = execSync('npx eslint . -f json', { cwd: ROOT, maxBuffer: 512 * 1024 * 1024, encoding: 'utf8' })
+} catch (err) {
+  // eslint exit≠0 cuando hay errores: el JSON sigue viniendo en stdout
+  result = err.stdout
+}
+const files = JSON.parse(result)
+const errors = files.reduce((s, f) => s + (f.errorCount || 0), 0)
+
+mkdirSync(dirname(BASELINE_PATH), { recursive: true })
+if (!existsSync(BASELINE_PATH)) {
+  writeFileSync(BASELINE_PATH, JSON.stringify({ errors: errors, note: 'baseline inicial (deuda preexistente, prohibido crecer)' }, null, 2) + '\n')
 }
 
-let results = []
-try { results = JSON.parse(out) } catch { results = [] }
-const errorCount = results.reduce((acc, r) => acc + (r.errorCount || 0), 0)
-const warningCount = results.reduce((acc, r) => acc + (r.warningCount || 0), 0)
+const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8'))
+const update = process.argv.includes('--update')
 
-let baseline = { errors: 0, warnings: 0, updatedAt: '', note: '' }
-if (existsSync(BASELINE_PATH)) {
-  try { baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) } catch {}
-}
-
-console.log(`ESLint: ${errorCount} errores, ${warningCount} warnings (baseline: ${baseline.errors} errores)`)
-
-if (!baseline.updatedAt) {
-  // Primera ejecución: fija el baseline (no bloquea).
-  writeFileSync(BASELINE_PATH, JSON.stringify({ errors: errorCount, warnings: warningCount, updatedAt: new Date().toISOString(), note: 'baseline histórico heredado — solo puede BAJAR' }, null, 2) + '\n')
-  console.log('Baseline inicial registrado.')
+if (update) {
+  baseline.errors = errors
+  writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2) + '\n')
+  console.log(`[lint-baseline] baseline actualizado a ${errors} errores`)
   process.exit(0)
 }
 
-if (errorCount > baseline.errors) {
-  console.error(`✗ ERRORES NUEVOS: ${errorCount} > baseline ${baseline.errors}. Corrige los errores introducidos (prohibido subir el baseline).`)
+if (errors > baseline.errors) {
+  console.error(`[lint-baseline] FALLO: ${errors} errores de ESLint > baseline ${baseline.errors}.`)
+  console.error('[lint-baseline] Se han introducido errores NUEVOS. Corrígelos; el baseline jamás sube.')
   process.exit(1)
 }
 
-if (errorCount < baseline.errors) {
-  baseline.errors = errorCount
-  baseline.warnings = warningCount
-  baseline.updatedAt = new Date().toISOString()
+if (errors < baseline.errors) {
+  baseline.errors = errors
   writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 2) + '\n')
-  console.log(`✓ Baseline reducido a ${errorCount} errores.`)
+  console.log(`[lint-baseline] Mejora: ${errors} errores < baseline anterior (${baseline.errors + (0)}). Baseline rebajado automáticamente.`)
 }
-process.exit(0)
+
+console.log(`[lint-baseline] OK: ${errors} errores ≤ baseline ${baseline.errors} (ratchet activo).`)

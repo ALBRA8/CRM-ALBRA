@@ -93,11 +93,10 @@ describe('whatspower-bridge: contrato inbound (HMAC)', () => {
     expect(body.contact.name).toBe('E2E WhatsPower CRM 2026')
     expect(body.message.text).toBe('Quiero información del plan')
 
-    // Firma HMAC v2 verificable con el mismo algoritmo del receptor (WhatsPower
-    // checkWebhookSecurity): la MAC cubre `${timestamp}.${body}` (contrato v1.1.0).
+    // Firma HMAC verificable con el mismo algoritmo v2 del receptor (WhatsPower checkWebhookSecurity)
     const expected = createHmac('sha256', SECRET).update(`${captured!.ts}.${captured!.raw}`, 'utf8').digest('hex')
     expect(captured!.sig).toBe(expected)
-    expect(signWhatspowerPayload(captured!.raw, SECRET, captured!.ts!)).toBe(expected)
+    expect(signWhatspowerPayload(String(captured!.ts), captured!.raw, SECRET)).toBe(expected)
 
     // Timestamp anti-replay dentro de la ventana de 300s
     const ts = Number(captured!.ts)
@@ -142,9 +141,9 @@ describe('whatspower-bridge: contrato stage-change', () => {
 
   it('enabled envía payload de cambio de etapa al endpoint configurado', async () => {
     enableBridge()
-    let captured: { url: string; raw: string } | null = null
+    let captured: { url: string; raw: string; headers: Record<string, string> } | null = null
     global.fetch = vi.fn().mockImplementation(async (url: any, init: any) => {
-      captured = { url: String(url), raw: init.body }
+      captured = { url: String(url), raw: init.body, headers: init.headers }
       return { ok: true, status: 200, text: async () => '{"triggered":true}' }
     }) as any
 
@@ -162,7 +161,9 @@ describe('whatspower-bridge: contrato stage-change', () => {
     expect(res.sent).toBe(true)
     expect(captured!.url).toBe('http://localhost:3003/api/crm/stage-change')
     const body = JSON.parse(captured!.raw)
+    // (contrato §5) la organización viaja en la identidad (X-Org-Id) Y en el body.
     expect(body).toEqual({
+      orgId: 'org-a',
       clientId: 'client-a1',
       clientPhone: '573001112233',
       clientName: 'Cliente E2E',
@@ -171,6 +172,7 @@ describe('whatspower-bridge: contrato stage-change', () => {
       toStage: 'GANADO',
       dealValue: 1500,
     })
+    expect(captured!.headers['X-Org-Id']).toBe('org-a')
   })
 
   it('disabled por defecto: stage-change no sale de la org', async () => {

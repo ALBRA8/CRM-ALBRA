@@ -1,14 +1,12 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { requirePermission, DOWNLOAD_AUTH_OPTS } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { buildSimplePdf } from '@/lib/pdf'
 
 /**
- * GET /api/reports/pdf?period=7d|30d|90d|1y|all — PDF del reporte.
- * Autenticación por Bearer/cookie y, SOLO aquí (endpoint de descarga), ?token=
- * (JWT de sesión por compatibilidad o download-token de corta vida).
+ * GET /api/reports/pdf?period=7d|30d|90d|1y|all — PDF del reporte (token por query o Bearer).
  * Sin pdfkit: generador PDF propio (src/lib/pdf.ts) — funciona en el bundler sin .afm externos.
  */
 
@@ -25,7 +23,7 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     // RBAC (auditoría externa #1): los PDF financieros exigían solo sesión;
     // ahora requieren el MISMO permiso que el reporte JSON (reports.read).
-    const auth = requirePermission(req, 'reports.read', DOWNLOAD_AUTH_OPTS)
+    const auth = await requirePermission(req, 'reports.read')
     const period = new URL(req.url).searchParams.get('period') || '30d'
     const days: number | null = { '7d': 7, '30d': 30, month: 30, '90d': 90, quarter: 90, '1y': 365, year: 365, all: null }[period] ?? 30
     const from = days ? new Date(Date.now() - days * 86_400_000) : new Date(0)
@@ -73,7 +71,6 @@ export async function GET(req: NextRequest) {
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="reporte_${period}_${new Date().toISOString().split('T')[0]}.pdf"`,
-        'Referrer-Policy': 'no-referrer',
       },
     })
   })

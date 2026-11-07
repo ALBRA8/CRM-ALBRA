@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server'
+import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { sendInboxMessage, parseInboxKey, parseWaNewKey } from '@/lib/inbox'
@@ -16,7 +17,7 @@ import { rememberMessage, maybeConsolidate } from '@/lib/memory'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as {
       key?: string
       contactHandle?: string
@@ -34,15 +35,24 @@ export async function POST(req: NextRequest) {
       userId: auth.userId,
       key,
       contactHandle: String(body.contactHandle || ''),
-      clientId: body.clientId || null,
+      // (segunda reparación §2.B) El cliente referenciado debe existir y pertenecer
+      // a la organización del remitente — jamás se acepta un id de otra org.
+      clientId: await (async () => {
+        const clientId = body.clientId || null
+        if (!clientId) return null
+        const c = await db.client.findFirst({ where: { id: String(clientId), organizationId: auth.orgId }, select: { id: true } })
+        if (!c) return null
+        return String(clientId)
+      })(),
       text: String(body.text || ''),
     })
     if (!result.ok) return json({ error: result.error }, { status: 400 })
     // Memoria vectorial (Fase 5): el mensaje saliente del vendedor también
     // alimenta el recuerdo del cliente. Fire-and-forget: nunca bloquea el envío.
     const channel = key.startsWith('wa') ? 'whatsapp' : key.startsWith('tg') ? 'telegram' : 'instagram'
-    void rememberMessage({ orgId: auth.orgId, clientId: body.clientId || null, channel, role: 'outgoing', text: String(body.text || '') })
-    maybeConsolidate(auth.orgId, body.clientId || null)
+    const safeClientId = body.clientId && (await db.client.findFirst({ where: { id: String(body.clientId), organizationId: auth.orgId }, select: { id: true } })) ? String(body.clientId) : null
+    void rememberMessage({ orgId: auth.orgId, clientId: safeClientId, channel, role: 'outgoing', text: String(body.text || '') })
+    maybeConsolidate(auth.orgId, safeClientId)
     return json({ success: true, sent: true })
   })
 }

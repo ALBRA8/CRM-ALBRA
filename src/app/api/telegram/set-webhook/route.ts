@@ -12,7 +12,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const integration = await getIntegration(auth.orgId)
     const state = parseTelegramState(integration.telegramBotTokenEnc)
     if (!state.token) {

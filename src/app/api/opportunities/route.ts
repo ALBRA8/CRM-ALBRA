@@ -9,7 +9,7 @@ import { buildOppMeta, oppAmountFrom, serializeOpportunity } from '../_lib/oppor
 /** GET /api/opportunities — listado con client y stage incluidos. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const clientId = qparam(req, 'clientId')
     const status = qparam(req, 'status')
     const stageId = qparam(req, 'stageId')
@@ -47,7 +47,7 @@ function parseIntQ(req: NextRequest, name: string): number | null {
 /** POST /api/opportunities — { clientId, title, estimatedValue, probability, stageId, ... } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     requireFields(body, ['title'])
 
@@ -69,6 +69,13 @@ export async function POST(req: NextRequest) {
       : await db.pipelineStage.findFirst({ where: { organizationId: auth.orgId }, orderBy: { order: 'asc' } })
     stageId = stage?.id ?? null
 
+    // (segunda reparación §2.B) El responsable debe pertenecer a la organización
+    const assignedToId = str(body.assignedToId)
+    if (assignedToId) {
+      const assignee = await db.user.findFirst({ where: { id: assignedToId, organizationId: auth.orgId }, select: { id: true } })
+      if (!assignee) throw new HttpError(400, 'El responsable no pertenece a tu organización')
+    }
+
     const probability = numOrNull(body.probability) ?? (stage ? Math.round(stage.probability * 100) : 50)
 
     const created = await db.opportunity.create({
@@ -83,7 +90,7 @@ export async function POST(req: NextRequest) {
         notes: buildOppMeta(body),
         source: str(body.source) ?? 'manual',
         expectedCloseDate: dateOrNull(body.expectedCloseDate),
-        assignedToId: str(body.assignedToId),
+        assignedToId: assignedToId,
         createdById: auth.userId,
       },
       include: {

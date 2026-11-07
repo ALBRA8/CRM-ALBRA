@@ -13,7 +13,7 @@ const KNOWLEDGE_CATEGORIES = ['general', 'catalogo', 'terminos', 'faq', 'politic
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const category = new URL(req.url).searchParams.get('category') || undefined
     const knowledge = await db.knowledge.findMany({
       where: { organizationId: auth.orgId, ...(category ? { category } : {}) },
@@ -32,7 +32,7 @@ interface KnowledgeBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)  // RBAC: base de conocimiento = settings (auditoría #3)
+    const auth = await requireAdmin(req)  // RBAC: base de conocimiento = settings (auditoría #3)
     const body = (await req.json().catch(() => ({}))) as KnowledgeBody
     const title = String(body.title ?? '').trim()
     const content = String(body.content ?? '').trim()

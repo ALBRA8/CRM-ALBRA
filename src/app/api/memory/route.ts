@@ -11,7 +11,7 @@ import { isMemoryType, memoryContract } from '@/lib/memory-contract'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const clientId = new URL(req.url).searchParams.get('clientId') || undefined
     const typeParam = new URL(req.url).searchParams.get('type')
     const limit = parseIntParam(req, 'limit', 100, 1, 200)
@@ -40,7 +40,7 @@ interface MemoryBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as MemoryBody
     requireFields(body as unknown as Record<string, unknown>, ['content'])
     const content = String(body.content).slice(0, 4000)

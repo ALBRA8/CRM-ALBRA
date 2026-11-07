@@ -5,7 +5,6 @@ import { lookupApiKey } from '@/lib/api-keys'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { CRM_ACTIONS, crmActionsCatalog, executeCrmAction } from '@/lib/capabilities/crm-actions'
-import { rateLimit, rateLimited } from '@/lib/rate-limit'
 
 /**
  * POST /api/crm/actions — CONTRATO DEL CHALECO CRM para hosts (REST).
@@ -33,7 +32,7 @@ function bearerOf(req: NextRequest): string | null {
 }
 
 /** Resuelve { orgId, userId, role } desde JWT de usuario o API key de org. */
-async function resolveCaller(req: NextRequest): Promise<{ orgId: string; userId: string | null; role: string; keyId?: string } | null> {
+async function resolveCaller(req: NextRequest): Promise<{ orgId: string; userId: string | null; role: string } | null> {
   const bearer = bearerOf(req)
   if (!bearer) return null
 
@@ -46,12 +45,12 @@ async function resolveCaller(req: NextRequest): Promise<{ orgId: string; userId:
     } catch {
       // telemetría best-effort
     }
-    return { orgId: key.organizationId, userId: null, role: 'api-key', keyId: key.id }
+    return { orgId: key.organizationId, userId: null, role: 'api-key' }
   }
 
   // 2) JWT de usuario de la app
   try {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     return { orgId: auth.orgId, userId: auth.userId, role: auth.role }
   } catch {
     return null
@@ -78,12 +77,6 @@ export async function POST(req: NextRequest) {
     const caller = await resolveCaller(req)
     if (!caller) return json({ error: 'No autenticado' }, { status: 401 })
 
-    // Rate limit 120/min por identidad (reparación integral B2): userId para
-    // sesiones, id de la API key para hosts programáticos.
-    const identity = caller.userId ?? `apikey:${caller.keyId ?? caller.orgId}`
-    const rl = rateLimit(`crm-actions:${identity}`, 120, 60_000)
-    if (!rl.ok) return rateLimited(rl)
-
     const action = String(body.action)
     const meta = CRM_ACTIONS[action]
     if (!meta) {
@@ -107,6 +100,10 @@ export async function POST(req: NextRequest) {
     params = parsed.data as Record<string, unknown>
 
     const result = await executeCrmAction(caller.orgId, caller.userId, action, params, 'crm-api')
-    return json(result, { status: result.ok ? 200 : 400 })
+    // (segunda reparación §3.B — integración WHATSPOWER) El CRM CONFIRMA la
+    // organización a la que se atribuyó la acción (la resolvida desde la API
+    // key/JWT, jamás de un campo del cliente). El host (WHATSPOWER) la coteja
+    // para cerrar el bucle de identidad del tenant; discrepancia → rechazo allí.
+    return json({ ...result, orgId: caller.orgId }, { status: result.ok ? 200 : 400 })
   })
 }

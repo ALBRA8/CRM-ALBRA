@@ -13,7 +13,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const integration = await getIntegration(auth.orgId)
     const state = parseInstagramState(integration.instagramTokenEnc)
     return json({
@@ -41,7 +41,7 @@ interface InstagramConfigBody {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = (await req.json().catch(() => ({}))) as InstagramConfigBody
     const integration = await getIntegration(auth.orgId)
     const current = parseInstagramState(integration.instagramTokenEnc)
@@ -87,7 +87,7 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     await db.integration.update({
       where: { organizationId: auth.orgId },
       data: { instagramTokenEnc: null, instagramAccountId: null, enableInstagram: false },

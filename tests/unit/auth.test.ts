@@ -4,17 +4,16 @@ import {
   hashPassword,
   verifyPassword,
   signToken,
-  signDownloadToken,
   verifyToken,
   getAuth,
   requireAuth,
   requireAdmin,
   slugify,
   HttpError,
-  DOWNLOAD_AUTH_OPTS,
-  DOWNLOAD_TOKEN_TTL_SECONDS,
   type SessionPayload,
 } from '@/lib/auth'
+import { issueDownloadTicket } from '@/lib/download-tickets'
+import { FIX } from '../setup/seed-data'
 
 /**
  * Tests unitarios de src/lib/auth.ts (JWT propio HMAC-SHA256 + scrypt + guardas).
@@ -27,8 +26,9 @@ function payload(): Omit<SessionPayload, 'exp'> {
   return { userId: 'u-1', orgId: 'org-1', role: 'owner', email: 'u1@test.albra' }
 }
 
-function requestWithAuth(init: { authorization?: string; token?: string } = {}): NextRequest {
-  const url = new URL(init.token ? `${BASE_URL}?token=${encodeURIComponent(init.token)}` : BASE_URL)
+function requestWithAuth(init: { authorization?: string; token?: string; ticket?: string } = {}): NextRequest {
+  const qs = init.token ? `?token=${encodeURIComponent(init.token)}` : init.ticket ? `?ticket=${encodeURIComponent(init.ticket)}` : ''
+  const url = new URL(`${BASE_URL}${qs}`)
   const headers = new Headers()
   if (init.authorization) headers.set('authorization', init.authorization)
   return new NextRequest(url, { headers })
@@ -127,35 +127,21 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     expect(res?.isAdmin).toBe(true) // role owner
   })
 
-  it('REPARACIÓN B1: getAuth RECHAZA ?token= en rutas normales (solo opt-in de descarga)', () => {
-    // Comportamiento SEGURO nuevo: el JWT por query quedaba en historial/logs/Referer.
-    // Antes este test codificaba el comportamiento inseguro (aceptaba ?token= global).
-    expect(getAuth(requestWithAuth({ token: signToken(payload()) }))).toBeNull()
-    // Con el opt-in de descarga (DOWNLOAD_AUTH_OPTS) sí autentica.
-    const res = getAuth(requestWithAuth({ token: signToken(payload()) }), DOWNLOAD_AUTH_OPTS)
-    expect(res?.userId).toBe('u-1')
+  it('getAuth RECHAZA ?token= (JWT en URL eliminado en reparación integral)', () => {
+    const res = getAuth(requestWithAuth({ token: signToken(payload()) }))
+    expect(res).toBeNull()
   })
 
-  it('REPARACIÓN B1: download-token NO autentica por Bearer/cookie y SÍ por ?token= en descargas', () => {
-    const dl = signDownloadToken(payload())
-    // por Bearer en cualquier ruta → null (nunca sustituye a la sesión)
-    expect(getAuth(requestWithAuth({ authorization: `Bearer ${dl}` }))).toBeNull()
-    // por ?token= en endpoint de descarga → autentica
-    const viaQuery = getAuth(requestWithAuth({ token: dl }), DOWNLOAD_AUTH_OPTS)
-    expect(viaQuery?.userId).toBe('u-1')
-    expect(viaQuery?.orgId).toBe('org-1')
-  })
-
-  it('REPARACIÓN B1: download-token caducado → null; TTL por defecto 300s', () => {
-    const expired = signDownloadToken(payload(), -1)
-    expect(verifyToken(expired)).toBeNull()
-    expect(getAuth(requestWithAuth({ token: expired }), DOWNLOAD_AUTH_OPTS)).toBeNull()
-    const fresh = signDownloadToken(payload())
-    const session = verifyToken(fresh)
-    expect(session?.purpose).toBe('download')
-    // 5 minutos de margen de firma
-    expect((session?.exp ?? 0) - Date.now()).toBeLessThanOrEqual(DOWNLOAD_TOKEN_TTL_SECONDS * 1000)
-    expect((session?.exp ?? 0) - Date.now()).toBeGreaterThan(DOWNLOAD_TOKEN_TTL_SECONDS * 1000 - 5_000)
+  it('getAuth acepta ?ticket= de un solo uso y lo consume (descargas seguras)', () => {
+    const token = signToken(payload())
+    const ctx = getAuth(requestWithAuth({ authorization: `Bearer ${token}` }))
+    expect(ctx).not.toBeNull()
+    const issued = issueDownloadTicket(ctx!)
+    const viaTicket = getAuth(requestWithAuth({ ticket: issued.ticket }))
+    expect(viaTicket?.userId).toBe('u-1')
+    // El ticket se consumió: no sirve para una segunda petición
+    const again = getAuth(requestWithAuth({ token: issued.ticket }))
+    expect(again).toBeNull()
   })
 
   it('getAuth devuelve null sin token, con basura o con token firmado por otro secreto', () => {
@@ -171,9 +157,9 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     expect(admin?.isAdmin).toBe(true)
   })
 
-  it('requireAuth lanza HttpError 401 sin sesión', () => {
+  it('requireAuth lanza HttpError 401 sin sesión', async () => {
     try {
-      requireAuth(requestWithAuth())
+      await requireAuth(requestWithAuth())
       expect.unreachable('requireAuth debía lanzar')
     } catch (err) {
       expect(err).toBeInstanceOf(HttpError)
@@ -181,10 +167,14 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     }
   })
 
-  it('requireAdmin lanza HttpError 403 para miembros no admin', () => {
-    const req = requestWithAuth({ authorization: `Bearer ${signToken({ ...payload(), role: 'member' })}` })
+  it('requireAdmin lanza HttpError 403 para miembros no admin', async () => {
+    // (segunda reparación) requireAuth consulta la BD: se usa un miembro real
+    // del seed (userB, member de org-b) y no un userId ficticio.
+    const req = requestWithAuth({
+      authorization: `Bearer ${signToken({ userId: FIX.userB.id, orgId: FIX.userB.organizationId, role: 'member', email: FIX.userB.email })}`,
+    })
     try {
-      requireAdmin(req)
+      await requireAdmin(req)
       expect.unreachable('requireAdmin debía lanzar')
     } catch (err) {
       expect(err).toBeInstanceOf(HttpError)
@@ -192,9 +182,28 @@ describe('getAuth / requireAuth / requireAdmin (guardas de rutas API)', () => {
     }
   })
 
-  it('requireAdmin deja pasar a owner', () => {
-    const auth = requireAdmin(requestWithAuth({ authorization: `Bearer ${signToken(payload())}` }))
-    expect(auth.orgId).toBe('org-1')
+  it('requireAdmin deja pasar a owner con sesión vigente en BD', async () => {
+    const auth = await requireAdmin(
+      requestWithAuth({
+        authorization: `Bearer ${signToken({ userId: FIX.userA.id, orgId: FIX.orgA.id, role: 'owner', email: FIX.userA.email })}`,
+      })
+    )
+    expect(auth.orgId).toBe(FIX.orgA.id)
+  })
+
+  it('requireAuth rechaza un token con tokenVersion distinta de la vigente en BD (revocación persistente)', async () => {
+    // Un token firmado correctamente pero con tv=999 no coincide con la
+    // tokenVersion del usuario en BD → 401, aunque la firma sea válida.
+    const req = requestWithAuth({
+      authorization: `Bearer ${signToken({ userId: FIX.userA.id, orgId: FIX.orgA.id, role: 'owner', email: FIX.userA.email, tv: 999 })}`,
+    })
+    try {
+      await requireAuth(req)
+      expect.unreachable('requireAuth debía rechazar el token con tv obsoleta')
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpError)
+      expect((err as HttpError).status).toBe(401)
+    }
   })
 })
 

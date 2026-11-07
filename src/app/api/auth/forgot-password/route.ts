@@ -2,21 +2,15 @@ import type { NextRequest } from 'next/server'
 import { randomBytes, createHash } from 'crypto'
 import { db } from '@/lib/db'
 import { handle, json, readBody, requireFields, str } from '../../_lib/shared'
-import { rateLimit, rateLimited, clientIp } from '@/lib/rate-limit'
+import { HttpError } from '@/lib/auth'
+import { dbRateLimit, clientIp } from '@/lib/rate-limit'
 
 /**
  * POST /api/auth/forgot-password — genera resetToken con 1h de validez.
- *
- * Reparación integral B2:
- * - Rate limit 3/15min por IP+email (anti-abuso del mecanismo).
- * - Respuesta SIEMPRE genérica 200 e IDÉNTICA exista o no el email
- *   (anti-enumeración; se eliminó el token en claro que antes se devolvía
- *   en desarrollo: la forma de la respuesta ya no depende de la existencia
- *   de la cuenta ni del entorno).
- *
- * Reparación integral B3: el token (32 bytes aleatorios = 64 hex) se guarda
- * HASHEADO (sha256) en BD. Un atacante con copia de la BD no puede usar los
- * resetToken almacenados: en claro solo existe en el email entregado.
+ * Respuesta genérica para evitar enumeración de emails. En desarrollo se
+ * devuelve el token para poder probar el flujo sin SMTP configurado.
+ * (reparación integral 2026-11-06): el token se guarda SOLO como SHA-256 —
+ * una fuga de la BD ya no permite usar los tokens. Rate limit 5/h por IP+email.
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
@@ -24,24 +18,31 @@ export async function POST(req: NextRequest) {
     requireFields(body, ['email'])
     const email = (str(body.email) as string).toLowerCase()
 
-    const rl = rateLimit(`forgot:${clientIp(req)}:${email}`, 3, 15 * 60_000)
-    if (!rl.ok) return rateLimited(rl)
+    const ip = clientIp(req)
+    // (segunda reparación §2.C) límite PERSISTENTE en BD: 5 solicitudes/h por IP+cuenta.
+    if (!(await dbRateLimit(`forgot:${ip}:${email}`, 5, 3_600_000)).ok) {
+      throw new HttpError(429, 'Demasiadas solicitudes. Inténtalo más tarde.')
+    }
 
     const user = await db.user.findUnique({ where: { email } })
+    let devToken: string | undefined
     if (user && user.isActive) {
-      const plain = randomBytes(32).toString('hex') // ≥32 bytes aleatorios (B3)
-      const hashed = createHash('sha256').update(plain).digest('hex')
+      devToken = randomBytes(24).toString('hex')
       await db.user.update({
         where: { id: user.id },
         data: {
-          resetToken: hashed,
+          resetToken: createHash('sha256').update(devToken).digest('hex'),
           resetTokenExp: new Date(Date.now() + 3_600_000),
         },
       })
     }
 
-    return json({
+    const payload: Record<string, unknown> = {
       message: 'Si el email está registrado, recibirás instrucciones para restablecer tu contraseña.',
-    })
+    }
+    if (process.env.NODE_ENV !== 'production' && devToken) {
+      payload.resetToken = devToken
+    }
+    return json(payload)
   })
 }

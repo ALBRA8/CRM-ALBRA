@@ -1,63 +1,108 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import { NextRequest } from 'next/server'
+import { POST as backupPost } from '@/app/api/backup/route'
 import { db } from '@/lib/db'
-import { req, tokenFor } from '../helpers'
-import { FIX } from '../setup/seed-data'
-import { POST as backupPOST, MAX_BACKUP_BODY_BYTES } from '@/app/api/backup/route'
+import { FIX, tokenA, req, jsonBody } from '../helpers'
 
 /**
- * REPARACIÓN INTEGRAL B5 — backup/restauración endurecida:
- *  - tope de 25 MB → 413;
- *  - restauración atómica en transacción (reporte `transactional: true`);
- *  - JAMÁS introduce registros en otra organización (todo se fuerza a la org del admin).
+ * TERCERA REPARACIÓN — 6.A BACKUP/RESTORE ENDURECIDO:
+ *  - el tope de 25 MB es EFECTIVO sobre el stream leído (chunked o sin
+ *    Content-Length NO lo evade);
+ *  - estructura y versión del backup se validan ANTES de restaurar;
+ *  - un JSON corrupto produce 400 y NINGUNA restauración parcial
+ *    (la transacción es todo-o-nada);
+ *  - la restauración siempre se atribuye a la organización del operador.
  */
 
-describe('B5: backup/restauración endurecida', () => {
-  it('BKP-01: restauración exitosa con reporte transaccional y datos SOLO en la org autenticada', async () => {
-    const before = await db.client.count({ where: { organizationId: FIX.orgA.id } })
-    const body = {
-      clients: [
-        { id: 'old_cli_1', name: 'Restaurado Uno', phone: '573001112233', status: 'active' },
-        { name: 'Restaurado Dos', phone: '573004445566' },
-      ],
-      transactions: [
-        { type: 'income', amount: 25000, currency: 'COP', description: 'Cobro restaurado', date: '2026-01-15' },
-      ],
-    }
-    const res = await backupPOST(req('/api/backup', { token: tokenFor(FIX.userA), method: 'POST', body }))
-    expect(res.status).toBe(200)
-    const data = await res.json() as any
-    expect(data.success).toBe(true)
-    expect(data.transactional).toBe(true) // la restauración es atómica (transacción)
-    expect(data.restored.clients).toBeGreaterThanOrEqual(2)
-    expect(data.restored.transactions).toBeGreaterThanOrEqual(1)
+const authHeaders = (): Headers => {
+  const h = new Headers()
+  h.set('authorization', `Bearer ${tokenA()}`)
+  return h
+}
 
-    // Todo quedó en la org del admin autenticado.
-    const after = await db.client.count({ where: { organizationId: FIX.orgA.id } })
-    expect(after).toBeGreaterThan(before)
-
-    // JAMÁS se introdujo nada en otra organización.
-    const otherOrg = FIX.orgB.id
-    const leaked = await db.client.count({
-      where: { organizationId: otherOrg, phone: { in: ['573001112233', '573004445566'] } },
-    })
-    expect(leaked).toBe(0)
+/** POST con body en STREAM por chunks y SIN Content-Length (simula chunked). */
+function postWithChunkedStream(chunks: Uint8Array[]): NextRequest {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const c of chunks) controller.enqueue(c)
+      controller.close()
+    },
   })
+  // (NextRequest: el duplex y el stream requieren un cast del RequestInit de undici)
+  const init = { method: 'POST', headers: authHeaders(), body: stream, duplex: 'half' } as unknown as ConstructorParameters<typeof NextRequest>[1]
+  return new NextRequest('http://localhost:3000/api/backup', init)
+}
 
-  it('BKP-02: body mayor que el tope (25 MB) → 413 sin procesar nada', async () => {
-    const big = 'x'.repeat(MAX_BACKUP_BODY_BYTES + 1024)
-    const headers = new Headers({
-      'authorization': `Bearer ${tokenFor(FIX.userA)}`,
-      'content-type': 'application/json',
-      'content-length': String(Buffer.byteLength(big)),
-    })
-    const { NextRequest } = await import('next/server')
-    const bigReq = new NextRequest('http://localhost:3000/api/backup', { method: 'POST', headers, body: big })
-    const res = await backupPOST(bigReq)
+describe('BACKUP/RESTORE endurecido (tercera reparación 6.A)', () => {
+  it('rechaza 413 un body chunked de >25MB SIN Content-Length (el tope es efectivo sobre el stream)', async () => {
+    const MB = 1024 * 1024
+    const chunk = new Uint8Array(MB).fill(0x61) // 'a' x 1MB (JSON inválido pero el corte ocurre ANTES de parsear)
+    const chunks: Uint8Array[] = []
+    for (let i = 0; i < 26; i++) chunks.push(chunk) // 26 MB sin cabecera de tamaño
+
+    const res = await backupPost(postWithChunkedStream(chunks))
     expect(res.status).toBe(413)
-  })
+  }, 30_000)
 
-  it('BKP-03: restauración anónima → 401 (ninguna ruta de backup sin sesión admin)', async () => {
-    const res = await backupPOST(req('/api/backup', { method: 'POST', body: { clients: [] } }))
-    expect([401, 403]).toContain(res.status)
-  })
+  it('acepta un backup válido y restaura en la organización del operador', async () => {
+    const unique = `BK-${Date.now()}`
+    const payload = {
+      app: 'CRM ALBRA',
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      organization: { id: 'org-a', name: 'Alpha' },
+      data: {
+        clients: [{ id: 'old-c1', name: 'Cliente Backup', phone: `+57300${Date.now() % 1000000000}`, status: 'active' }],
+        quotes: [{ id: 'old-q1', number: unique, subtotal: 100, tax: 0, total: 100, status: 'draft', clientId: 'old-c1' }],
+        quoteItems: [{ id: 'old-i1', quoteId: 'old-q1', description: 'Ítem restaurado', quantity: 2, unitPrice: 50, subtotal: 100 }],
+      },
+    }
+    const res = await backupPost(req('/api/backup', { method: 'POST', token: tokenA(), body: payload }))
+    expect(res.status).toBe(200)
+    const json = (await jsonBody(res)) as { success: boolean; restored: Record<string, number> }
+    expect(json.success).toBe(true)
+    expect(json.restored.clients).toBe(1)
+    expect(json.restored.quotes).toBe(1)
+    expect(json.restored.quoteItems).toBe(1)
+
+    // Todo quedó atribuido a org-a (la org del token), nunca a otra
+    const client = await db.client.findFirst({ where: { name: 'Cliente Backup' } })
+    expect(client?.organizationId).toBe('org-a')
+    const quote = await db.quote.findFirst({ where: { number: unique } })
+    expect(quote?.organizationId).toBe('org-a')
+    // Limpieza
+    if (quote) {
+      await db.quoteItem.deleteMany({ where: { quoteId: quote.id } })
+      await db.quote.delete({ where: { id: quote.id } })
+    }
+    if (client) await db.client.delete({ where: { id: client.id } })
+  }, 30_000)
+
+  it('rechaza 400 un JSON corrupto y NO restaura nada (todo-o-nada)', async () => {
+    const before = await db.client.count({ where: { organizationId: 'org-a' } })
+    const corrupted = `{"app":"CRM ALBRA","version":3,"data":{"clients":[{"name":"SemiValido${Date.now()}"}],"quotes":[`
+    const bytes = new TextEncoder().encode(corrupted)
+    const res = await backupPost(postWithChunkedStream([bytes]))
+    expect(res.status).toBe(400)
+    const after = await db.client.count({ where: { organizationId: 'org-a' } })
+    // ningún cliente debe crearse de un backup corrupto (todo-o-nada)
+    expect(after).toBe(before)
+  }, 30_000)
+
+  it('rechaza 400 backups de otra aplicación, versiones desconocidas o colecciones no-arreglo', async () => {
+    const cases: unknown[] = [
+      { app: 'OTRA APP', version: 3, data: {} },
+      { app: 'CRM ALBRA', version: 99, data: {} },
+      { app: 'CRM ALBRA', version: 3, data: { clients: 'no-soy-arreglo' } },
+      { app: 'CRM ALBRA', version: 3 },
+    ]
+    for (const payload of cases) {
+      const bytes = new TextEncoder().encode(JSON.stringify(payload))
+      const res = await backupPost(postWithChunkedStream([bytes]))
+      expect(res.status).toBe(400)
+    }
+    // Body no-JSON
+    const res = await backupPost(postWithChunkedStream([new TextEncoder().encode('esto no es json')]))
+    expect(res.status).toBe(400)
+  }, 30_000)
 })

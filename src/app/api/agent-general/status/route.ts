@@ -12,7 +12,7 @@ import { checkAgentHealth, isAgentBridgeEnabled } from '@/lib/albra-agent-bridge
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    requireAuth(req)
+    await requireAuth(req)
     const force = req.nextUrl.searchParams.get('refresh') === 'true'
     const health = await checkAgentHealth(force)
 

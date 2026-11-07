@@ -13,7 +13,7 @@ import { parseIntParam } from '@/lib/api-helpers'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const limit = parseIntParam(req, 'limit', 50, 1, 200)
     const page = parseIntParam(req, 'page', 1)
     const offsetParam = qparam(req, 'offset')

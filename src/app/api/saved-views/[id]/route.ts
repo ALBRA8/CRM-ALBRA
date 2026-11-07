@@ -6,7 +6,7 @@ import { db } from '@/lib/db'
 /** PUT /api/saved-views/:id — actualiza (solo propias o admin) */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const view = await db.savedView.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!view) return json({ error: 'Vista no encontrada' }, { status: 404 })
@@ -36,7 +36,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/saved-views/:id — elimina (solo propias o admin) */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const view = await db.savedView.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!view) return json({ error: 'Vista no encontrada' }, { status: 404 })

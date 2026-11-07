@@ -13,7 +13,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const integration = await getIntegration(auth.orgId)
     const state = parseTelegramState(integration.telegramBotTokenEnc)
     return json({
@@ -37,7 +37,7 @@ interface TelegramConfigBody {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = (await req.json().catch(() => ({}))) as TelegramConfigBody
     const integration = await getIntegration(auth.orgId)
     const current = parseTelegramState(integration.telegramBotTokenEnc)
@@ -86,7 +86,7 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     await db.integration.update({
       where: { organizationId: auth.orgId },
       data: { telegramBotTokenEnc: null, enableTelegram: false },

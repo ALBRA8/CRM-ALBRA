@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import { requireAuth, DOWNLOAD_AUTH_OPTS, HttpError } from '@/lib/auth'
+import { requireAuth, HttpError } from '@/lib/auth'
 import { handle } from '../../_lib/shared'
 import { quoteDiscountAmount } from '../../_lib/quotes'
 import { buildQuotePdf } from '../../_lib/pdf'
@@ -11,13 +11,11 @@ import { buildQuotePdf } from '../../_lib/pdf'
  * Motor PDF propio sin dependencias (src/app/api/_lib/pdf.ts): el detalle
  * vive en la UI y los totales se recalculan de la misma fuente (Quote +
  * QuoteItem) que el endpoint de detalle. Multi-tenant: solo cotizaciones de
- * la organización del usuario autenticado. Endpoint de descarga: acepta
- * ?token= (JWT de sesión por compatibilidad o download-token) y envía
- * Referrer-Policy: no-referrer.
+ * la organización del usuario autenticado.
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req, DOWNLOAD_AUTH_OPTS)
+    const auth = await requireAuth(req)
     const id = req.nextUrl.searchParams.get('id')
     if (!id) throw new HttpError(400, 'Falta el parámetro id')
 
@@ -65,7 +63,6 @@ export async function GET(req: NextRequest) {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${quote.number}.pdf"`,
         'Cache-Control': 'no-store',
-        'Referrer-Policy': 'no-referrer',
       },
     })
   })

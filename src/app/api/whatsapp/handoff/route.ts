@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server'
+import { safeEquals } from '@/lib/integrations'
 import { json } from '@/lib/api-helpers'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { notifyOrganization } from '@/lib/push'
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
   const provided = req.headers.get('x-internal-secret') || ''
   const expected = process.env.INTERNAL_API_SECRET || ''
 
-  if (!expected || !provided || provided !== expected) {
+  if (!safeEquals(provided, expected)) {
     return json({ error: 'Unauthorized' }, { status: 401 })
   }
 

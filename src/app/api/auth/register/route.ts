@@ -4,16 +4,10 @@ import { db } from '@/lib/db'
 import { hashPassword, signToken, slugify, HttpError } from '@/lib/auth'
 import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { createStandardPipeline, createOrgSettings } from '../../_lib/demo-seed'
-import { rateLimit, rateLimited, clientIp } from '@/lib/rate-limit'
 
-/** POST /api/auth/register — crea Organization + User owner + semillas básicas.
- * Reparación integral B2: rate limit 5/hora por IP (creación de cuentas y
- * organizaciones es costosa: evita granjas de organizaciones demo). */
+/** POST /api/auth/register — crea Organization + User owner + semillas básicas. */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const rl = rateLimit(`register:${clientIp(req)}`, 5, 3_600_000)
-    if (!rl.ok) return rateLimited(rl)
-
     const body = await readBody(req)
     requireFields(body, ['name', 'email', 'password'])
 
@@ -55,8 +49,7 @@ export async function POST(req: NextRequest) {
     await createStandardPipeline(org.id)
     await createOrgSettings(org.id)
 
-    // B4: el JWT lleva tokenVersion para la revocación de sesiones
-    const token = signToken({ userId: user.id, orgId: org.id, role: user.role, email: user.email, tokenVersion: user.tokenVersion })
+    const token = signToken({ userId: user.id, orgId: org.id, role: user.role, email: user.email, tv: user.tokenVersion })
     return jsonWithSession({
       token,
       user: { id: user.id, name: user.name, email: user.email, company: user.company, phone: user.phone, role: user.role, avatar: user.avatar },

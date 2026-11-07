@@ -20,7 +20,7 @@ interface GEvent {
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const accessToken = await getAccessToken(auth.orgId)
     if (!accessToken) return json({ connected: false, events: [], note: 'Google Calendar no conectado' })
 
@@ -55,7 +55,7 @@ interface CalendarEventBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as CalendarEventBody
     requireFields(body as unknown as Record<string, unknown>, ['title', 'startsAt'])
     const startsAt = new Date(String(body.startsAt))

@@ -7,7 +7,7 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 /** POST /api/google/disconnect — revoca la conexión local (borra refresh token) */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     await clearGoogleConnection(auth.orgId)
     await auditAndTimeline({
       orgId: auth.orgId,

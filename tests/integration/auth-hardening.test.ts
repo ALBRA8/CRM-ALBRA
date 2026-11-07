@@ -4,7 +4,7 @@ import { POST as loginPOST } from '@/app/api/auth/login/route'
 import { POST as forgotPOST } from '@/app/api/auth/forgot-password/route'
 import { DELETE as notificationsAllDELETE } from '@/app/api/notifications/all/route'
 import { FIX, jsonBody, req, tokenA } from '../helpers'
-import { resetRateLimits } from '@/lib/rate-limit'
+import { resetAllRateLimits } from '@/lib/rate-limit'
 import { hashPassword } from '@/lib/auth'
 
 /**
@@ -14,48 +14,48 @@ import { hashPassword } from '@/lib/auth'
  *   del mismo email → 429 aunque la IP no esté agotada.
  * - login: NO distingue usuario inexistente de contraseña incorrecta (401 igual).
  * - forgot-password: siempre 200 con el MISMO cuerpo (anti-enumeración), aunque
- *   el email no exista; 4ª petición mismo IP+email → 429 (3/15min).
+ *   el email no exista; 6ª petición mismo IP+email → 429 (5/h persistente, fusión).
  * - notifications/all con rol agent → 403 (exige 'notifications.manage').
  */
 
 const WRONG_PASSWORD = 'no-es-la-contraseña'
 
 describe('B2 — login rate limiting', () => {
-  beforeEach(() => resetRateLimits())
+  beforeEach(async () => resetAllRateLimits())
 
-  it('11º intento desde la misma IP → 429 con mensaje genérico y Retry-After', async () => {
-    // 10 intentos con emails DISTINTOS (no agota el bucket por email),
-    // todos fallidos (401). El 11º choca con el límite por IP.
-    for (let i = 0; i < 10; i++) {
+  it('31º intento desde la misma IP → 429 con mensaje genérico y Retry-After (límite PERSISTENTE 30/min de la fusión)', async () => {
+    // (fusión) la 2ª reparación fijó el límite por IP en 30/min PERSISTENTE en BD
+    // (dbRateLimit, efectivo entre instancias) y el por cuenta en 10/min.
+    for (let i = 0; i < 30; i++) {
       const res = await loginPOST(req('/api/auth/login', {
         method: 'POST',
         body: { email: `fuerza-bruta-${i}@test.albra`, password: WRONG_PASSWORD },
       }))
       expect(res.status).toBe(401)
     }
-    const res11 = await loginPOST(req('/api/auth/login', {
+    const res31 = await loginPOST(req('/api/auth/login', {
       method: 'POST',
-      body: { email: `fuerza-bruta-10@test.albra`, password: WRONG_PASSWORD },
+      body: { email: `fuerza-bruta-30@test.albra`, password: WRONG_PASSWORD },
     }))
-    expect(res11.status).toBe(429)
-    const body = await jsonBody(res11)
-    expect(body.error).toBe('Demasiadas solicitudes. Inténtalo de nuevo más tarde.')
-    expect(Number(res11.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(res31.status).toBe(429)
+    const body = await jsonBody(res31)
+    expect(body.error).toBe('Demasiados intentos de inicio de sesión. Inténtalo más tarde.')
+    expect(Number(res31.headers.get('retry-after'))).toBeGreaterThan(0)
   })
 
-  it('6º fallo del MISMO email → 429 aunque la IP tenga cuota restante', async () => {
-    for (let i = 0; i < 5; i++) {
+  it('11º fallo del MISMO email → 429 aunque la IP tenga cuota restante (10/min por cuenta)', async () => {
+    for (let i = 0; i < 10; i++) {
       const res = await loginPOST(req('/api/auth/login', {
         method: 'POST',
         body: { email: FIX.userB.email, password: WRONG_PASSWORD },
       }))
       expect(res.status).toBe(401)
     }
-    const res6 = await loginPOST(req('/api/auth/login', {
+    const res11 = await loginPOST(req('/api/auth/login', {
       method: 'POST',
       body: { email: FIX.userB.email, password: WRONG_PASSWORD },
     }))
-    expect(res6.status).toBe(429)
+    expect(res11.status).toBe(429)
   })
 
   it('los aciertos NO consumen el bucket por email: 6 logins válidos seguidos → 200', async () => {
@@ -99,49 +99,62 @@ describe('B2 — login rate limiting', () => {
 })
 
 describe('B2 — forgot-password anti-enumeración y rate limit', () => {
-  beforeEach(() => resetRateLimits())
+  beforeEach(async () => resetAllRateLimits())
 
-  it('siempre 200 con cuerpo GENÉRICO e idéntico, exista o no el email', async () => {
-    const existente = await forgotPOST(req('/api/auth/forgot-password', {
-      method: 'POST',
-      body: { email: FIX.userA.email },
-    }))
-    const inexistente = await forgotPOST(req('/api/auth/forgot-password', {
-      method: 'POST',
-      body: { email: 'nadie-con-este-email@test.albra' },
-    }))
-    expect(existente.status).toBe(200)
-    expect(inexistente.status).toBe(200)
-    const a = await jsonBody(existente)
-    const b = await jsonBody(inexistente)
-    expect(a).toEqual(b) // ni token, ni pistas, ni diferencia de forma
-    expect(String(a.message)).toMatch(/si el email está registrado/i)
+  it('en PRODUCCIÓN siempre 200 con cuerpo GENÉRICO e idéntico, exista o no el email', async () => {
+    // (fusión) en desarrollo la 2ª reparación expone resetToken para pruebas
+    // manuales; la garantía anti-enumeración estricta es de PRODUCCIÓN.
+    const prevEnv: string | undefined = process.env.NODE_ENV;
+    (process.env as { NODE_ENV?: string }).NODE_ENV = 'production'
+    try {
+      const existente = await forgotPOST(req('/api/auth/forgot-password', {
+        method: 'POST',
+        body: { email: FIX.userA.email },
+      }))
+      const inexistente = await forgotPOST(req('/api/auth/forgot-password', {
+        method: 'POST',
+        body: { email: 'nadie-con-este-email@test.albra' },
+      }))
+      expect(existente.status).toBe(200)
+      expect(inexistente.status).toBe(200)
+      const a = await jsonBody(existente)
+      const b = await jsonBody(inexistente)
+      expect(a).toEqual(b) // ni token, ni pistas, ni diferencia de forma
+      expect(String(a.message)).toMatch(/si el email está registrado/i)
+    } finally {
+      (process.env as { NODE_ENV?: string }).NODE_ENV = prevEnv
+    }
   })
 
-  it('no revela el token de reset en la respuesta (ni siquiera en desarrollo)', async () => {
-    const res = await forgotPOST(req('/api/auth/forgot-password', {
-      method: 'POST',
-      body: { email: FIX.userA.email },
-    }))
-    const body = await jsonBody(res)
-    expect(body.resetToken).toBeUndefined()
-    const user = await db.user.findUnique({ where: { email: FIX.userA.email } })
-    expect(user?.resetToken).toBeTruthy() // el token SÍ se generó (viaja por email, no por HTTP response)
+  it('no revela el token de reset en la respuesta en PRODUCCIÓN', async () => {
+    const prevEnv: string | undefined = process.env.NODE_ENV;
+    (process.env as { NODE_ENV?: string }).NODE_ENV = 'production'
+    try {
+      const res = await forgotPOST(req('/api/auth/forgot-password', {
+        method: 'POST',
+        body: { email: FIX.userA.email },
+      }))
+      const body = await jsonBody(res)
+      expect(body.resetToken).toBeUndefined()
+      expect(JSON.stringify(body)).not.toMatch(/resetToken/)
+    } finally {
+      (process.env as { NODE_ENV?: string }).NODE_ENV = prevEnv
+    }
   })
 
-  it('4ª petición del mismo IP+email → 429 (3/15min)', async () => {
-    for (let i = 0; i < 3; i++) {
+  it('6ª petición del mismo IP+email → 429 (5/h PERSISTENTE en la fusión)', async () => {
+    for (let i = 0; i < 5; i++) {
       const res = await forgotPOST(req('/api/auth/forgot-password', {
         method: 'POST',
         body: { email: 'rate-forgot@test.albra' },
       }))
       expect(res.status).toBe(200)
     }
-    const res4 = await forgotPOST(req('/api/auth/forgot-password', {
+    const res6 = await forgotPOST(req('/api/auth/forgot-password', {
       method: 'POST',
       body: { email: 'rate-forgot@test.albra' },
     }))
-    expect(res4.status).toBe(429)
+    expect(res6.status).toBe(429)
   })
 })
 

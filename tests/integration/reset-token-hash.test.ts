@@ -134,12 +134,18 @@ describe('B3 — forgot-password guarda SOLO el hash (32 bytes de aleatoriedad)'
     expect(user?.resetTokenExp?.getTime()).toBeGreaterThan(Date.now())
   })
 
-  it('la respuesta de forgot NO contiene el token (ni en desarrollo)', async () => {
-    const res = await forgotPOST(req('/api/auth/forgot-password', {
-      method: 'POST',
-      body: { email: TEST_EMAIL },
-    }))
-    const body = await jsonBody(res)
-    expect(Object.keys(body)).toEqual(['message'])
+  it('la respuesta de forgot NO contiene el token en PRODUCCIÓN (en desarrollo se expone solo para pruebas manuales)', async () => {
+    const prevEnv: string | undefined = process.env.NODE_ENV;
+    (process.env as { NODE_ENV?: string }).NODE_ENV = 'production'
+    try {
+      const res = await forgotPOST(req('/api/auth/forgot-password', {
+        method: 'POST',
+        body: { email: TEST_EMAIL },
+      }))
+      const body = await jsonBody(res)
+      expect(Object.keys(body)).toEqual(['message'])
+    } finally {
+      (process.env as { NODE_ENV?: string }).NODE_ENV = prevEnv
+    }
   })
 })

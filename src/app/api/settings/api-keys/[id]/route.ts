@@ -10,7 +10,7 @@ import { handle, json } from '../../../_lib/shared'
  */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const { id } = await params
     const existing = await db.apiKey.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true, revokedAt: true } })
     if (!existing) throw new HttpError(404, 'Clave no encontrada')
