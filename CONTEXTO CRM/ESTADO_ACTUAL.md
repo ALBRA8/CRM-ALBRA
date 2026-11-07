@@ -107,3 +107,27 @@ Los heads de las tres ramas y los resultados de Actions se consultaron directame
 ### Siguiente paso
 
 Realizar una revisión final independiente de los diffs exactos y de los artefactos de prueba, priorizando la idempotencia efectiva del daemon y la clasificación real/mock de la integración. Si esa revisión no encuentra bloqueos, preparar los tres PR para revisión humana; abrirlos solo con autorización expresa. No desplegar ni activar envíos reales como parte de esa preparación.
+
+
+## Revisión independiente final — resultado bloqueante B2 (2026-11-06)
+
+Revisión de lectura sobre los heads publicados de las tres ramas correctivas. No se modificó código.
+
+### Estado por bloqueo
+
+- **B1 CRM — APROBADO A NIVEL DE CÓDIGO/CI:** `dashboard/route.ts` invoca `stripForeignClients` sobre oportunidades, reservas y eventos de timeline antes de serializar. `tests/unit/dashboard-org-isolation.test.ts` usa el handler real, JWT firmado y BD de prueba, y comprueba que no aparezcan nombre, email ni ID del cliente de la otra organización. El run [42314688847](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/42314688847) terminó success en el commit de código `f9e36f2f7dbe02f22809615910be1f5c8f3af7cf`. La rama tiene después un commit documental `8f93c2177e614584be626f991d4a9a0b09e2354c`; el run citado no se ejecutó sobre ese commit posterior (solo cambia CONTEXTO CRM).
+- **B2 WHATSPOWER — BLOQUEADO:** el transporte clasifica 5xx, timeout, red y respuesta ilegible como `UNCERTAIN`; el reingreso se bloquea mientras la clave esté UNCERTAIN. Sin embargo, `src/whatsapp-daemon/daemon.mjs` recibe el POST `/send` y solo lee `to` y `text`: no lee ni persiste `idempotencyKey` ni `X-Correlation-Id`, y no aplica deduplicación. Además, `journaledEffect()` deja el efecto `PENDING` antes de llamar al transporte; si el proceso cae tras la aceptación externa, `reserveIdempotency()` permite tomar de nuevo un `PROCESSING` con lease vencido y `journaledEffect()` vuelve a ejecutar `fn()` cuando encuentra un efecto PENDING. La reconciliación también re-ejecuta el efecto pendiente. Esto mantiene abierta una ventana real de duplicación.
+- **Prueba B2 insuficiente:** `tests/transport-ambiguity.test.ts` comprueba clasificación y bloqueo de reingreso tras un 502, pero su transporte simulado no registra una aceptación externa en el primer intento. T-B2-04 simula 502 y después un envío exitoso; no reproduce “proveedor aceptó y se perdió la respuesta”. Por tanto, no demuestra idempotencia externa ni exactamente una vez.
+- **B3 identidad de servicio — PARCIALMENTE VERIFICADO:** WHATSPOWER valida `X-Org-Id` + Bearer contra credenciales vinculadas a la organización en los endpoints internos de locks/supresión. Las pruebas W-B3 arrancan el servidor 2A real en localhost y verifican accesos cruzados. ULTRA resuelve credenciales por organización y envía `X-Org-Id`; sus pruebas de cliente usan un servidor stub. No encontré evidencia reproducible de una ejecución integrada de ambos procesos reales en esta rama.
+- **B4 ULTRA — APROBADO A NIVEL DE CÓDIGO/CI:** `claimNextItem()` exige organización no nula e igual a la campaña; el worker vuelve a comprobarla contra BD antes del despacho y cuarentena NULL/organización ajena. `tests/null-org-quarantine.test.ts` cubre backfill, NULL, org ajena y corrupción después del claim. El run [42314700665](https://github.com/ALBRA8/WHATSPOWER-ULTRA/actions/runs/42314700665) terminó success en `d6d0cc2dd28ad3c3dd86e7c73596a139add3264d`.
+
+### Integración y CI
+
+- El archivo `tests/contracts-integration.test.ts` de ULTRA levanta un servidor daemon mock y un servidor 2A mock. Es una prueba contractual con stubs, no integración real de los tres servicios.
+- Los runs verificados por SHA concluyen success: CRM [42314688847](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/42314688847), WHATSPOWER [42314696590](https://github.com/ALBRA8/WHATSPOWER/actions/runs/42314696590), ULTRA [42314700665](https://github.com/ALBRA8/WHATSPOWER-ULTRA/actions/runs/42314700665).
+- No se encontró en las ramas correctivas de WHATSPOWER/ULTRA el artefacto `docs/EVIDENCIA-CUARTA-FASE.md` ni `docs/integracion/results-cuarta-fase.json` que se había mencionado previamente. No se certifica el resultado “15/15 integración real”.
+- Esta revisión fue estática sobre código, tests y metadatos de GitHub. No ejecuté los tests localmente ni accedí a un daemon Baileys desplegado.
+
+### Siguiente acción requerida
+
+No preparar ni abrir los PR todavía. Cerrar B2 primero: el daemon debe recibir y persistir una clave de idempotencia scoped por organización antes del envío; solicitudes repetidas de una clave ya PENDING/IN_FLIGHT/UNCERTAIN deben devolver estado incierto sin reenviar. Si Baileys no ofrece una clave externa consultable/deduplicable, la caída tras aceptación debe permanecer UNCERTAIN y requerir reconciliación con evidencia, nunca reenvío automático. Añadir una prueba de crash-window que simule aceptación real del stub antes de perder la respuesta y demuestre que el segundo intento no produce un segundo envío. Después ejecutar una prueba integrada con 2A, ULTRA y daemon en procesos separados y etiquetar los mocks restantes.
