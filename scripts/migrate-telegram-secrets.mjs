@@ -34,6 +34,23 @@ function encryptSecret(plain) {
   return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`
 }
 
+/** (reauditoría ciclo 2) Descifrado réplica de src/lib/crypto.ts — imprescindible
+ *  para el estado parcial "cifrado sin hash": el hash SIEMPRE se deriva del
+ *  VALOR EN CLARO (hashear el ciphertext rompería el lookup del webhook para siempre). */
+function decryptSecretMaybe(payload) {
+  if (!payload) return null
+  const s = String(payload)
+  if (!s.startsWith('v1:')) return s // valor plano legacy
+  try {
+    const [, ivB64, tagB64, dataB64] = s.split(':')
+    const d = createDecipheriv('aes-256-gcm', getKey(), Buffer.from(ivB64, 'base64'))
+    d.setAuthTag(Buffer.from(tagB64, 'base64'))
+    return Buffer.concat([d.update(Buffer.from(dataB64, 'base64')), d.final()]).toString('utf8')
+  } catch {
+    return null
+  }
+}
+
 async function main() {
   const rows = await db.integration.findMany({
     where: { telegramSecret: { not: null } },
@@ -51,7 +68,14 @@ async function main() {
       continue
     }
     try {
-      const plain = alreadyEncrypted ? secret : secret // valor en claro (decryptSecret devolvería el plano tal cual)
+      // (reauditoría ciclo 2) El hash SIEMPRE se calcula sobre el VALOR EN CLARO.
+      let plain
+      if (alreadyEncrypted) {
+        plain = decryptSecretMaybe(secret)
+        if (!plain) throw new Error('ciphertext ilegible con esta clave (¿APP_ENCRYPTION_KEY distinta?) — se omite para no fabricar un hash corrupto')
+      } else {
+        plain = secret
+      }
       const enc = alreadyEncrypted ? secret : encryptSecret(plain)
       const hash = createHash('sha256').update(plain).digest('hex')
       await db.integration.update({

@@ -200,8 +200,21 @@ export async function POST(req: NextRequest) {
     )
 
     for (const value of processableValues.length ? processableValues : [matchedValue as WaValue]) {
-    // Estados de entrega (sent/delivered/read) — solo timeline si hay clientId conocido
+    // Estados de entrega (sent/delivered/read) — dedup por messageId también
+    // aquí (reauditoría ciclo 2): los reintentos de Meta duplicaban el timeline
+    // de estados aunque los mensajes ya se filtraran.
     for (const status of value.statuses || []) {
+      if (status.id) {
+        const seenStatus = await db.timelineEvent.findFirst({
+          where: {
+            organizationId: matchedOrgId,
+            type: 'whatsapp',
+            metadata: { contains: `"messageId":"${status.id}"` },
+          },
+          select: { id: true },
+        })
+        if (seenStatus) continue
+      }
       await recordTimelineEvent({
         orgId: matchedOrgId,
         type: 'whatsapp',
@@ -249,8 +262,11 @@ export async function POST(req: NextRequest) {
       // (A4-02, auditoría 2026-11-11) Dedup DURABLE por waMessageId: Meta
       // reintenta el webhook ante timeouts y una doble ejecución duplicaría
       // timeline + respuestas IA + reenvío al puente. Lookup previo del mensaje
-      // ya registrado; el índice único parcial (organizationId, waMessageId) de
-      // la migración 4_audit_indexes es la segunda cerradura.
+      // ya registrado en TimelineEvent. Nota honesta (reauditoría ciclo 2): el
+      // índice único parcial (organizationId, waMessageId) de la migración
+      // 4_audit_indexes cierra la vía de escritura del DAEMON (tabla
+      // WhatsAppMessage); este lookup check-then-act conserva una ventana
+      // TOCTOU residual ante POSTs verdaderamente simultáneos.
       if (message.id) {
         const seen = await db.timelineEvent.findFirst({
           where: {

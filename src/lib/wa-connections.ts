@@ -116,7 +116,10 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
   // transacción: el chequeo separado del create permitía la carrera — dos
   // Embedded Signup concurrentes superaban el límite del plan o se pasaban el
   // findUnique mutuamente (el UNIQUE(phoneNumberId) terminaba en 500 sin manejo).
-  // SQLite serializa escrituras → la transacción es atómica.
+  // Nota honesta (reauditoría ciclo 2): Prisma abre BEGIN DEFERRED, así que la
+  // re-verificación del límite dentro del tx es best-effort; la cerradura
+  // DEFINITIVA contra duplicados es el UNIQUE(phoneNumberId), cuyo P2002 se
+  // traduce aquí a 'duplicate' sin filtrar la organización dueña.
   let outcome: { blocked: 'plan_limit'; gate: { limit: number; planLabel: string } } | { blocked: 'duplicate' } | { blocked: null; conn: { id: string; phoneNumber: string; status: string } }
   try {
     outcome = await db.$transaction(async (tx) => {

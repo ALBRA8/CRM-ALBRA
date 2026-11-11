@@ -83,8 +83,9 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
   // Reset form when dialog opens or editClient changes
   // (A3-09, auditoría 2026-11-11) ERA useState(() => {...}): el initializer de
   // useState solo corre en el PRIMER render — al abrir el diálogo para EDITAR
-  // otro cliente, el formulario seguía mostrando los datos anteriores. Es un
-  // efecto, no un estado: useEffect.
+  // otro cliente, el formulario seguía mostrando los datos anteriores.
+  // (reauditoría ciclo 2) CON array de dependencias: sin él el efecto corría en
+  // CADA render y borraba cada tecla del usuario (form inutilizable).
   useEffect(() => {
     setForm({
       name: editClient?.name ?? '',
@@ -99,7 +100,8 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
       tags: editClient?.tags ?? '',
       notes: editClient?.notes ?? '',
     })
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editClient])
 
   // Load custom fields when dialog opens
   useEffect(() => {

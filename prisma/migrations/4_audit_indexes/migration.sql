@@ -12,9 +12,17 @@ CREATE INDEX "Opportunity_organizationId_stageId_idx" ON "Opportunity"("organiza
 CREATE UNIQUE INDEX "WhatsAppMessage_org_wamid_uidx"
   ON "WhatsAppMessage"("organizationId", "waMessageId") WHERE "waMessageId" IS NOT NULL;
 
--- A2-21: cerradura contra contactos duplicados por organización. La limpieza
--- conserva el cliente MÁS ANTIGUO de cada (organizationId, phone): los duplicados
--- de carreras de webhooks son recientes y carecen de historial.
+-- A2-21: cerradura contra contactos duplicados por organización.
+-- (reauditoría ciclo 2) Respuesto REVERSIBLE antes de limpiar: la tabla de
+-- respaldo conserva las filas eliminadas. Nota honesta: MIN(id) sobre cuid es
+-- una aproximación de "más antiguo" (orden lexicográfico), suficiente para
+-- duplicados de carreras de webhooks (recientes, sin historial); el respaldo
+-- cubre cualquier caso atípico.
+DROP TABLE IF EXISTS "Client_dedup_backup_20261111";
+CREATE TABLE "Client_dedup_backup_20261111" AS
+  SELECT * FROM "Client" WHERE "phone" IS NOT NULL AND "id" NOT IN (
+    SELECT MIN("id") FROM "Client" WHERE "phone" IS NOT NULL GROUP BY "organizationId", "phone"
+  );
 DELETE FROM "Client" WHERE "phone" IS NOT NULL AND "id" NOT IN (
   SELECT MIN("id") FROM "Client" WHERE "phone" IS NOT NULL GROUP BY "organizationId", "phone"
 );
