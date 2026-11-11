@@ -73,12 +73,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const finalAmount = data.amount !== undefined ? (data.amount as number) : existing.amount
     const finalTitle = data.title !== undefined ? (data.title as string) : existing.title
 
+    // (A4-03) Cambio efectivo de etapa: la TRANSICIÓN de estado se marca aquí
+    // (los efectos auditoría/workflows/bridge ocurren POST-COMMIT, tras update).
     let stageChanged = false
     if (newStage && newStage.id !== (existing.stage?.id ?? null)) {
       stageChanged = true
-      const fromName = existing.stage?.name ?? 'Sin etapa'
-      const toName = newStage.name
-
       if (newStage.isWon && existing.status !== 'won') {
         data.status = 'won'
         data.closedAt = new Date()
@@ -86,7 +85,41 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         data.status = 'lost'
         data.closedAt = new Date()
       }
+    }
 
+    // Notas envelope (interest/nextAction/nextActionDate/notes)
+    if ('interest' in body || 'nextAction' in body || 'nextActionDate' in body || 'notes' in body) {
+      data.notes = buildOppMeta(body, parseOppMeta(existing.notes))
+    }
+
+    // ================================================================
+    // (A4-03, auditoría 2026-11-11) EL UPDATE PRIMERO, con CLAIM CONDICIONAL
+    // para la transición a ganado: dos PUT concurrentes NO pueden ganar dos
+    // veces — solo el updateMany que logra `status != 'won'` crea el ingreso.
+    // Además, auditoría/workflows/bridge se ejecutan POST-COMMIT (antes: si el
+    // update fallaba, el timeline ya registraba un stage_change inexistente).
+    // ================================================================
+    const wonTransition = stageChanged && !!newStage?.isWon && existing.status !== 'won'
+    if (wonTransition) {
+      const claim = await db.opportunity.updateMany({ where: { id, status: { not: 'won' } }, data })
+      if (claim.count === 0) {
+        throw new HttpError(409, 'La oportunidad ya fue cerrada como ganada por otra operación')
+      }
+    }
+
+    const updated = await db.opportunity.update({
+      where: { id },
+      data,
+      include: {
+        stage: true,
+        client: { select: { id: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
+      },
+    })
+
+    // ---------- POST-COMMIT: auditoría, workflows y bridge ----------
+    if (stageChanged) {
+      const fromName = existing.stage?.name ?? 'Sin etapa'
+      const toName = newStage!.name
       await auditAndTimeline({
         orgId: auth.orgId,
         userId: auth.userId,
@@ -146,22 +179,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       })
     }
 
-    // Notas envelope (interest/nextAction/nextActionDate/notes)
-    if ('interest' in body || 'nextAction' in body || 'nextActionDate' in body || 'notes' in body) {
-      data.notes = buildOppMeta(body, parseOppMeta(existing.notes))
-    }
-
-    const updated = await db.opportunity.update({
-      where: { id },
-      data,
-      include: {
-        stage: true,
-        client: { select: { id: true, name: true, email: true, phone: true, lastContactAt: true, createdAt: true } },
-      },
-    })
-
     // Oportunidad ganada → Transaction income automática
-    if (stageChanged && newStage && newStage.isWon && updated.status === 'won' && existing.status !== 'won' && updated.amount > 0) {
+    // (A4-03) wonTransition: exactamente UNA llamada crea el ingreso (claim único).
+    if (wonTransition && updated.amount > 0) {
       const tx = await db.transaction.create({
         data: {
           organizationId: auth.orgId,

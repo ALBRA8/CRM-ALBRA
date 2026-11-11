@@ -11,6 +11,7 @@ import {
   buildNichoContext,
   getHandoffKeywords,
   sendWhatsAppCloud,
+  safeEquals,
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
 import { forwardInboundToWhatspower } from '@/lib/whatspower-bridge'
@@ -66,7 +67,8 @@ export async function GET(req: NextRequest) {
   if (mode !== 'subscribe') return new Response('Forbidden', { status: 403 })
 
   const globalToken = process.env.WHATSAPP_VERIFY_TOKEN
-  if (globalToken && token === globalToken) {
+  // (A2-12) comparación en tiempo constante también en la verificación GET.
+  if (globalToken && safeEquals(token, globalToken)) {
     return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
   }
 
@@ -142,11 +144,20 @@ export async function POST(req: NextRequest) {
         if (platformSecret) secrets.push(platformSecret)
         for (const secret of secrets) {
           if (verifyMetaSignature(rawBody, secret, signature)) {
-            matchedOrgId = connection.organizationId
-            matchedValue = body.entry?.[0]?.changes?.[0]?.value ?? null
-            matchedCloudToken = decryptSecret(connection.accessTokenEnc)
-            matchedPhoneId = phoneNumberId
-            break
+            // (A1-09, auditoría 2026-11-11) Iterar TODAS las entry/changes:
+            // Meta agrupa varios cambios por app en un solo webhook; procesar
+            // solo entry[0].changes[0] perdía mensajes silenciosamente.
+            for (const change of (body.entry || []).flatMap((e) => e.changes || [])) {
+              const value = change.value
+              if (!value) continue
+              if (value.metadata?.phone_number_id && value.metadata.phone_number_id !== phoneNumberId) continue
+              matchedOrgId = connection.organizationId
+              matchedValue = value
+              matchedCloudToken = decryptSecret(connection.accessTokenEnc)
+              matchedPhoneId = phoneNumberId
+              break
+            }
+            if (matchedOrgId) break
           }
         }
       }
@@ -201,6 +212,20 @@ export async function POST(req: NextRequest) {
     }
 
     for (const message of value.messages || []) {
+      // ================================================================
+      // (A4-02, auditoría 2026-11-11) DEDUP por waMessageId: Meta re-entrega
+      // webhooks ante timeout; sin dedup, la auto-respuesta IA salía DOS
+      // veces al cliente. El índice único (organizationId, waMessageId) —
+      // migración 4 — respalda el lookup; si ya existe, se omite (200 temprano
+      // ya fue respondido por Meta en la primera entrega).
+      // ================================================================
+      if (message.id) {
+        const seen = await db.whatsAppMessage.findFirst({
+          where: { organizationId: matchedOrgId, waMessageId: message.id },
+          select: { id: true },
+        })
+        if (seen) continue
+      }
       let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
       let isVoice = false
 

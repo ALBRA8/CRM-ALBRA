@@ -80,6 +80,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const { id } = await params
     const client = await getClientOr404(auth.orgId, id)
 
+    // (A4-09, auditoría 2026-11-11) TimelineEvent.clientId es String sin FK:
+    // sin esta limpieza, /api/timeline?clientId= seguiría sirviendo eventos
+    // de un cliente borrado (huérfanos). Misma operación de borrado.
+    await db.timelineEvent.deleteMany({ where: { clientId: client.id } })
     await db.client.delete({ where: { id: client.id } })
     await auditAndTimeline({
       orgId: auth.orgId,

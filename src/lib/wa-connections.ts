@@ -127,7 +127,9 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
       displayName: resolvedName,
       accessTokenEnc: encryptSecret(accessToken) ?? '',
       metaAppSecretEnc: metaAppSecret ? encryptSecret(metaAppSecret) : null,
-      webhookVerifyToken: generateWebhookVerifyToken(),
+      // (A4-13) el verify token por conexión se guarda CIFRADO (AES-256-GCM),
+      // igual que accessTokenEnc/metaAppSecretEnc — convención *Enc del schema.
+      webhookVerifyToken: encryptSecret(generateWebhookVerifyToken())!,
       status: 'connected',
       statusDetail: source === 'embedded_signup' ? 'Conectada vía Embedded Signup (flujo oficial Meta)' : 'Conectada manualmente por el administrador',
       source,
@@ -267,6 +269,22 @@ export function signSignupState(orgId: string, nonce: string, ttlMs = 15 * 60 * 
   return `${payload}.${mac}`
 }
 
+/**
+ * (A1-11, auditoría 2026-11-11) Nonces de signup ya consumidos (TTL 15 min,
+ * igual que la expiración del state): el state de Embedded Signup era
+ * reutilizable dentro de su TTL; ahora el PRIMER canje lo consume.
+ */
+const usedSignupNonces = new Map<string, number>()
+const SIGNUP_NONCE_TTL_MS = 15 * 60 * 1000
+
+function consumeSignupNonce(nonce: string): boolean {
+  const now = Date.now()
+  for (const [k, t] of usedSignupNonces) if (now - t > SIGNUP_NONCE_TTL_MS) usedSignupNonces.delete(k)
+  if (usedSignupNonces.has(nonce)) return false
+  usedSignupNonces.set(nonce, now)
+  return true
+}
+
 export function verifySignupState(state: string): { ok: boolean; orgId?: string; error?: string } {
   const appSecret = process.env.APP_SECRET || process.env.APP_ENCRYPTION_KEY || ''
   if (!appSecret) return { ok: false, error: 'APP_SECRET no configurado' }
@@ -276,6 +294,8 @@ export function verifySignupState(state: string): { ok: boolean; orgId?: string;
   const expected = createHmac('sha256', appSecret).update(`${orgId}.${nonce}.${exp}`).digest('hex')
   if (mac.length !== expected.length || !timingSafeEq(mac, expected)) return { ok: false, error: 'Estado no válido' }
   if (Number(exp) < Date.now()) return { ok: false, error: 'Estado expirado: reinicia la conexión' }
+  // (A1-11) un solo uso: el primer canje consume el nonce del state
+  if (!consumeSignupNonce(nonce)) return { ok: false, error: 'Estado ya utilizado: reinicia la conexión' }
   return { ok: true, orgId }
 }
 

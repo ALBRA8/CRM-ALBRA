@@ -175,19 +175,34 @@ export async function findOrCreateChannelClient(opts: {
     select: { id: true, name: true, phone: true },
   })
   if (existing) return existing
-  const created = await db.client.create({
-    data: {
-      organizationId: orgId,
-      name: (name || '').trim() || `Contacto ${platformKey}`,
-      phone: platformKey,
-      status: 'prospect',
-      source,
-      // Fase 2: leads de WhatsApp/Telegram/Instagram/landing entran al round-robin
-      assignedToId: await assignLeadRoundRobin(orgId),
-      lastContactAt: new Date(),
-    },
-    select: { id: true, name: true, phone: true, assignedToId: true },
-  })
+  let created
+  try {
+    created = await db.client.create({
+      data: {
+        organizationId: orgId,
+        name: (name || '').trim() || `Contacto ${platformKey}`,
+        phone: platformKey,
+        status: 'prospect',
+        source,
+        // Fase 2: leads de WhatsApp/Telegram/Instagram/landing entran al round-robin
+        assignedToId: await assignLeadRoundRobin(orgId),
+        lastContactAt: new Date(),
+      },
+      select: { id: true, name: true, phone: true, assignedToId: true },
+    })
+  } catch (err) {
+    // (A4-04, auditoría 2026-11-11) Carrera find-then-create: dos webhooks
+    // concurrentes del MISMO contacto — el índice único (organizationId, phone)
+    // (migración 4) convierte la carrera en P2002 y aquí se re-encuentra el
+    // ganador: jamás dos clientes para el mismo contacto.
+    if ((err as { code?: string })?.code !== 'P2002') throw err
+    const winner = await db.client.findFirst({
+      where: { organizationId: orgId, phone: platformKey },
+      select: { id: true, name: true, phone: true, assignedToId: true },
+    })
+    if (!winner) throw err
+    created = winner
+  }
   // El workflow engine reacciona a nuevos leads de canales
   try {
     const { runWorkflowsForTrigger } = await import('./workflow-engine')

@@ -4,6 +4,8 @@ import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { getIntegration, parseTelegramState, encodeTelegramState, generateWebhookSecret } from '@/lib/integrations'
 import { auditAndTimeline } from '@/lib/api-helpers'
+import { encryptSecret, decryptSecret } from '@/lib/crypto'
+import { createHash } from 'crypto'
 
 /**
  * POST /api/telegram/set-webhook — configura el webhook en Telegram Bot API
@@ -25,9 +27,16 @@ export async function POST(req: NextRequest) {
 
     const origin = new URL(req.url).origin
     const webhookUrl = `${origin}/api/telegram/webhook`
-    const telegramSecret = integration.telegramSecret || generateWebhookSecret()
-    if (!integration.telegramSecret) {
-      await db.integration.update({ where: { organizationId: auth.orgId }, data: { telegramSecret } })
+    // (A2-07, auditoría 2026-11-11) El secret se guarda CIFRADO (AES-256-GCM,
+    // convención *Enc del propio schema) y se indexa por HASH para el lookup
+    // del webhook — el valor en claro nunca vuelve a tocar la BD.
+    const storedSecret = decryptSecret(integration.telegramSecret)
+    const telegramSecret = storedSecret || generateWebhookSecret()
+    if (!storedSecret) {
+      await db.integration.update({
+        where: { organizationId: auth.orgId },
+        data: { telegramSecret: encryptSecret(telegramSecret), telegramSecretHash: createHash('sha256').update(telegramSecret).digest('hex') },
+      })
     }
 
     // 1) getMe para el username del bot

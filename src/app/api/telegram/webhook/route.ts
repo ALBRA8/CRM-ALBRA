@@ -8,6 +8,8 @@ import { transcribeAudioBase64 } from '@/lib/asr'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
+import { decryptSecret } from '@/lib/crypto'
+import { createHash } from 'crypto'
 
 /**
  * POST /api/telegram/webhook — PÚBLICO pero con validación ESTRICTA del header
@@ -43,7 +45,8 @@ export async function POST(req: NextRequest) {
 
     // El secret del header identifica la organización (búsqueda por índice único de valor)
     const matched = await db.integration.findFirst({
-      where: { telegramSecret: secretHeader },
+      // (A2-07) lookup por HASH del header (el valor en claro ya no vive en BD)
+      where: { telegramSecretHash: createHash('sha256').update(secretHeader).digest('hex') },
       select: { organizationId: true },
     })
     if (!matched) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
@@ -53,7 +56,7 @@ export async function POST(req: NextRequest) {
       where: { organizationId: matched.organizationId },
       select: { telegramSecret: true },
     })
-    if (!stored?.telegramSecret || !safeEquals(stored.telegramSecret, secretHeader)) {
+    if (!stored?.telegramSecret || !safeEquals(decryptSecret(stored.telegramSecret) || '', secretHeader)) {
       return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
     }
 
