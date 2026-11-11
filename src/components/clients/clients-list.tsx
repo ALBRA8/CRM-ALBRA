@@ -258,7 +258,7 @@ export function ClientsList() {
           variant="outline"
           size="sm"
           onClick={async () => {
-            window.open(await api.getExportCsvUrl('clients'), '_blank')
+            await api.downloadExportCsv('clients', `clientes_${new Date().toISOString().split('T')[0]}.csv`)
           }}
           className="h-8 text-xs gap-1.5"
         >

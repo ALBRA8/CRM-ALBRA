@@ -1045,7 +1045,7 @@ export function SettingsPage() {
           4. Canales de comunicación: WhatsApp → Instagram → Telegram → Email
           5. Operativas: Inventario → Plantillas → Campos Custom → Equipo → Respaldo */}
       <Tabs key={initialTab} defaultValue={initialTab} className="w-full">
-        <TabsList className="bg-slate-100 h-10">
+        <TabsList className="bg-slate-100 min-h-10 h-auto flex-wrap max-w-full">
           <TabsTrigger value="negocio" className="gap-1.5 text-xs">
             <Building2 className="w-3.5 h-3.5" /> Negocio
           </TabsTrigger>

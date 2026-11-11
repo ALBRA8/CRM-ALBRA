@@ -81,7 +81,11 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
   const [cfLoading, setCfLoading] = useState(false)
 
   // Reset form when dialog opens or editClient changes
-  useState(() => {
+  // (A3-09, auditoría 2026-11-11) ERA useState(() => {...}): el initializer de
+  // useState solo corre en el PRIMER render — al abrir el diálogo para EDITAR
+  // otro cliente, el formulario seguía mostrando los datos anteriores. Es un
+  // efecto, no un estado: useEffect.
+  useEffect(() => {
     setForm({
       name: editClient?.name ?? '',
       email: editClient?.email ?? '',

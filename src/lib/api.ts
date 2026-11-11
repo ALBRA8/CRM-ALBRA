@@ -638,19 +638,31 @@ class ApiClient {
     return res.json()
   }
 
-  getExportCsvUrl(type: string) {
-    return `${API_BASE}/export/csv?type=${type}${this.token ? '&token=' + this.token : ''}`
+  /** (A3-08, auditoría 2026-11-11) Exporta cualquier entidad a CSV con el JWT
+   *  en el HEADER y descarga por blob: el token JAMÁS viaja en la URL (queda en
+   *  logs de servidor, historial del navegador y cabeceras Referer). */
+  async downloadExportCsv(type: string, filename: string) {
+    const headers: Record<string, string> = {}
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`
+    }
+    const res = await fetch(`${API_BASE}/export/csv?type=${encodeURIComponent(type)}`, { headers })
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: 'Error de conexión' }))
+      throw new Error(error.error || `Error ${res.status}`)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
-  // Report exports (PDF/Excel)
-  getReportPdfUrl(period: string) {
-    return `${API_BASE}/reports/pdf?period=${period}${this.token ? '&token=' + this.token : ''}`
-  }
-
-  getReportExcelUrl(period: string) {
-    return `${API_BASE}/reports/excel?period=${period}${this.token ? '&token=' + this.token : ''}`
-  }
-
+  // Report exports (PDF/Excel) — (A3-08) SOLO descarga con token en header:
+  // los constructores de URL con JWT en query string se eliminaron (sin
+  // llamadores; las vistas de reportes ya usan downloadReportPdf/Excel).
   async downloadReportPdf(period: string) {
     const headers: Record<string, string> = {}
     if (this.token) {
