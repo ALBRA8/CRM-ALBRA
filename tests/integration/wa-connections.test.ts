@@ -236,6 +236,24 @@ describe('OLEADA 2 — resolución interna de credenciales para WHATSPOWER/ULTRA
     expect(body.phoneNumberId).toBe('999000999')
   })
 
+  it('inventario de conexiones de la org autenticada SIN tokens (para WHATSPOWER/ULTRA)', async () => {
+    await seedConnection('org-a', '999001010')
+    await seedConnection('org-b', '999001011')
+    const res = await internalCredentialsGet(
+      req('/api/internal/whatsapp/credentials', {
+        headers: { authorization: 'Bearer clave-de-servicio-a-0123456789' },
+      }),
+    )
+    expect(res.status).toBe(200)
+    const body = await jsonBody(res)
+    expect(body.organizationId).toBe('org-a')
+    const connections = body.connections as Array<{ phoneNumberId: string }>
+    expect(connections).toHaveLength(1)
+    expect(connections[0].phoneNumberId).toBe('999001010')
+    expect(JSON.stringify(body)).not.toContain('accessToken')
+    expect(JSON.stringify(body)).not.toContain('EAAG')
+  })
+
   it('credencial de rol agent NO puede resolver credenciales (solo admin de la org)', async () => {
     await seedConnection('org-a', '999001000')
     process.env.INTERNAL_API_KEYS = 'org-a:clave-de-agente-a-01234567890:agent'

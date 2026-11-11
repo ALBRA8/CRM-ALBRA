@@ -9,6 +9,8 @@
  *
  * Uso correcto (WHATSPOWER/ULTRA ejecutan envíos con las credenciales de cada
  * organización — decisión #6/#7):
+ *   GET /api/internal/whatsapp/credentials
+ *     → inventario de conexiones de la org autenticada (ids/números, SIN tokens).
  *   GET /api/internal/whatsapp/credentials?phoneNumberId=<id>
  *     → credenciales del número SIEMPRE que pertenezca a la organización
  *       autenticada; números de otras orgs responden 404 (sin revelar nada).
@@ -50,8 +52,17 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url)
     const phoneNumberId = url.searchParams.get('phoneNumberId')
     const connectionId = url.searchParams.get('connectionId')
+
+    // SIN parámetros → INVENTARIO de conexiones de la organización autenticada
+    // (SOLO identidad: ids y números; JAMÁS tokens). WHATSPOWER/ULTRA lo usan
+    // para saber con qué número despacha cada org (decisión #6/#7).
     if (!phoneNumberId && !connectionId) {
-      return json({ error: 'Parámetro requerido: phoneNumberId (o connectionId)' }, { status: 400 })
+      const connections = await db.whatsAppConnection.findMany({
+        where: { organizationId: identity.orgId, status: 'connected' },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, phoneNumberId: true, phoneNumber: true, wabaId: true, displayName: true },
+      })
+      return json({ organizationId: identity.orgId, connections })
     }
 
     // Resolución SIEMPRE por identidad de credencial → org autenticada.
