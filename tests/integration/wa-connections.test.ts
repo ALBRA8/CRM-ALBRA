@@ -139,7 +139,7 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
       expect(a!.status).toBe('connected')
       expect(b!.status).toBe('connected')
       const list = await connectionsGet(req('/api/whatsapp/connections', { token: tokenA() }))
-      const body = await jsonBody(list)
+      const body = (await jsonBody(list)) as { connections: unknown[]; plan: { activeConnections: number; maxConnections: number } }
       expect(body.connections).toHaveLength(2)
       expect(body.plan.activeConnections).toBe(2)
       expect(body.plan.maxConnections).toBe(5)
@@ -409,7 +409,7 @@ describe('OLEADA 2 — Embedded Signup oficial (punto 10, sin contraseñas)', ()
     process.env.META_APP_SECRET = 'app-secret-test-0123456789'
     const res = await signupGet(req('/api/whatsapp/embedded-signup', { token: tokenA() }))
     expect(res.status).toBe(200)
-    const body = await jsonBody(res)
+    const body = (await jsonBody(res)) as { appId: string; state: string }
     expect(body.appId).toBe('app-id-test')
     expect(body.state.split('.')).toHaveLength(4)
     expect(JSON.stringify(body)).not.toContain('app-secret-test')

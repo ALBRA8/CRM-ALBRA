@@ -1,11 +1,19 @@
 import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { verifyPassword, signToken, HttpError } from '@/lib/auth'
+import { verifyPassword, signToken, signMfaTicket, HttpError } from '@/lib/auth'
 import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { auditAndTimeline } from '@/lib/api-helpers'
 import { dbRateLimit, clientIp } from '@/lib/rate-limit'
 
-/** POST /api/auth/login — verifica credenciales y devuelve { token, user }. */
+/**
+ * POST /api/auth/login — verifica credenciales y devuelve { token, user }.
+ *
+ * (OLEADA 2) Si el usuario tiene 2FA (twoFactorEnabled), NO emite sesión:
+ * devuelve { mfaRequired: true, mfaToken } — un ticket provisional de 5 min
+ * que se canjea por la sesión en POST /api/auth/2fa/verify presentando el
+ * código TOTP (o un código de recuperación). Sin segundo factor no hay sesión.
+ */
 export async function POST(req: NextRequest) {
   return handle(async () => {
     const body = await readBody(req)
@@ -31,6 +39,18 @@ export async function POST(req: NextRequest) {
     if (!user.isActive) throw new HttpError(403, 'Usuario desactivado. Contacta al administrador.')
     const org = await db.organization.findUnique({ where: { id: user.organizationId }, select: { isActive: true } })
     if (!org || !org.isActive) throw new HttpError(403, 'La organización no está activa')
+
+    // (OLEADA 2) 2FA activo → ticket MFA provisional; la sesión solo se emite
+    // tras el segundo factor. El ticket NO sirve para ninguna otra operación.
+    if (user.twoFactorEnabled && user.twoFactorSecret) {
+      const mfaToken = signMfaTicket({
+        userId: user.id,
+        orgId: user.organizationId,
+        role: user.role,
+        email: user.email,
+      })
+      return NextResponse.json({ mfaRequired: true, mfaToken })
+    }
 
     // (segunda reparación) El JWT nace con la tokenVersion vigente del usuario:
     // la guarda async la coteja contra la BD en cada petición.

@@ -114,7 +114,7 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
     }
   }
   if (!tokenOk) {
-    await auditEvent(null, orgId, 'error', tokenError)
+    await auditEvent(null, orgId, 'error', tokenError ?? undefined)
     return { ok: false, code: 'invalid_token', message: tokenError ?? 'Token inválido' }
   }
 

@@ -72,6 +72,7 @@ import { InstagramTab } from './instagram-tab'
 import { TikTokTab } from './tiktok-tab'
 import { FacebookTab, MessengerIcon } from './facebook-tab'
 import { PushNotificationsCard } from './push-notifications-card'
+import { TwoFactorCard } from './two-factor-card'
 import { KnowledgeCard } from './knowledge-card'
 // Force recompile trigger
 
@@ -1080,6 +1081,9 @@ export function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="custom-fields" className="gap-1.5 text-xs">
             <Database className="w-3.5 h-3.5" /> Campos Custom
+          </TabsTrigger>
+          <TabsTrigger value="seguridad" className="gap-1.5 text-xs">
+            <Shield className="w-3.5 h-3.5" /> Seguridad
           </TabsTrigger>
           <TabsTrigger value="team" className="gap-1.5 text-xs">
             <Users className="w-3.5 h-3.5" /> Equipo
@@ -2522,6 +2526,11 @@ export function SettingsPage() {
         </TabsContent>
 
         {/* ============ TAB: Team ============ */}
+        {/* ============ TAB: Seguridad (2FA) ============ */}
+        <TabsContent value="seguridad" className="space-y-6 mt-4">
+          <TwoFactorCard />
+        </TabsContent>
+
         <TabsContent value="team" className="space-y-6 mt-4">
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
             <Card className="border-0 shadow-sm">

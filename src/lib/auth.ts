@@ -40,6 +40,13 @@ export interface SessionPayload {
    * primera revocación los invalida también.
    */
   tv?: number
+  /**
+   * (OLEADA 2) Claim de TICKET 2FA: true = token provisional de 5 minutos
+   * emitido tras validar contraseña cuando el usuario tiene 2FA activo. NO es
+   * una sesión: solo sirve para POST /api/auth/2fa/verify. getAuth() lo
+   * rechaza — un ticket MFA jamás autentica operaciones de negocio.
+   */
+  mfa?: boolean
   exp: number
 }
 
@@ -75,6 +82,39 @@ export function signToken(payload: Omit<SessionPayload, 'exp'>, days = 7): strin
   const claims = b64url(JSON.stringify(body))
   const sig = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
   return `${header}.${claims}.${sig}`
+}
+
+/**
+ * (OLEADA 2) Ticket MFA: credencial PROVISIONAL de corta vida (5 min) que
+ * acredita "contraseña válida para este usuario". Se canjea por una sesión
+ * real solo presentando además el segundo factor (TOTP o código de
+ * recuperación). Claim mfa:true — getAuth() lo rechaza como sesión.
+ */
+export function signMfaTicket(
+  user: { userId: string; orgId: string; role: string; email: string },
+  minutes = 5
+): string {
+  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+  const body: SessionPayload = {
+    ...user,
+    mfa: true,
+    tv: undefined,
+    iat: Date.now(),
+    exp: Date.now() + minutes * 60_000,
+  }
+  const claims = b64url(JSON.stringify(body))
+  const sig = createHmac('sha256', appSecret()).update(`${header}.${claims}`).digest('base64url')
+  return `${header}.${claims}.${sig}`
+}
+
+/**
+ * (OLEADA 2) Verifica un TICKET MFA (no una sesión): firma, vigencia y claim.
+ * Devuelve el payload solo si es un ticket MFA legítimo.
+ */
+export function verifyMfaTicket(token: string): SessionPayload | null {
+  const payload = verifyToken(token)
+  if (!payload || payload.mfa !== true) return null
+  return payload
 }
 
 export function verifyToken(token: string): SessionPayload | null {
@@ -122,6 +162,10 @@ export function getAuth(req: NextRequest): AuthContext | null {
   let ctx: AuthContext | null = null
   if (token) {
     const session = verifyToken(token)
+    // (OLEADA 2) Un ticket MFA NO es una sesión: si alguien intenta usarlo en
+    // una API de negocio, se ignora (fail-closed) — debe canjearse en
+    // /api/auth/2fa/verify con el segundo factor.
+    if (session && session.mfa === true) return null
     if (session) {
       ctx = {
         userId: session.userId,

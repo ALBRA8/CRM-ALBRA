@@ -86,6 +86,20 @@ model User {
   // B3: guarda sha256(token) — el token en claro SOLO viaja por email; nunca en BD.
   resetToken     String?
   resetTokenExp  DateTime?
+  // OLEADA 2 — 2FA TOTP (RFC 6238):
+  //  - twoFactorSecret: secreto base32 CIFRADO con AES-256-GCM (src/lib/crypto.ts,
+  //    clave APP_ENCRYPTION_KEY/APP_SECRET). El secreto en claro SOLO se muestra
+  //    una vez en el enrolamiento (POST /api/auth/2fa/setup).
+  //  - twoFactorEnabled: el login exige el segundo factor SOLO cuando está en true
+  //    (el secreto puede existir en false mientras el usuario confirma el enrolamiento).
+  //  - twoFactorRecovery: JSON array de hashes SHA-256 de los códigos de
+  //    recuperación (un solo uso cada uno). Los códigos en claro se muestran UNA vez.
+  //  - twoFactorLastCounter: último contador TOTP consumido (replay: un código
+  //    usado en un ventana de 30s no vuelve a servir).
+  twoFactorSecret      String?
+  twoFactorEnabled     Boolean   @default(false)
+  twoFactorRecovery    String?
+  twoFactorLastCounter Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 

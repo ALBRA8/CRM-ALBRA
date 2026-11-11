@@ -109,3 +109,46 @@ npx prisma migrate deploy                                          # aplica migr
 db/custom.db`) y volver el código a la revisión anterior. Las dos tablas
 nuevas no contienen datos de negocio: puede quedar sin efecto con el código
 anterior sin pérdida.
+
+## Migración 3 — 2FA TOTP para usuarios (OLEADA 2, 2026-11-11)
+
+**Qué añade:** 4 columnas en `User` para autenticación de dos factores TOTP
+(RFC 6238, sin dependencias externas): `twoFactorSecret` (secreto base32
+CIFRADO con AES-256-GCM — en claro solo se muestra UNA vez en el
+enrolamiento), `twoFactorEnabled` (el login exige el segundo factor solo
+si es 1), `twoFactorRecovery` (JSON de hashes SHA-256 de 8 códigos de
+recuperación de un solo uso) y `twoFactorLastCounter` (anti-replay: un
+código TOTP consumido no vuelve a servir, ni siquiera en su ventana de 30 s).
+
+**Flujo:** `POST /api/auth/2fa/setup` (QR + secreto) → `POST /api/auth/2fa/enable`
+(código TOTP + 8 códigos de recuperación mostrados una vez) → el login pasa a
+devolver `mfaRequired + mfaToken` (ticket provisional de 5 min que NO es una
+sesión) → `POST /api/auth/2fa/verify` canjea el ticket por la sesión real con
+el TOTP o un código de recuperación. Desactivación: `POST /api/auth/2fa/disable`
+exige contraseña + código vigente.
+
+**Propiedades:**
+
+- Aditiva pura: 4 columnas nuevas; ninguna fila de negocio se modifica.
+- Segura por defecto: el secreto JAMÁS se persiste en claro; los códigos de
+  recuperación solo como hash; ticket MFA rechazado por getAuth() en todas
+  las APIs de negocio.
+- Portable a PostgreSQL (OLEADA 1): TEXT/BOOLEAN/INTEGER nulos.
+
+**Aplicación (con respaldo previo — regla 3):**
+
+```bash
+cp db/custom.db "db/custom.db.bak-mig3-$(date +%Y%m%dT%H%M%SZ)"   # respaldo físico
+npx prisma migrate deploy                                          # aplica migración 3
+```
+
+**Rollback:** restaurar el backup físico (`cp db/custom.db.bak-mig3-<ts>
+db/custom.db`) y volver el código a la revisión anterior. O solo revertir el
+esquema (sin pérdida de datos de negocio; los usuarios re-enrolan):
+
+```sql
+ALTER TABLE "User" DROP COLUMN "twoFactorLastCounter";
+ALTER TABLE "User" DROP COLUMN "twoFactorRecovery";
+ALTER TABLE "User" DROP COLUMN "twoFactorEnabled";
+ALTER TABLE "User" DROP COLUMN "twoFactorSecret";
+```
