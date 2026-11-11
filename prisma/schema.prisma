@@ -230,6 +230,8 @@ model Opportunity {
 
   @@index([organizationId, status])
   @@index([organizationId, clientId])
+  // (auditoría 2026-11-11) Tablero de pipeline: filtros por organización + etapa.
+  @@index([organizationId, stageId])
 }
 
 model Reservation {
@@ -657,6 +659,9 @@ model Integration {
   // Tokens SIEMPRE cifrados con AES-256-GCM antes de guardar (auditoría #4)
   telegramBotTokenEnc   String?
   telegramSecret        String?
+  // (A2-23, auditoría 2026-11-11) Lookup por HASH del secret (el valor queda
+  // cifrado en reposo con AES-256-GCM); la comparación final es timing-safe.
+  telegramSecretHash    String?  @unique
   instagramTokenEnc     String?
   instagramAccountId    String?
   googleRefreshTokenEnc String?

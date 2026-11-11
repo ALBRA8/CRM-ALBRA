@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { json } from '@/lib/api-helpers'
+import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
 import { db } from '@/lib/db'
 import { safeEquals, parseTelegramState, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
 import { notifyOrganization } from '@/lib/push'
@@ -41,21 +42,36 @@ export async function POST(req: NextRequest) {
     const secretHeader = req.headers.get('x-telegram-bot-api-secret-token')
     if (!secretHeader) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
-    // El secret del header identifica la organización (búsqueda por índice único de valor)
-    const matched = await db.integration.findFirst({
-      where: { telegramSecret: secretHeader },
-      select: { organizationId: true },
+    // (A2-23, auditoría 2026-11-11) El secret se resuelve por HASH SHA-256 y
+    // se compara DESCIFRADO en tiempo constante: el valor en reposo está cifrado
+    // (AES-256-GCM) y la igualdad sobre ciphertext ya no es posible. Las filas
+    // legadas en texto plano se actualizan al vuelo (upgrade perezoso, sin
+    // migración destructiva).
+    const secretHash = sha256Hex(secretHeader)
+    let matched = await db.integration.findFirst({
+      where: { telegramSecretHash: secretHash },
+      select: { organizationId: true, telegramSecret: true },
     })
-    if (!matched) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
-
-    // Comparación estricta en tiempo constante (defensa en profundidad)
-    const stored = await db.integration.findUnique({
-      where: { organizationId: matched.organizationId },
-      select: { telegramSecret: true },
-    })
-    if (!stored?.telegramSecret || !safeEquals(stored.telegramSecret, secretHeader)) {
-      return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+    if (matched && !safeEquals(decryptSecret(matched.telegramSecret) ?? '', secretHeader)) {
+      matched = null
     }
+    if (!matched) {
+      const legacy = await db.integration.findFirst({
+        where: { telegramSecret: secretHeader },
+        select: { organizationId: true },
+      })
+      if (legacy) {
+        const enc = encryptSecret(secretHeader)
+        if (enc) {
+          await db.integration.update({
+            where: { organizationId: legacy.organizationId },
+            data: { telegramSecret: enc, telegramSecretHash: secretHash },
+          }).catch(() => null)
+          matched = { organizationId: legacy.organizationId, telegramSecret: enc }
+        }
+      }
+    }
+    if (!matched) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
     const orgId = matched.organizationId
     const update = JSON.parse(rawBody) as TgUpdate

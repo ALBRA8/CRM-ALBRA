@@ -35,6 +35,26 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// (A2-23, auditoría 2026-11-11) El secret de Telegram vive CIFRADO en reposo
+// (AES-256-GCM, misma clave que src/lib/crypto.ts). Réplica mínima del descifrado:
+// este poller corre como proceso node puro (mjs) sin el bundler del CRM.
+import { createDecipheriv, createHash } from 'node:crypto'
+const AES_KEY = createHash('sha256').update(process.env.APP_ENCRYPTION_KEY || process.env.APP_SECRET || '').digest()
+function decryptSecretMaybe(payload) {
+  if (!payload) return payload
+  const s = String(payload)
+  if (!s.startsWith('v1:')) return s // valor plano legacy
+  try {
+    const [, ivB64, tagB64, dataB64] = s.split(':')
+    const d = createDecipheriv('aes-256-gcm', AES_KEY, Buffer.from(ivB64, 'base64'))
+    d.setAuthTag(Buffer.from(tagB64, 'base64'))
+    return Buffer.concat([d.update(Buffer.from(dataB64, 'base64')), d.final()]).toString('utf8')
+  } catch {
+    return null
+  }
+}
+
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = resolve(__dirname, '../..')
 
@@ -178,7 +198,9 @@ async function cycle() {
       if (!updates || updates.length === 0) continue
       for (const update of updates) {
         if (shuttingDown) break
-        const delivered = await deliver(orgId, integration.telegramSecret, update)
+        const secretPlain = decryptSecretMaybe(integration.telegramSecret)
+        if (!secretPlain) throw new Error('telegramSecret ilegible (cifrado con otra clave?)')
+        const delivered = await deliver(orgId, secretPlain, update)
         // Offset avanza siempre tras intentar la entrega (éxito o descarte tras
         // reintentos); solo se conserva si el proceso se está apagando a mitad.
         if (!shuttingDown) {
