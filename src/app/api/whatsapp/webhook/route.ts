@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { json } from '@/lib/api-helpers'
 import { decryptSecret } from '@/lib/crypto'
+import { safeEqual } from '@/lib/internal-org-auth'
 import {
   verifyMetaSignature,
   normalizePhone,
@@ -69,6 +70,20 @@ export async function GET(req: NextRequest) {
     return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
   }
 
+  // FASE 1 (OLEADA 2): verify_token POR CONEXIÓN — cada número conectado
+  // (WhatsAppConnection) recibe su propio webhookVerifyToken al crearse. La
+  // suscripción de un número en Meta se valida SOLO con su token (comparación
+  // en tiempo constante; el token NUNCA se devuelve en la respuesta).
+  const connections = await db.whatsAppConnection.findMany({
+    where: { status: { in: ['connected', 'pending'] } },
+    select: { webhookVerifyToken: true },
+  })
+  for (const connection of connections) {
+    if (safeEqual(token, connection.webhookVerifyToken)) {
+      return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
+    }
+  }
+
   // verify_token por organización = App Secret configurado en Integration
   const integrations = await db.integration.findMany({
     where: { metaAppSecretEnc: { not: null } },
@@ -101,17 +116,54 @@ export async function POST(req: NextRequest) {
     // phone_number_id, pre-filtramos por él ANTES del bucle criptográfico —
     // típicamente 1 candidato en vez de desencriptar + HMAC para TODAS las orgs.
     const phoneNumberId = body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id || null
-    const candidates = await db.integration.findMany({
-      where: {
-        metaAppSecretEnc: { not: null },
-        ...(phoneNumberId ? { whatsappPhoneId: phoneNumberId } : {}),
-      },
-      select: { organizationId: true, metaAppSecretEnc: true, whatsappPhoneId: true, whatsappCloudTokenEnc: true },
-    })
+
+    // ---------- FASE 1 (OLEADA 2): atribución por WhatsAppConnection ----------
+    // Decisión 2026-11-11 (punto 4): cada número/mensaje/evento se atribuye
+    // AUTOMÁTICAMENTE a su organización por phoneNumberId (UNIQUE global:
+    // un número pertenece a UNA org). La firma X-Hub-Signature-256 se valida
+    // contra el secreto de la app dueña de la conexión (propia de la org o
+    // la global de plataforma con Embedded Signup). NUNCA se acepta la org
+    // que el body "dice" ser: solo la que resuelve la tabla de conexiones.
     let matchedOrgId: string | null = null
     let matchedValue: WaValue | null = null
     let matchedCloudToken: string | null = null
     let matchedPhoneId: string | null = null
+
+    if (phoneNumberId) {
+      const connection = await db.whatsAppConnection.findUnique({
+        where: { phoneNumberId },
+        select: { id: true, organizationId: true, status: true, accessTokenEnc: true, metaAppSecretEnc: true },
+      })
+      if (connection && connection.status === 'connected') {
+        const secrets: string[] = []
+        const connSecret = decryptSecret(connection.metaAppSecretEnc)
+        if (connSecret) secrets.push(connSecret)
+        const platformSecret = process.env.META_APP_SECRET
+        if (platformSecret) secrets.push(platformSecret)
+        for (const secret of secrets) {
+          if (verifyMetaSignature(rawBody, secret, signature)) {
+            matchedOrgId = connection.organizationId
+            matchedValue = body.entry?.[0]?.changes?.[0]?.value ?? null
+            matchedCloudToken = decryptSecret(connection.accessTokenEnc)
+            matchedPhoneId = phoneNumberId
+            break
+          }
+        }
+      }
+    }
+
+    // ---------- FASE 2 (legado Integration, un número por org) ----------
+    // Se mantiene operativo para organizaciones migradas aún no recreadas
+    // en WhatsAppConnection (compatibilidad: nada se rompe).
+    const candidates = matchedOrgId
+      ? []
+      : await db.integration.findMany({
+          where: {
+            metaAppSecretEnc: { not: null },
+            ...(phoneNumberId ? { whatsappPhoneId: phoneNumberId } : {}),
+          },
+          select: { organizationId: true, metaAppSecretEnc: true, whatsappPhoneId: true, whatsappCloudTokenEnc: true },
+        })
 
     for (const candidate of candidates) {
       const secret = decryptSecret(candidate.metaAppSecretEnc)

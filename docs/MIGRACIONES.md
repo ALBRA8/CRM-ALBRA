@@ -80,3 +80,32 @@ vuelve al código anterior (los JWT antiguos sin `tv` se tratan como versión 0)
    `npx prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-empty --script`
    como referencia y re-emitir el baseline en dialecto PG; los procedimientos
    A/B son idénticos.
+
+## Migración 2 — conexiones WhatsApp por organización (OLEADA 2, 2026-11-11)
+
+**Qué añade:** `WhatsAppConnection` (una conexión = un número de WhatsApp de
+una organización; `phoneNumberId` UNIQUE global) y
+`WhatsAppConnectionEvent` (auditoría del ciclo de vida). Decisión de negocio:
+cada organización conecta sus propios números con sus credenciales de Meta
+(Embedded Signup oficial), cifradas y asociadas exclusivamente a su
+`organization_id`.
+
+**Propiedades:**
+
+- Aditiva pura: crea dos tablas nuevas, no toca datos ni tablas existentes.
+- Compatible: el legado `Integration.whatsappCloudTokenEnc` (un número por
+  org) sigue operativo; el webhook resuelve primero por `WhatsAppConnection`
+  y solo cae al legado si no hay conexión nueva con ese `phone_number_id`.
+- Portable a PostgreSQL (OLEADA 1): solo TEXT/DATETIME, sin columnas JSON.
+
+**Aplicación (con respaldo previo — regla 3):**
+
+```bash
+cp db/custom.db "db/custom.db.bak-mig2-$(date +%Y%m%dT%H%M%SZ)"   # respaldo físico
+npx prisma migrate deploy                                          # aplica migración 2
+```
+
+**Rollback:** restaurar el backup físico (`cp db/custom.db.bak-mig2-<ts>
+db/custom.db`) y volver el código a la revisión anterior. Las dos tablas
+nuevas no contienen datos de negocio: puede quedar sin efecto con el código
+anterior sin pérdida.
