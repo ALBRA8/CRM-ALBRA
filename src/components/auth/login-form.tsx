@@ -7,8 +7,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
-import { Loader2, Mail, Lock, ArrowRight, ArrowLeft, CheckCircle } from 'lucide-react'
+import { InputOTP, InputOTPGroup, InputOTPSlot, InputOTPSeparator } from '@/components/ui/input-otp'
+import { Loader2, Mail, Lock, ArrowRight, ArrowLeft, CheckCircle, ShieldCheck, KeyRound } from 'lucide-react'
 import { toast } from 'sonner'
+
+type SessionUser = { id: string; name: string; email: string; company?: string | null; phone?: string | null; role: string; avatar?: string | null }
 
 export function LoginForm() {
   const { setView, setUser, setToken } = useAppStore()
@@ -21,6 +24,22 @@ export function LoginForm() {
   const [forgotLoading, setForgotLoading] = useState(false)
   const [forgotSent, setForgotSent] = useState(false)
 
+  // ---- (OLEADA 2) Paso 2FA: ticket provisional emitido tras validar contraseña ----
+  const [mfaTicket, setMfaTicket] = useState<string | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
+  const [mfaRecoveryMode, setMfaRecoveryMode] = useState(false)
+  const [mfaLoading, setMfaLoading] = useState(false)
+
+  const completeLogin = (data: { token: string; user: SessionUser }) => {
+    // La sesión persiste vía cookie httpOnly (seteada por el servidor);
+    // el token solo queda en memoria del store/ApiClient.
+    setToken(data.token)
+    setUser(data.user)
+    api.setToken(data.token)
+    setView('dashboard')
+    toast.success('¡Bienvenido de vuelta!')
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
@@ -28,19 +47,38 @@ export function LoginForm() {
 
     try {
       const data = await api.login({ email, password })
-      // La sesión persiste vía cookie httpOnly (seteada por el servidor);
-      // el token solo queda en memoria del store/ApiClient.
-      setToken(data.token)
-      setUser(data.user as { id: string; name: string; email: string; company?: string | null; phone?: string | null; role: string; avatar?: string | null })
-      api.setToken(data.token)
-      setView('dashboard')
-      toast.success('¡Bienvenido de vuelta!')
+      // (OLEADA 2) Si la cuenta tiene 2FA el servidor NO emite sesión: pide
+      // el segundo factor con un ticket provisional de 5 minutos.
+      if ((data as { mfaRequired?: boolean }).mfaRequired) {
+        setMfaTicket((data as { mfaToken: string }).mfaToken)
+        setMfaCode('')
+        setMfaRecoveryMode(false)
+        return
+      }
+      completeLogin(data as { token: string; user: SessionUser })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error al iniciar sesión'
       setError(message)
       toast.error(message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleMfaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!mfaTicket || !mfaCode.trim()) return
+    setError('')
+    setMfaLoading(true)
+    try {
+      const data = await api.verify2fa({ mfaToken: mfaTicket, code: mfaCode.trim() })
+      completeLogin(data as { token: string; user: SessionUser })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Código inválido'
+      setError(message)
+      toast.error(message)
+    } finally {
+      setMfaLoading(false)
     }
   }
 
@@ -145,6 +183,115 @@ export function LoginForm() {
               </Button>
             </form>
           )}
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // ---- (OLEADA 2) Segundo factor: canje del ticket por la sesión real ----
+  if (mfaTicket) {
+    return (
+      <Card className="w-full max-w-md mx-auto shadow-2xl border-0 rounded-2xl overflow-hidden">
+        <div className="h-1.5 bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600" />
+        <CardHeader className="text-center pb-2 pt-6 px-8">
+          <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/25">
+            <ShieldCheck className="w-7 h-7 text-white" />
+          </div>
+          <CardTitle className="text-2xl font-bold text-slate-900 tracking-tight">
+            Verificación en dos pasos
+          </CardTitle>
+          <CardDescription className="text-slate-500 mt-1">
+            {mfaRecoveryMode
+              ? 'Ingresa uno de tus códigos de recuperación (un solo uso)'
+              : 'Ingresa el código de 6 dígitos de tu app autenticadora'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-8 pb-2">
+          <form onSubmit={handleMfaSubmit} className="space-y-5">
+            {error && (
+              <div className="bg-red-50 text-red-700 text-sm p-3.5 rounded-xl border border-red-200 flex items-start gap-2">
+                <div className="w-1.5 h-1.5 bg-red-500 rounded-full mt-1.5 flex-shrink-0" />
+                {error}
+              </div>
+            )}
+
+            {mfaRecoveryMode ? (
+              <div className="space-y-2">
+                <Label htmlFor="mfa-recovery" className="text-sm font-medium text-slate-700">
+                  Código de recuperación
+                </Label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    id="mfa-recovery"
+                    type="text"
+                    placeholder="XXXX-XXXX"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    className="pl-10 h-11 rounded-xl border-slate-200 bg-slate-50/50 focus:bg-white transition-colors font-mono uppercase"
+                    required
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                <InputOTP
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={(v) => setMfaCode(v.replace(/\D/g, ''))}
+                  autoFocus
+                >
+                  <InputOTPGroup>
+                    <InputOTPSlot index={0} />
+                    <InputOTPSlot index={1} />
+                    <InputOTPSlot index={2} />
+                  </InputOTPGroup>
+                  <InputOTPSeparator />
+                  <InputOTPGroup>
+                    <InputOTPSlot index={3} />
+                    <InputOTPSlot index={4} />
+                    <InputOTPSlot index={5} />
+                  </InputOTPGroup>
+                </InputOTP>
+                <p className="text-xs text-slate-400">El código rota cada 30 segundos</p>
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold h-11 rounded-xl shadow-lg shadow-emerald-500/25 transition-all duration-200"
+              disabled={mfaLoading || mfaCode.trim().length < 6}
+            >
+              {mfaLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Verificando...
+                </>
+              ) : (
+                <>
+                  Verificar
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </>
+              )}
+            </Button>
+
+            <button
+              type="button"
+              className="w-full text-xs text-slate-500 hover:text-slate-700 hover:underline"
+              onClick={() => { setMfaRecoveryMode((v) => !v); setMfaCode(''); setError('') }}
+            >
+              {mfaRecoveryMode ? 'Usar código de la app autenticadora' : '¿Sin acceso a la app? Usa un código de recuperación'}
+            </button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full gap-2"
+              onClick={() => { setMfaTicket(null); setMfaCode(''); setError('') }}
+            >
+              <ArrowLeft className="w-4 h-4" /> Volver al inicio de sesión
+            </Button>
+          </form>
         </CardContent>
       </Card>
     )

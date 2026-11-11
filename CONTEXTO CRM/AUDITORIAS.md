@@ -70,3 +70,19 @@ Pruebas reportadas: 434/434 con .env de producción simulado, 434/434 sin .env y
 3. ~~Verificar de forma independiente P0.1~~ — HECHO 2026-11-06 (commits en main, tests en verde).
 4. ~~Confirmar el repositorio de origen/destino de 658740b~~ — RESUELTO: ALBRA8/YOUTUBE-AUTOMATION.
 5. No certificar producción sin lint, TypeScript, tests, build, health checks, revisión de seguridad y pruebas de aislamiento reproducibles.
+
+## A-006 — Auditoría de la Reparación General Integral (2026-11-06)
+
+| Hallazgo original | Severidad | Estado |
+|---|---|---|
+| JWT aceptado por `?token=` en TODAS las rutas | P1 | RESUELTO (B1: solo descargas con opt-in + tokens de descarga 5 min) |
+| Sin rate limiting en auth/MCP/crm-actions | P1 | RESUELTO (B2) |
+| Tokens de reset en claro | P2 | RESUELTO (B3: sha256 + un solo uso) |
+| Logout sin revocación (JWT 7 días) | P2 | RESUELTO (B4: tokenVersion) |
+| Backup sin transacción ni tope | P2 | RESUELTO (B5) |
+| `err.message` filtrado en 500 | P2 | RESUELTO (B6) |
+| Secretos reales en historial (23 hallazgos/10 commits) | P1 | MITIGADO (B7: baseline verificable + CI bloqueante para NUEVOS; rotación y purga = operador) |
+| Scanner con exclusiones por prefijo demasiado anchas | P2 | RESUELTO (B7: literales exactos + allowlist explícita) |
+| CI lint continue-on-error sin control | P2 | RESUELTO (B7: lint:baseline bloqueante para errores nuevos) |
+| security-log solo en /api/nicho | P2 | RESUELTO (B8: login_failed + rbac.denied) |
+| Puente CRM→2A con firma v1 (incompatible con endurecimiento 2A) | P1 | RESUELTO (B9: HMAC v2 coordinado) |

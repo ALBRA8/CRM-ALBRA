@@ -12,7 +12,7 @@ import { serializeTemplate, normalizeVariables, TEMPLATE_CHANNELS } from '@/lib/
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const channel = new URL(req.url).searchParams.get('channel') || undefined
     const templates = await db.template.findMany({
       where: { organizationId: auth.orgId, ...(channel ? { channel } : {}) },
@@ -36,7 +36,7 @@ interface TemplateBody {
 export async function POST(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: crear/editar plantillas globales del negocio es owner/admin
-    const auth = requirePermission(req, 'templates.write')
+    const auth = await requirePermission(req, 'templates.write')
     const body = (await req.json().catch(() => ({}))) as TemplateBody
     requireFields(body as unknown as Record<string, unknown>, ['name'])
     const content = String(body.content ?? body.body ?? '').trim()

@@ -7,7 +7,7 @@ import { handle, json, readBody, str } from '../../_lib/shared'
 /** PUT /api/team/:id — actualiza rol/datos de un miembro de la MISMA organización. */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const { id } = await params
     const member = await db.user.findFirst({
       where: { id, organizationId: auth.orgId },
@@ -22,20 +22,30 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const body = await readBody(req)
 
     const data: Record<string, unknown> = {}
+    // (segunda reparación) Todo cambio que afecte al JWT (rol, estado) lleva
+    // DENTRO del mismo update el incremento atómico de tokenVersion: la
+    // revocación de sesiones es inseparable del cambio de estado. Un cambio de
+    // rol revoca también el claim `role` del token vigente (un admin degradado
+    // pierde sus permisos al instante, no al expirar el JWT).
     if ('name' in body) data.name = str(body.name) ?? member.name
     if ('phone' in body) data.phone = str(body.phone)
+    let mustRevoke = false
     if ('role' in body) {
       const requestedRole = str(body.role)
       if (requestedRole) {
         if (member.role === 'owner') throw new HttpError(400, 'No se puede cambiar el rol del propietario')
         if (requestedRole === 'owner') throw new HttpError(400, 'No se puede asignar el rol de propietario')
         if (!['admin', 'agent', 'member'].includes(requestedRole)) throw new HttpError(400, 'Rol no válido')
+        if (requestedRole !== member.role) mustRevoke = true
         data.role = requestedRole
       }
     }
     if ('isActive' in body && member.role !== 'owner') {
-      data.isActive = body.isActive === true || body.isActive === 'true'
+      const nextActive = body.isActive === true || body.isActive === 'true'
+      if (nextActive !== member.isActive) mustRevoke = true
+      data.isActive = nextActive
     }
+    if (mustRevoke) data.tokenVersion = { increment: 1 }
 
     const updated = await db.user.update({
       where: { id },
@@ -57,7 +67,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/team/:id — desactiva (isActive=false), nunca borra. */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const { id } = await params
     const member = await db.user.findFirst({
       where: { id, organizationId: auth.orgId },
@@ -70,7 +80,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
     if (member.id === auth.userId) throw new HttpError(400, 'No puedes desactivarte a ti mismo')
 
-    await db.user.update({ where: { id }, data: { isActive: false } })
+    // (segunda reparación) Desactivación + revocación de sesiones en UN SOLO
+    // update atómico: no hay ventana en la que el usuario esté inactivo con
+    // sesiones válidas, ni estado cambiado sin revocación.
+    await db.user.update({ where: { id }, data: { isActive: false, tokenVersion: { increment: 1 } } })
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,

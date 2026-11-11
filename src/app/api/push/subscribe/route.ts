@@ -10,7 +10,7 @@ import { db } from '@/lib/db'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as {
       endpoint?: string
       keys?: { p256dh?: string; auth?: string }

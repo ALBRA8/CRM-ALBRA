@@ -14,7 +14,7 @@ import { ROLE_PERMISSIONS, KNOWN_ROLES } from '@/lib/rbac'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    requireAuth(req)
+    await requireAuth(req)
     return json({ permissions: ROLE_PERMISSIONS, roles: [...KNOWN_ROLES] })
   })
 }

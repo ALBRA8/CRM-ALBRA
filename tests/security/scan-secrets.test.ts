@@ -56,15 +56,25 @@ describe('scan-secrets — detección', () => {
 })
 
 describe('scan-secrets — falsos positivos controlados', () => {
-  it('ignora placeholders y valores dummy de tests', () => {
+  it('ignora placeholders y valores dummy de tests (marcador explícito o literal exacto)', () => {
+    // Tras B7 los prefijos genéricos (^test_, ^mock, ^fake…) ya NO excluyen
+    // (un secreto real con ese prefijo pasaba). Los fixtures legítimos se
+    // marcan explícitamente o usan literales dummy exactos.
     const text = [
-      'API_KEY = "test_secret_key_12345678"',
-      'password = "REDACTED-JWT-ROTATE-ME"',
+      'API_KEY = "test_secret_key_12345678" // scan-secrets:allow — fixture de prueba',
+      'password = "REDACTED-JWT-ROTATE-ME" // scan-secrets:allow — fixture de prueba',
       'token = "your_api_key_here_placeholder"',
-      'secret = "changeme_por_favor"',
+      'secret = "changeme"',
       'key = "<mi-placeholder>"',
     ].join('\n')
     expect(scanText(text)).toHaveLength(0)
+  })
+
+  it('NO excluye un secreto real solo porque empiece por prefijo de test/mock/e2e (B7)', () => {
+    // Antes ^test_/^mock/^fake/^e2e_ ocultaban secretos reales con esos prefijos.
+    const text = 'API_KEY = "test_REAL_SECRET_VALUE_9f8e7d6c5b4a"'
+    const f = scanText(text)
+    expect(f).toHaveLength(1)
   })
 
   it('respeta el marcador de línea scan-secrets:allow', () => {

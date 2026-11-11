@@ -38,6 +38,27 @@ class ApiClient {
     return this.request('/auth/login', { method: 'POST', body: JSON.stringify(data) })
   }
 
+  // (OLEADA 2) 2FA TOTP: canje del ticket MFA por sesión con el segundo factor.
+  async verify2fa(data: { mfaToken: string; code: string }) {
+    return this.request('/auth/2fa/verify', { method: 'POST', body: JSON.stringify(data) })
+  }
+
+  async get2faStatus() {
+    return this.request('/auth/2fa/status')
+  }
+
+  async setup2fa() {
+    return this.request('/auth/2fa/setup', { method: 'POST', body: '{}' })
+  }
+
+  async enable2fa(data: { code: string }) {
+    return this.request('/auth/2fa/enable', { method: 'POST', body: JSON.stringify(data) })
+  }
+
+  async disable2fa(data: { password: string; code: string }) {
+    return this.request('/auth/2fa/disable', { method: 'POST', body: JSON.stringify(data) })
+  }
+
   async getMe() {
     return this.request('/auth/me')
   }

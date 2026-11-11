@@ -10,7 +10,7 @@ import { generateApiKey } from '@/lib/api-keys'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const keys = await db.apiKey.findMany({
       where: { organizationId: auth.orgId },
       orderBy: { createdAt: 'desc' },
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = await readBody(req)
     const name = str(body.name) ?? 'Clave MCP'
     const { raw, hashedKey, prefix } = generateApiKey()

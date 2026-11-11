@@ -8,7 +8,7 @@ import { serializeField } from '../../_lib/custom-fields'
 /** PUT /api/custom-fields/:id — actualiza la definición del campo. */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const { id } = await params
     const field = await db.customField.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!field) throw new HttpError(404, 'Campo no encontrado')
@@ -38,7 +38,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/custom-fields/:id — elimina el campo y sus valores (cascade). */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const { id } = await params
     const field = await db.customField.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true, name: true } })
     if (!field) throw new HttpError(404, 'Campo no encontrado')

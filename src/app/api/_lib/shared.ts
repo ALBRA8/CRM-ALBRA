@@ -9,11 +9,32 @@ import { SESSION_COOKIE } from '@/lib/auth'
 
 export type Body = Record<string, unknown>
 
-export async function readBody(req: NextRequest): Promise<Body> {
+/** Límite de tamaño de cuerpo por defecto (orden §2.C: límites de tamaño de cuerpo). */
+export const DEFAULT_MAX_BODY_BYTES = 1_000_000 // 1 MB
+
+export class BodyTooLargeError extends Error {
+  status = 413
+  constructor(maxBytes: number) {
+    super(`Cuerpo de la petición demasiado grande (máximo ${Math.floor(maxBytes / 1000)} KB)`)
+  }
+}
+
+export async function readBody(req: NextRequest, maxBytes: number = DEFAULT_MAX_BODY_BYTES): Promise<Body> {
+  // Pre-chequeo declarativo: si el cliente DECLARA un cuerpo mayor al tope,
+  // se rechaza sin leerlo (los proxies honran Content-Length).
+  const declared = req.headers.get('content-length')
+  if (declared && Number.isFinite(Number(declared)) && Number(declared) > maxBytes) {
+    throw new BodyTooLargeError(maxBytes)
+  }
   try {
-    const data = await req.json()
+    const raw = await req.text()
+    // Verificación real post-lectura (Content-Length puede mentir o faltar).
+    if (raw.length > maxBytes) throw new BodyTooLargeError(maxBytes)
+    if (raw === '') return {}
+    const data = JSON.parse(raw)
     return typeof data === 'object' && data !== null ? (data as Body) : {}
-  } catch {
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) throw err
     return {}
   }
 }
@@ -120,11 +141,22 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
     const status = (err as { status?: unknown })?.status
     const message = (err as { message?: unknown })?.message
     if (err instanceof HttpErrorLike || (typeof status === 'number' && typeof message === 'string')) {
-      return NextResponse.json({ error: message }, { status: typeof status === 'number' ? status : 500 })
+      const st = typeof status === 'number' ? status : 500
+      // (fusión, B2) los 429 informan Retry-After al cliente (ventana por defecto 60s).
+      const headers = st === 429 ? { 'Retry-After': '60' } : undefined
+      return NextResponse.json({ error: message }, { status: st, headers })
     }
-    const fallback = err instanceof Error ? err.message : 'Error interno del servidor'
+    // (reparación integral) Mapeo de errores conocidos de Prisma: la fuga cruda del
+    // mensaje exponía índices/SQL al cliente y devolvía 500 para errores de negocio.
+    const prismaCode = (err as { code?: unknown })?.code
+    if (prismaCode === 'P2002') {
+      return NextResponse.json({ error: 'El valor ya existe (restricción de unicidad)' }, { status: 409 })
+    }
+    if (prismaCode === 'P2025') {
+      return NextResponse.json({ error: 'Recurso no encontrado' }, { status: 404 })
+    }
     console.error('[api]', err)
-    return NextResponse.json({ error: fallback }, { status: 500 })
+    return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
   }
 }
 

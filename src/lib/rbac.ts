@@ -53,6 +53,9 @@ export const ADMIN_EXTRA_PERMISSIONS = [
   'data.import',
   'custom-fields.*',
   'permissions.read',
+  // Reparación integral B2: purgar TODAS las notificaciones de la organización
+  // es una operación destructiva colectiva → solo owner/admin/superadmin.
+  'notifications.manage',
 ] as const
 
 /**

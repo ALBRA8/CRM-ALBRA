@@ -9,7 +9,7 @@ import { db } from '@/lib/db'
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const limit = parseIntParam(req, 'limit', 100, 1, 300)
 
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 /** PUT /api/instagram/conversations/:id — marca la conversación como leída (metadata.readAt) */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await db.client.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true } })
     if (!client) return json({ error: 'Conversación no encontrada' }, { status: 404 })

@@ -19,7 +19,7 @@ const QUOTE_STATUS_LABELS: Record<string, string> = {
 /** GET /api/quotes/:id — detalle con items, cliente y oportunidad. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const quote = await db.quote.findFirst({
       where: { id, organizationId: auth.orgId },
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
  */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const existing = await db.quote.findFirst({
       where: { id, organizationId: auth.orgId },
@@ -89,13 +89,26 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return json({ quote: serializeQuote(existing) })
     }
 
-    // Actualiza campos + reemplaza items en una transacción
+    // (segunda reparación §2.E) Una ÚNICA transacción cubre: transición de
+    // estado CAS (compara-y- intercambia contra el status leído), reemplazo de
+    // líneas y — si la cotización pasa a accepted — la Transaction de ingreso.
+    // Antes el ingreso se creaba DESPUÉS del commit: un crash dejaba la
+    // cotización aceptada sin su ingreso, y dos PUT concurrentes podían crear
+    // DOS ingresos. El CAS hace imposible el doble ingreso: si otro PUT cambió
+    // el status mientras tanto, la operación completa se rechaza con 409.
     const updated = await db.$transaction(async (tx) => {
+      const cas = await tx.quote.updateMany({
+        where: { id, organizationId: auth.orgId, status: existing.status },
+        data,
+      })
+      if (cas.count !== 1) {
+        throw new HttpError(409, 'La cotización fue modificada por otra operación. Recarga e inténtalo de nuevo.')
+      }
       if (newItems) {
         await tx.quoteItem.deleteMany({ where: { quoteId: id } })
         await tx.quoteItem.createMany({ data: quoteItemRows(newItems, auth.orgId).map((r) => ({ ...r, quoteId: id })) })
       }
-      return tx.quote.update({
+      const q = await tx.quote.update({
         where: { id },
         data,
         include: {
@@ -104,7 +117,25 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           items: { orderBy: { position: 'asc' } },
         },
       })
-    })
+      // Ingreso automático por aceptación — DENTRO de la transacción y solo si
+      // la transición draft/sent/rejected/expired → accepted ganó el CAS.
+      if (statusChanged && newStatus === 'accepted' && existing.status !== 'accepted' && q.total > 0) {
+        await tx.transaction.create({
+          data: {
+            organizationId: auth.orgId,
+            type: 'ingreso',
+            category: 'venta',
+            description: `Cobro de cotización ${q.number}`,
+            amount: q.total,
+            currency: q.currency,
+            clientId: q.clientId,
+            quoteId: id,
+            date: new Date(),
+          },
+        })
+      }
+      return q
+    }, { maxWait: 5_000, timeout: 30_000 })
 
     if (statusChanged && newStatus) {
       await auditAndTimeline({
@@ -125,20 +156,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         payload: { quoteId: id, clientId: updated.clientId, status: newStatus, number: existing.number, clientName: updated.client?.name },
       })
 
-      // Aceptada → Transaction de ingreso automática
+      // Timeline del ingreso automático (el ingreso ya existe: se creó dentro
+      // de la transacción del cambio de estado).
       if (newStatus === 'accepted' && existing.status !== 'accepted' && updated.total > 0) {
-        const tx = await db.transaction.create({
-          data: {
-            organizationId: auth.orgId,
-            type: 'ingreso',
-            category: 'venta',
-            description: `Cobro de cotización ${existing.number}`,
-            amount: updated.total,
-            currency: updated.currency,
-            clientId: updated.clientId,
-            quoteId: id,
-            date: new Date(),
-          },
+        const tx = await db.transaction.findFirst({
+          where: { quoteId: id, organizationId: auth.orgId },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true },
         })
         await recordTimelineEvent({
           orgId: auth.orgId,
@@ -149,7 +173,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           description: `Cotización ${existing.number} aceptada`,
           source: 'system',
           userId: auth.userId,
-          metadata: { transactionId: tx.id },
+          metadata: { transactionId: tx?.id },
         })
       }
     } else {
@@ -173,7 +197,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/quotes/:id */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const existing = await db.quote.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true, number: true } })
     if (!existing) throw new HttpError(404, 'Cotización no encontrada')

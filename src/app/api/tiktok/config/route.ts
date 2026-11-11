@@ -12,7 +12,7 @@ import { maskSecret } from '@/lib/crypto'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const integration = await getIntegration(auth.orgId)
     const state = parseTikTokState(integration.tiktokTokenEnc)
     return json({
@@ -43,7 +43,7 @@ interface TikTokConfigBody {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = (await req.json().catch(() => ({}))) as TikTokConfigBody
     const integration = await getIntegration(auth.orgId)
     const current = parseTikTokState(integration.tiktokTokenEnc)
@@ -79,7 +79,7 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     await db.integration.update({
       where: { organizationId: auth.orgId },
       data: { tiktokTokenEnc: null, enableTikTok: false },

@@ -24,7 +24,7 @@ interface EmailBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as EmailBody
     requireFields(body as unknown as Record<string, unknown>, ['to', 'subject'])
     const to = String(body.to).trim()

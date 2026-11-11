@@ -12,7 +12,7 @@ import { embedTexts, cosine, parseVector, consolidateMemory } from '@/lib/memory
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const q = new URL(req.url).searchParams.get('q') || ''
     const clientId = new URL(req.url).searchParams.get('clientId') || undefined
     const k = parseIntParam(req, 'k', 6, 1, 12)
@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as { clientId?: string | null }
     if (body.clientId) {
       const client = await db.client.findFirst({

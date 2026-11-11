@@ -9,7 +9,7 @@ import { normalizeVariables } from '@/lib/templates'
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     // Fase 2 RBAC: edición de plantillas es owner/admin
-    const auth = requirePermission(req, 'templates.write')
+    const auth = await requirePermission(req, 'templates.write')
     const { id } = await params
     const existing = await db.template.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!existing) return json({ error: 'Plantilla no encontrada' }, { status: 404 })
@@ -48,7 +48,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/templates/:id */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requirePermission(req, 'templates.write')
+    const auth = await requirePermission(req, 'templates.write')
     const { id } = await params
     const existing = await db.template.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true, name: true } })
     if (!existing) return json({ error: 'Plantilla no encontrada' }, { status: 404 })

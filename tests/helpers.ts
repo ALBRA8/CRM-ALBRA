@@ -39,6 +39,8 @@ export interface RequestOpts {
   /** Cookie cruda para probar el modo de auth httpOnly (sin header Bearer). */
   cookie?: string
   body?: unknown
+  /** Headers adicionales (ej. credenciales de servicio por organización). */
+  headers?: Record<string, string>
 }
 
 /** Construye un NextRequest listo para pasárselo a un handler de ruta. */
@@ -47,6 +49,7 @@ export function req(pathWithQuery: string, opts: RequestOpts = {}): NextRequest 
   if (opts.token) headers.set('authorization', `Bearer ${opts.token}`)
   if (opts.cookie) headers.set('cookie', opts.cookie)
   if (opts.body !== undefined) headers.set('content-type', 'application/json')
+  for (const [k, v] of Object.entries(opts.headers ?? {})) headers.set(k, v)
   return new NextRequest(BASE_URL + pathWithQuery, {
     method: opts.method ?? 'GET',
     headers,

@@ -12,7 +12,7 @@ import { buildOppMeta, oppAmountFrom, parseOppMeta, serializeOpportunity } from 
 /** GET /api/opportunities/:id */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const opp = await db.opportunity.findFirst({
       where: { id, organizationId: auth.orgId },
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
  */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const existing = await db.opportunity.findFirst({
       where: { id, organizationId: auth.orgId },

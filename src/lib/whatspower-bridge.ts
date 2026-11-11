@@ -8,7 +8,7 @@ import { createHmac, randomUUID } from 'crypto'
  * 1. Inbound Bridge — CRM reenvía mensajes entrantes de WhatsApp a
  *    `POST {WHATSPOWER}/api/inbound` con firma HMAC-SHA256:
  *      header X-Signature-SHA256: <hex hmac-sha256(rawBody, secret)>
- *      header X-Timestamp: <epoch ms> (ventana anti-replay 300s en WhatsPower)
+ *      header X-Timestamp: <epoch ms> — LIGADO a la firma (canonical `${ts}.${body}`, v2)
  *      body: { eventId, orgId, contact: { phone, name? }, message: { text } }
  *    WHATSPOWER valida la firma con su AGENTIC_2A_WEBHOOK_SECRET/WEBHOOK_SECRET.
  *
@@ -53,9 +53,13 @@ function sharedSecret(): string | null {
   return s && s.trim() ? s.trim() : null
 }
 
-/** Firma del mismo formato que WHATSPOWER verifica en /api/inbound (hex puro, sin prefijo). */
-export function signWhatspowerPayload(rawBody: string, secret: string): string {
-  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
+/**
+ * Firma v2 (reparación integral 2026-11-06): el timestamp queda LIGADO a la
+ * firma. Canonical: `${timestamp}.${rawBody}` — igual formato que WHATSPOWER
+ * verifica en /api/inbound con checkWebhookSecurity v2 (hex puro, sin prefijo).
+ */
+export function signWhatspowerPayload(timestamp: string | number, rawBody: string, secret: string): string {
+  return createHmac('sha256', secret).update(`${String(timestamp)}.${rawBody}`, 'utf8').digest('hex')
 }
 
 export interface WhatspowerInboundInput {
@@ -76,11 +80,18 @@ export interface WhatspowerStageChangeInput {
   fromStage: string
   toStage: string
   dealValue?: number | null
+  /**
+   * (OLEADA 2, contrato v2) Identidad ÚNICA de esta ocurrencia del evento:
+   * WHATSPOWER la usa como clave de idempotencia — un replay del mismo
+   * evento NO vuelve a disparar la automatización ni reenvía el mensaje.
+   * Si se omite, el receptor deriva una clave determinista.
+   */
+  eventId?: string
 }
 
 interface WhatspowerBridgeResult {
   sent: boolean
-  skipped: 'disabled' | 'no_secret' | 'inbound_error'
+  skipped: 'disabled' | 'no_secret' | 'no_config' | 'inbound_error'
   status?: number
   error?: string
 }
@@ -105,7 +116,8 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
     message: { text: input.text },
   }
   const rawBody = JSON.stringify(payload)
-  const signature = signWhatspowerPayload(rawBody, secret)
+  const ts = String(Date.now())
+  const signature = signWhatspowerPayload(ts, rawBody, secret)
 
   try {
     const res = await fetch(inboundUrl(), {
@@ -113,7 +125,7 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
       headers: {
         'Content-Type': 'application/json',
         'X-Signature-SHA256': signature,
-        'X-Timestamp': String(Date.now()),
+        'X-Timestamp': ts,
       },
       body: rawBody,
       signal: AbortSignal.timeout(INBOUND_TIMEOUT_MS),
@@ -138,7 +150,26 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
 export async function notifyWhatspowerStageChange(input: WhatspowerStageChangeInput): Promise<WhatspowerBridgeResult> {
   if (!isWhatspowerEnabled()) return { sent: false, skipped: 'disabled' }
 
+  // ================================================================
+  // CONTRATO CRM→WHATSPOWER §5 (reparación integral 2026-11-06):
+  // La organización viaja en la IDENTIDAD, no solo en el body:
+  //  - header X-Org-Id: la org del evento (auditable en el receptor);
+  //  - Bearer: credencial de servicio DE ESA ORGANIZACIÓN
+  //    (WHATSPOWER_ORG_SERVICE_CREDENTIALS='{"orgId":"cred",...}') si está
+  //    configurada; si no, el secreto central (WHATSPOWER_INTERNAL_API_SECRET)
+  //    — el receptor valida en ambos casos que body.orgId === X-Org-Id y que
+  //    la credencial corresponde a ESA organización (fail-closed en el receptor).
+  // ================================================================
+  const orgId = String(input.orgId || '').trim()
+  if (!orgId) {
+    console.warn('[whatspower-bridge] stage-change omitido: evento sin orgId (contrato §5)')
+    return { sent: false, skipped: 'no_config', status: 0 }
+  }
   const payload = {
+    // (OLEADA 2) eventId ÚNICO por ocurrencia: idempotencia extremo a extremo
+    // (el receptor lo guarda en stage_change_dedup por organización).
+    eventId: input.eventId || `sevt_${randomUUID()}`,
+    orgId,
     clientId: input.clientId || undefined,
     clientPhone: input.clientPhone || undefined,
     clientName: input.clientName || undefined,
@@ -149,10 +180,28 @@ export async function notifyWhatspowerStageChange(input: WhatspowerStageChangeIn
   }
   const rawBody = JSON.stringify(payload)
 
+  let orgCredential = ''
+  const rawMap = process.env.WHATSPOWER_ORG_SERVICE_CREDENTIALS
+  if (rawMap) {
+    try {
+      const map = JSON.parse(rawMap) as Record<string, string>
+      orgCredential = typeof map[orgId] === 'string' ? map[orgId] : ''
+    } catch { /* mapa inválido: se usa el secreto central */ }
+  }
+  const internalSecret = orgCredential || process.env.WHATSPOWER_INTERNAL_API_SECRET || process.env.WHATSPOWER_WEBHOOK_SECRET || ''
+  if (!internalSecret) {
+    console.warn('[whatspower-bridge] stage-change omitido: falta credencial de la organización o WHATSPOWER_INTERNAL_API_SECRET')
+    return { sent: false, skipped: 'no_config', status: 0 }
+  }
+
   try {
     const res = await fetch(stageUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${internalSecret}`,
+        'X-Org-Id': orgId,
+      },
       body: rawBody,
       signal: AbortSignal.timeout(STAGE_TIMEOUT_MS),
     })

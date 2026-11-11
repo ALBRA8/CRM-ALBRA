@@ -9,7 +9,7 @@ import { normalizeTrigger, normalizeActions, toJsonString } from '@/lib/automati
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     // Fase 2 RBAC: editar automatizaciones es tarea de owner/admin
-    const auth = requirePermission(req, 'automations.write')
+    const auth = await requirePermission(req, 'automations.write')
     const { id } = await params
     const existing = await db.automation.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!existing) return json({ error: 'Automatización no encontrada' }, { status: 404 })
@@ -81,7 +81,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/automations/:id */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requirePermission(req, 'automations.write')
+    const auth = await requirePermission(req, 'automations.write')
     const { id } = await params
     const existing = await db.automation.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true, name: true } })
     if (!existing) return json({ error: 'Automatización no encontrada' }, { status: 404 })

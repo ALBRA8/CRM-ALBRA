@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
-import { requirePermission } from '@/lib/auth'
+import { requirePermission, HttpError } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { auditAndTimeline } from '@/lib/api-helpers'
@@ -8,46 +8,53 @@ import { auditAndTimeline } from '@/lib/api-helpers'
 /**
  * GET  /api/backup — dump JSON de todos los datos de la organización (descarga).
  *   Incluye quoteItems para que el JSON sea autocontenido (restauración fiel).
- * POST /api/backup — restauración best-effort del JSON exportado:
- *   clients, services, templates, opportunities, reservations, quotes (+items)
- *   y transactions. Las entidades se re-vinculan al cliente por teléfono del
- *   propio backup (mapa oldId→newId). Nota: las ETAPAS del pipeline no viajan
- *   en el backup → las oportunidades quedan sin stageId (posición del kanban
- *   no restaurable desde JSON). Para recuperación total ante desastres,
- *   reemplazar los archivos físicos db/custom.db y .wa-auth/.
+ * POST /api/backup — restauración del JSON exportado.
+ *
+ * (segunda reparación §2.E) CONSISTENCIA:
+ *  - El GET lee TODAS las tablas dentro de una transacción: el JSON refleja un
+ *    snapshot consistente aunque haya escrituras concurrentes (SQLite sirve
+ *    lecturas de un solo snapshot dentro de la transacción).
+ *  - El POST restaura DENTRO de una única transacción: o se restaura todo, o
+ *    nada (jamás un restore parcial por un crash a mitad). Los números de
+ *    cotización que colisionen con los existentes de la org se sufijan (sin
+ *    borrar nada) para respetar la unicidad por organización.
  */
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: el backup contiene TODOS los datos de la org → solo owner/admin
-    const auth = requirePermission(req, 'export.data')
+    const auth = await requirePermission(req, 'export.data')
     const orgId = auth.orgId
-    const [org, clients, services, templates, opportunities, reservations, quotes, quoteItems, transactions, automations, timelineEvents, savedViews, memories] =
-      await Promise.all([
-        db.organization.findUnique({ where: { id: orgId }, select: { id: true, name: true, slug: true, plan: true, createdAt: true } }),
-        db.client.findMany({ where: { organizationId: orgId } }),
-        db.service.findMany({ where: { organizationId: orgId } }),
-        db.template.findMany({ where: { organizationId: orgId } }),
-        db.opportunity.findMany({ where: { organizationId: orgId } }),
-        db.reservation.findMany({ where: { organizationId: orgId } }),
-        db.quote.findMany({ where: { organizationId: orgId } }),
-        db.quoteItem.findMany({ where: { quote: { organizationId: orgId } } }),
-        db.transaction.findMany({ where: { organizationId: orgId } }),
-        db.automation.findMany({ where: { organizationId: orgId } }),
-        db.timelineEvent.findMany({ where: { organizationId: orgId }, orderBy: { createdAt: 'desc' }, take: 2000 }),
-        db.savedView.findMany({ where: { organizationId: orgId } }),
-        db.agentMemory.findMany({ where: { organizationId: orgId } }),
-      ])
+    // Snapshot consistente: todas las lecturas dentro de UNA transacción
+    // (timeout ampliado: el dump completo puede tardar más que el default 5 s).
+    // La auditoría se registra FUERA: no forma parte del snapshot de datos.
+    const payload = await db.$transaction(async (tx) => {
+      const [org, clients, services, templates, opportunities, reservations, quotes, quoteItems, transactions, automations, timelineEvents, savedViews, memories] =
+        await Promise.all([
+          tx.organization.findUnique({ where: { id: orgId }, select: { id: true, name: true, slug: true, plan: true, createdAt: true } }),
+          tx.client.findMany({ where: { organizationId: orgId } }),
+          tx.service.findMany({ where: { organizationId: orgId } }),
+          tx.template.findMany({ where: { organizationId: orgId } }),
+          tx.opportunity.findMany({ where: { organizationId: orgId } }),
+          tx.reservation.findMany({ where: { organizationId: orgId } }),
+          tx.quote.findMany({ where: { organizationId: orgId } }),
+          tx.quoteItem.findMany({ where: { quote: { organizationId: orgId } } }),
+          tx.transaction.findMany({ where: { organizationId: orgId } }),
+          tx.automation.findMany({ where: { organizationId: orgId } }),
+          tx.timelineEvent.findMany({ where: { organizationId: orgId }, orderBy: { createdAt: 'desc' }, take: 2000 }),
+          tx.savedView.findMany({ where: { organizationId: orgId } }),
+          tx.agentMemory.findMany({ where: { organizationId: orgId } }),
+        ])
+      return {
+        app: 'CRM ALBRA',
+        version: 3,
+        exportedAt: new Date().toISOString(),
+        organization: org,
+        data: { clients, services, templates, opportunities, reservations, quotes, quoteItems, transactions, automations, timelineEvents, savedViews, memories },
+      }
+    }, { maxWait: 5_000, timeout: 60_000 })
 
-    await auditAndTimeline({ orgId, userId: auth.userId, action: 'exported', entity: 'backup', details: { clients: clients.length } })
-
-    const payload = {
-      app: 'CRM ALBRA',
-      version: 2,
-      exportedAt: new Date().toISOString(),
-      organization: org,
-      data: { clients, services, templates, opportunities, reservations, quotes, quoteItems, transactions, automations, timelineEvents, savedViews, memories },
-    }
+    await auditAndTimeline({ orgId, userId: auth.userId, action: 'exported', entity: 'backup', details: { clients: (payload.data as { clients: unknown[] }).clients.length } })
 
     return new NextResponse(JSON.stringify(payload, null, 2), {
       status: 200,
@@ -79,17 +86,121 @@ const d = (v: unknown): Date | null => {
 }
 const digits = (v: unknown): string => String(v ?? '').replace(/\D+/g, '')
 
+// (tercera reparación 6.A) Tope EFECTIVO del body de restauración:
+// el límite NO puede depender de Content-Length (una petición chunked o sin
+// cabecera lo evadía y req.json() cargaba el body COMPLETO en memoria).
+// Se lee el STREAM por chunks con corte duro en MAX_BACKUP_BYTES: el cuerpo se
+// descarta en cuanto se supera el tope (sin acumularlo), haya o no cabecera.
+const MAX_BACKUP_BYTES = 25_000_000
+
+async function readJsonBodyWithLimit(req: NextRequest, maxBytes: number): Promise<{ ok: true; text: string } | { ok: false; tooLarge: boolean }> {
+  // Rechazo rápido cuando la cabecera declara un tamaño mayor (ahorra lectura)
+  const declared = Number(req.headers.get('content-length') ?? '')
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    return { ok: false, tooLarge: true }
+  }
+  const reader = req.body?.getReader()
+  if (!reader) {
+    // Sin stream legible no hay backup verificable: rechazo (fail-closed)
+    return { ok: false, tooLarge: true }
+  }
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value?.byteLength ?? 0
+      if (total > maxBytes) {
+        try { await reader.cancel('backup demasiado grande') } catch {}
+        return { ok: false, tooLarge: true }
+      }
+      chunks.push(value)
+    }
+  } catch {
+    return { ok: false, tooLarge: false } // stream roto/abortado → body inválido (400), no un exceso de tamaño
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    merged.set(c, offset)
+    offset += c.byteLength
+  }
+  return { ok: true, text: new TextDecoder().decode(merged) }
+}
+
+/**
+ * (tercera reparación 6.A) Validación de ESTRUCTURA y VERSIÓN del backup ANTES
+ * de tocar la base de datos: un JSON corrupto, de otra aplicación o de una
+ * versión futura se rechaza con 400 (jamás se inicia una restauración parcial).
+ */
+function validateBackupEnvelope(parsed: unknown): { ok: true; body: BackupBody } | { ok: false; message: string } {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, message: 'Backup inválido: se esperaba un objeto JSON' }
+  }
+  const obj = parsed as Record<string, unknown>
+  if (obj.app !== 'CRM ALBRA') {
+    return { ok: false, message: 'Backup inválido: no es un backup de CRM ALBRA (campo app ausente o incorrecto)' }
+  }
+  const version = Number(obj.version)
+  if (!Number.isFinite(version) || version < 1 || version > 3) {
+    return { ok: false, message: 'Backup con versión no soportada (se admiten versiones 1 a 3)' }
+  }
+  const data = obj.data
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { ok: false, message: 'Backup inválido: falta el objeto data' }
+  }
+  const collections = ['clients', 'services', 'templates', 'opportunities', 'reservations', 'quotes', 'quoteItems', 'transactions'] as const
+  for (const key of collections) {
+    const val = (data as Record<string, unknown>)[key]
+    if (val !== undefined && !Array.isArray(val)) {
+      return { ok: false, message: `Backup inválido: la colección "${key}" debe ser un arreglo` }
+    }
+  }
+  return { ok: true, body: data as BackupBody }
+}
+
 export async function POST(req: NextRequest) {
   return handle(async () => {
     // Fase 2 RBAC: restaurar datos masivamente es owner/admin
-    const auth = requirePermission(req, 'export.data')
-    const body = (await req.json().catch(() => ({}))) as BackupBody
+    const auth = await requirePermission(req, 'export.data')
+    // (tercera reparación 6.A) Tope EFECTIVO por lectura de stream (25 MB):
+    // cubre Content-Length, transferencia chunked y peticiones SIN cabecera.
+    // El body se descarta en cuanto se supera el tope → 413 sin agotar memoria.
+    const bodyRead = await readJsonBodyWithLimit(req, MAX_BACKUP_BYTES)
+    if (!bodyRead.ok) {
+      throw new HttpError(
+        bodyRead.tooLarge ? 413 : 400,
+        bodyRead.tooLarge ? 'Backup demasiado grande (máximo 25 MB)' : 'No se pudo leer el cuerpo de la restauración (stream inválido o interrumpido)'
+      )
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(bodyRead.text)
+    } catch {
+      throw new HttpError(400, 'Backup inválido: el cuerpo no es JSON válido')
+    }
+    const envelope = validateBackupEnvelope(parsed)
+    if (!envelope.ok) {
+      throw new HttpError(400, envelope.message)
+    }
+    const body = envelope.body
     const restored = { clients: 0, services: 0, templates: 0, opportunities: 0, reservations: 0, quotes: 0, quoteItems: 0, transactions: 0 }
     const skipped = { clients: 0, services: 0, templates: 0, opportunities: 0, reservations: 0, quotes: 0, quoteItems: 0, transactions: 0 }
 
     // Mapa teléfono(sinnúmero)→id actual y oldId→newId para re-vincular
     // oportunidades/cotizaciones/reservas/transacciones al cliente correcto.
-    const orgClients = await db.client.findMany({ where: { organizationId: auth.orgId }, select: { id: true, phone: true } })
+    // (segunda reparación §2.E) TODA la restauración corre dentro de UNA
+    // transacción: o se restaura todo o nada — jamás un restore parcial por
+    // un crash a mitad ni registros huérfanos a mitad de import.
+    // (tercera reparación 6.A) La AUDITORÍA va FUERA de la transacción:
+    // auditAndTimeline escribe por la conexión global y, dentro de la
+    // transacción interactiva (que retiene el lock de escritura de SQLite),
+    // se bloqueaba en deadlock (defecto de fase 2 detectado por la batería).
+    // Además: si la restauración se revierte, no queda auditoría de un hecho
+    // que no ocurrió. El operatorio del restore queda auditado SOLO si existe.
+    const result = await db.$transaction(async (tx) => {
+    const orgClients = await tx.client.findMany({ where: { organizationId: auth.orgId }, select: { id: true, phone: true } })
     const clientByPhone = new Map<string, string>()
     for (const c of orgClients) if (c.phone) clientByPhone.set(digits(c.phone), c.id)
     const oldToNewClient: Record<string, string> = {}
@@ -110,7 +221,7 @@ export async function POST(req: NextRequest) {
         skipped.clients++
         continue
       }
-      const created = await db.client.create({
+      const created = await tx.client.create({
         data: {
           organizationId: auth.orgId,
           name,
@@ -141,7 +252,7 @@ export async function POST(req: NextRequest) {
         skipped.services++
         continue
       }
-      await db.service.create({
+      await tx.service.create({
         data: {
           organizationId: auth.orgId,
           name,
@@ -163,7 +274,7 @@ export async function POST(req: NextRequest) {
         skipped.templates++
         continue
       }
-      await db.template.create({
+      await tx.template.create({
         data: {
           organizationId: auth.orgId,
           name,
@@ -185,7 +296,7 @@ export async function POST(req: NextRequest) {
         skipped.opportunities++
         continue
       }
-      const created = await db.opportunity.create({
+      const created = await tx.opportunity.create({
         data: {
           organizationId: auth.orgId,
           title,
@@ -213,7 +324,7 @@ export async function POST(req: NextRequest) {
         skipped.reservations++
         continue
       }
-      await db.reservation.create({
+      await tx.reservation.create({
         data: {
           organizationId: auth.orgId,
           title,
@@ -231,8 +342,15 @@ export async function POST(req: NextRequest) {
     // Quotes + items (FIX auditoría pre-venta #3: ya no se pierden las cotizaciones)
     const oldToNewQuote: Record<string, string> = {}
     for (const raw of Array.isArray(body.quotes) ? body.quotes.slice(0, 5000) : []) {
-      const number = s(raw.number, 40) || `BK-${Date.now()}-${restored.quotes + 1}`
-      const created = await db.quote.create({
+      let number = s(raw.number, 40) || `BK-${Date.now()}-${restored.quotes + 1}`
+      // (segunda reparación §2.E) La unicidad (organizationId, number) es ley:
+      // si el número ya existe en la org (p. ej. restore del mismo backup dos
+      // veces), se sufija en lugar de abortar todo el import. No se borra ni
+      // sobrescribe ningún registro existente.
+      if (await tx.quote.findFirst({ where: { organizationId: auth.orgId, number }, select: { id: true } })) {
+        number = `${number.slice(0, 32)}-R${Date.now().toString(36).slice(-4)}${restored.quotes}`
+      }
+      const created = await tx.quote.create({
         data: {
           organizationId: auth.orgId,
           number,
@@ -258,7 +376,7 @@ export async function POST(req: NextRequest) {
         skipped.quoteItems++
         continue
       }
-      await db.quoteItem.create({
+      await tx.quoteItem.create({
         data: {
           quoteId: newQuoteId,
           organizationId: auth.orgId,
@@ -276,7 +394,7 @@ export async function POST(req: NextRequest) {
     // Transactions (historial de dinero)
     for (const raw of Array.isArray(body.transactions) ? body.transactions.slice(0, 5000) : []) {
       const date = d(raw.date)
-      await db.transaction.create({
+      await tx.transaction.create({
         data: {
           organizationId: auth.orgId,
           type: String(raw.type) === 'expense' ? 'expense' : 'income',
@@ -293,14 +411,17 @@ export async function POST(req: NextRequest) {
       restored.transactions++
     }
 
+    return { success: true, restored, skipped }
+    }, { maxWait: 5_000, timeout: 120_000 }) // fin db.$transaction — todo o nada
+
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,
       action: 'imported',
       entity: 'backup',
-      details: { restored, skipped },
+      details: { restored: result.restored, skipped: result.skipped },
     })
 
-    return json({ success: true, restored, skipped })
+    return json(result)
   })
 }

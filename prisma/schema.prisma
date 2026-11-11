@@ -57,6 +57,7 @@ model Organization {
   integration           Integration?
   apiKeys               ApiKey[]
   agentLeadEvents       AgentLeadEvent[]
+  whatsappConnections   WhatsAppConnection[]
 }
 
 model User {
@@ -68,6 +69,13 @@ model User {
   phone          String?
   role           String       @default("member") // owner | admin | member
   isActive       Boolean      @default(true)
+  // Revocación de sesiones PERSISTENTE (segunda reparación): contador por
+  // usuario embebido en cada JWT (`tv`). Cualquier punto que revoca (reset de
+  // contraseña, desactivación, cambio de rol, logout global) incrementa este
+  // contador de forma atómica en BD; los guardas async rechazan el token si
+  // `tv` del token !== valor vigente. Es inmediato, sobrevive a reinicios y
+  // funciona entre instancias porque la autoridad vive en la base de datos.
+  tokenVersion   Int          @default(0)
   avatar         String?
   leadCount      Int          @default(0)    // Fase 2: contador para round-robin de leads
   lastLeadAt     DateTime?                   // Fase 2: último lead asignado (desempate del round-robin)
@@ -75,8 +83,23 @@ model User {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   savedViews     SavedView[]
   apiKeysCreated ApiKey[]
+  // B3: guarda sha256(token) — el token en claro SOLO viaja por email; nunca en BD.
   resetToken     String?
   resetTokenExp  DateTime?
+  // OLEADA 2 — 2FA TOTP (RFC 6238):
+  //  - twoFactorSecret: secreto base32 CIFRADO con AES-256-GCM (src/lib/crypto.ts,
+  //    clave APP_ENCRYPTION_KEY/APP_SECRET). El secreto en claro SOLO se muestra
+  //    una vez en el enrolamiento (POST /api/auth/2fa/setup).
+  //  - twoFactorEnabled: el login exige el segundo factor SOLO cuando está en true
+  //    (el secreto puede existir en false mientras el usuario confirma el enrolamiento).
+  //  - twoFactorRecovery: JSON array de hashes SHA-256 de los códigos de
+  //    recuperación (un solo uso cada uno). Los códigos en claro se muestran UNA vez.
+  //  - twoFactorLastCounter: último contador TOTP consumido (replay: un código
+  //    usado en un ventana de 30s no vuelve a servir).
+  twoFactorSecret      String?
+  twoFactorEnabled     Boolean   @default(false)
+  twoFactorRecovery    String?
+  twoFactorLastCounter Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -250,6 +273,31 @@ model Quote {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, status])
+  // Unicidad del número de cotización POR ORGANIZACIÓN (segunda reparación):
+  // dos organizaciones pueden usar el mismo número, pero dentro de una org el
+  // número es único a nivel BD (defensa en profundidad frente a carreras).
+  @@unique([organizationId, number])
+}
+
+// Cubos de rate limiting PERSISTENTES (segunda reparación): los límites de los
+// endpoints sensibles (login/reset/forgot) se cuentan en BD, no en memoria,
+// para que sean efectivos entre reinicios y entre instancias que compartan la
+// misma base de datos. Limpieza perezosa de cubos vencidos en cada escritura.
+model RateLimitBucket {
+  key     String   @id
+  count   Int      @default(0)
+  resetAt DateTime
+
+  @@index([resetAt])
+}
+
+// Contadores atómicos por organización (segunda reparación §2.E): asignación
+// del número de cotización con un único upsert-increment (sin transacción
+// interactiva en el camino caliente — bajo SQLite la contención de varias
+// transacciones interactivas paralelas es patológica; un statement atómico no).
+model OrgCounter {
+  key   String @id
+  value Int    @default(0)
 }
 
 // Líneas de detalle de una cotización (portado del repo base, ahora relacional)
@@ -638,6 +686,69 @@ model Integration {
   enableTikTok          Boolean      @default(false)
   enableGoogle          Boolean      @default(false)
   updatedAt             DateTime     @updatedAt
+}
+
+// ---------- Conexiones WhatsApp por organización (OLEADA 2 — arquitectura SaaS) ----------
+// Decisión de negocio (2026-11-11): cada organización conecta SUS propios
+// números de WhatsApp con SUS credenciales de Meta (flujo oficial Embedded
+// Signup / OAuth — jamás contraseñas). Una organización puede tener UNO o
+// VARIOS números según su plan (whatsapp-plans.ts); cada conexión vive
+// exclusivamente bajo su organizationId y su token se almacena SIEMPRE
+// cifrado (AES-256-GCM, src/lib/crypto.ts). La revocación/desconexión de una
+// conexión no afecta a las demás organizaciones ni a las demás conexiones.
+//
+// Compatibilidad: Integration.whatsappCloudTokenEnc (un número por org)
+// sigue funcionando como legado; el webhook resuelve primero por
+// WhatsAppConnection y cae al legado solo si no hay conexión nueva.
+model WhatsAppConnection {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Identidad de la cuenta de negocio de Meta:
+  wabaId         String?  // WhatsApp Business Account (WABA)
+  phoneNumberId  String   @unique // identificador técnico del número en Graph API
+  phoneNumber    String   // número E.164 (solo lectura informativa, NUNCA clave de ruta)
+  displayName    String?  // nombre comercial mostrado en WhatsApp
+  // Credencial: token de acceso de la conexión — cifrado en reposo. En claro
+  // SOLO existe en memoria durante un envío/verificación (nunca en BD, logs ni
+  // respuestas de API; las rutas lo enmascaran con maskSecret).
+  accessTokenEnc String
+  // Secreto de la app Meta dueña de la conexión: si la org conectó vía
+  // Embedded Signup de NUESTRA app, es el global (META_APP_SECRET env) y este
+  // campo queda null; si la org usa su propia app Meta, su secreto va cifrado aquí.
+  metaAppSecretEnc String?
+  // verify_token por conexión para la verificación GET del webhook de Meta
+  webhookVerifyToken String
+  // Ciclo de vida: pending | connected | disconnected | revoked | error
+  status         String   @default("pending")
+  statusDetail   String?  // motivo legible del último cambio de estado
+  source         String   @default("embedded_signup") // embedded_signup | manual
+  tokenExpiresAt DateTime? // si el token es de vida corta (sistema token de Embedded Signup)
+  lastVerifiedAt DateTime?
+  lastErrorAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  events         WhatsAppConnectionEvent[]
+
+  @@index([organizationId, status])
+}
+
+// Auditoría del ciclo de vida de cada conexión (decisión #8/#9: trazabilidad
+// de connect/disconnect/revoke por organización, sin exponer secretos).
+// connectionId es OPCIONAL: también registra eventos de organización sin
+// conexión (ej. intento bloqueado por límite de plan).
+model WhatsAppConnectionEvent {
+  id             String              @id @default(cuid())
+  connectionId   String?
+  connection     WhatsAppConnection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  organizationId String
+  type           String // connected | disconnected | revoked | token_rotated | verified | error | plan_limit_blocked
+  detail         String?
+  createdAt      DateTime           @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([connectionId, createdAt])
 }
 
 // ---------- AGENTE-LEADS (webhook de eventos de prospección) ----------

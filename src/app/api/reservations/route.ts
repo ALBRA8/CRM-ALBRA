@@ -9,7 +9,7 @@ import { buildResMeta, serializeReservation } from '../_lib/reservations'
 /** GET /api/reservations — filtros: upcoming, clientId, startDate, endDate, status. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const upcoming = qparam(req, 'upcoming')
     const clientId = qparam(req, 'clientId')
     const status = qparam(req, 'status')
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/reservations — { clientId?, title, serviceType?, date, duration?, location?, notes? } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     requireFields(body, ['title'])
 

@@ -19,7 +19,7 @@ import { listClientChannels } from '@/lib/inbox'
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const suggestion = await suggestDealClose(auth.orgId, id)
 

@@ -10,7 +10,7 @@ import { db } from '@/lib/db'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const url = new URL(req.url)
     const clientId = url.searchParams.get('clientId') || undefined
     const opportunityId = url.searchParams.get('opportunityId') || undefined

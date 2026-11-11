@@ -12,7 +12,7 @@ export async function POST(_req: NextRequest) {
     if (!user) {
       return json({ error: 'No se pudo preparar la cuenta demo' }, { status: 500 })
     }
-    const token = signToken({ userId: user.id, orgId: demo.orgId, role: user.role, email: user.email })
+    const token = signToken({ userId: user.id, orgId: demo.orgId, role: user.role, email: user.email, tv: user.tokenVersion })
     return jsonWithSession({
       token,
       demo: true,

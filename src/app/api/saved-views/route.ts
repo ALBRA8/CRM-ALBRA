@@ -18,7 +18,7 @@ function serializeFilterValue(v: unknown): string {
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const entity = new URL(req.url).searchParams.get('entity') || undefined
     const views = await db.savedView.findMany({
       where: {
@@ -43,7 +43,7 @@ interface SavedViewBody {
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = (await req.json().catch(() => ({}))) as SavedViewBody
     requireFields(body as unknown as Record<string, unknown>, ['name', 'entity'])
     if (!ENTITIES.includes(String(body.entity))) {

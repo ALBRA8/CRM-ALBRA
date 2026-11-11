@@ -10,7 +10,7 @@ import { handle, json, readBody, requireFields, str, dateOrNull, numOrNull, norm
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const typeRaw = qparam(req, 'type')
     const type = typeRaw ? normalizeTxType(typeRaw) : null
     const startDate = qparam(req, 'startDate')
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/transactions — { type, amount, category?, description, date?, clientId?, method? } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     requireFields(body, ['amount', 'description'])
 
@@ -90,7 +90,15 @@ export async function POST(req: NextRequest) {
         currency: str(body.currency) ?? 'USD',
         date: dateOrNull(body.date) ?? new Date(),
         clientId: clientId || null,
-        quoteId: str(body.quoteId),
+        // (segunda reparación §2.B) La cotización referenciada debe existir y
+        // pertenecer a la organización (Transaction.quoteId no tiene FK en BD).
+        quoteId: await (async () => {
+          const quoteId = str(body.quoteId)
+          if (!quoteId) return null
+          const q = await db.quote.findFirst({ where: { id: quoteId, organizationId: auth.orgId }, select: { id: true } })
+          if (!q) throw new HttpError(400, 'Cotización no encontrada')
+          return quoteId
+        })(),
         method: str(body.method),
       },
     })

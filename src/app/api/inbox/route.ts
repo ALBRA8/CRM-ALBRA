@@ -12,7 +12,7 @@ import { listInbox, getInboxMessages, markInboxRead, parseInboxKey } from '@/lib
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const key = req.nextUrl.searchParams.get('key')
 
     if (!key) {

@@ -216,7 +216,7 @@ function toJsonArrayString(input: unknown): string | null {
 
 export async function PUT(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req) // P0: escritura solo para admins/owner; org SOLO del JWT
+    const auth = await requireAdmin(req) // P0: escritura solo para admins/owner; org SOLO del JWT
     const body = (await req.json().catch(() => ({}))) as NichoBody
 
     // P0.3: identificadores de organización enviados por el cliente no se leen

@@ -6,7 +6,7 @@ import { handle, json } from '../../_lib/shared'
 /** GET /api/auth/me — datos del usuario de la sesión (sin passwordHash). */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const user = await db.user.findFirst({
       where: { id: auth.userId, organizationId: auth.orgId, isActive: true },
       select: { id: true, name: true, email: true, company: true, phone: true, role: true, avatar: true, organizationId: true },

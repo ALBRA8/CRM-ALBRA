@@ -8,7 +8,7 @@ import { serializeField } from '../../_lib/custom-fields'
 /** GET /api/custom-fields/values?entityId= — valores de campos para una entidad. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const entityId = qparam(req, 'entityId')
     if (!entityId) throw new HttpError(400, 'Falta el parámetro entityId')
 
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     const entityId = str(body.entityId)
     if (!entityId) throw new HttpError(400, 'Falta entityId')

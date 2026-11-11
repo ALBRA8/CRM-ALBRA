@@ -103,7 +103,7 @@ async function enrichClients(
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const orgId = auth.orgId
     const force = new URL(req.url).searchParams.get('refresh') === '1'
 

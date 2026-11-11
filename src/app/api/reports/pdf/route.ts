@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     // RBAC (auditoría externa #1): los PDF financieros exigían solo sesión;
     // ahora requieren el MISMO permiso que el reporte JSON (reports.read).
-    const auth = requirePermission(req, 'reports.read')
+    const auth = await requirePermission(req, 'reports.read')
     const period = new URL(req.url).searchParams.get('period') || '30d'
     const days: number | null = { '7d': 7, '30d': 30, month: 30, '90d': 90, quarter: 90, '1y': 365, year: 365, all: null }[period] ?? 30
     const from = days ? new Date(Date.now() - days * 86_400_000) : new Date(0)

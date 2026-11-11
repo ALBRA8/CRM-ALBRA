@@ -5,12 +5,12 @@ import { auditAndTimeline, parseIntParam } from '@/lib/api-helpers'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { handle, json, readBody, requireFields, str, dateOrNull, numOrNull, clamp, qparam } from '../_lib/shared'
 import { loadClientAttrs } from '../_lib/clients'
-import { computeQuoteTotals, itemsFromBody, nextQuoteNumber, quoteItemRows, serializeQuote } from '../_lib/quotes'
+import { computeQuoteTotals, itemsFromBody, nextQuoteNumber, quoteItemRows, serializeQuote, isUniqueViolation } from '../_lib/quotes'
 
 /** GET /api/quotes — filtros: status, clientId. */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const status = qparam(req, 'status')
     const clientId = qparam(req, 'clientId')
     const limit = parseIntParam(req, 'limit', 100, 1, 500)
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
 /** POST /api/quotes — { clientId, opportunityId?, items[], discount%, notes?, validUntil? } */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const body = await readBody(req)
     requireFields(body, ['clientId'])
 
@@ -59,29 +59,48 @@ export async function POST(req: NextRequest) {
 
     const discountPct = clamp(numOrNull(body.discount) ?? 0, 0, 100)
     const totals = computeQuoteTotals(items, discountPct)
-    const number = await nextQuoteNumber(auth.orgId)
 
-    const created = await db.quote.create({
-      data: {
-        organizationId: auth.orgId,
-        number,
-        clientId,
-        opportunityId: opportunityId || null,
-        items: { create: quoteItemRows(items, auth.orgId) },
-        subtotal: totals.subtotal,
-        tax: totals.tax,
-        total: totals.total,
-        currency: str(body.currency) ?? 'USD',
-        status: str(body.status) ?? 'draft',
-        validUntil: dateOrNull(body.validUntil),
-        notes: str(body.notes),
-      },
-      include: {
-        client: { select: { id: true, name: true, email: true, phone: true, address: true } },
-        opportunity: { select: { id: true, title: true } },
-        items: true,
-      },
-    })
+    // (segunda reparación §2.E) Creación con número ATÓMICO: el contador por
+    // organización se incrementa con un solo statement (sin transacción
+    // interactiva — la contención SQLite de varias interactivas paralelas es
+    // patológica); el create con líneas anidadas es atómico de por sí. La
+    // restricción UNIQUE (organizationId, number) es la guardia final: ante
+    // P2002 (número ocupado por restore/import) se reintenta con el siguiente.
+    let created
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const number = await nextQuoteNumber(auth.orgId)
+        created = await db.quote.create({
+          data: {
+            organizationId: auth.orgId,
+            number,
+            clientId,
+            opportunityId: opportunityId || null,
+            items: { create: quoteItemRows(items, auth.orgId) },
+            subtotal: totals.subtotal,
+            tax: totals.tax,
+            total: totals.total,
+            currency: str(body.currency) ?? 'USD',
+            status: str(body.status) ?? 'draft',
+            validUntil: dateOrNull(body.validUntil),
+            notes: str(body.notes),
+          },
+          include: {
+            client: { select: { id: true, name: true, email: true, phone: true, address: true } },
+            opportunity: { select: { id: true, title: true } },
+            items: true,
+          },
+        })
+        break
+      } catch (err) {
+        const retryable = isUniqueViolation(err) || (err as { code?: string })?.code === 'P2024' || /database is locked/i.test(String((err as Error)?.message))
+        if (retryable && attempt < 4) {
+          await new Promise((r) => setTimeout(r, 25 * (attempt + 1)))
+          continue
+        }
+        throw err
+      }
+    }
 
     await auditAndTimeline({
       orgId: auth.orgId,
@@ -89,11 +108,11 @@ export async function POST(req: NextRequest) {
       action: 'created',
       entity: 'quote',
       entityId: created.id,
-      details: { number, name: number, total: created.total },
+      details: { number: created.number, name: created.number, total: created.total },
       clientId,
       quoteId: created.id,
       timelineType: 'quote',
-      timelineTitle: `Cotización ${number} creada`,
+      timelineTitle: `Cotización ${created.number} creada`,
       timelineDescription: `${client.name} — Total: ${created.currency} ${created.total.toFixed(2)}`,
     })
 

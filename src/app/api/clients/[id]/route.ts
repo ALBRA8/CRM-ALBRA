@@ -17,7 +17,7 @@ async function getClientOr404(orgId: string, id: string) {
 /** GET /api/clients/:id — detalle del cliente con atributos extendidos. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await getClientOr404(auth.orgId, id)
     const attrsMap = await loadClientAttrs(auth.orgId, [client.id])
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 /** PUT /api/clients/:id — actualización parcial (inline edit del detalle). */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     await getClientOr404(auth.orgId, id)
     const body = await readBody(req)
@@ -42,7 +42,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if ('source' in body) data.source = str(body.source) ?? 'manual'
     if ('status' in body) data.status = str(body.status) ?? 'prospect'
     if ('lastContactAt' in body) data.lastContactAt = dateOrNull(body.lastContactAt)
-    if ('assignedToId' in body) data.assignedToId = str(body.assignedToId)
+    if ('assignedToId' in body) {
+      // (segunda reparación §2.B) El responsable debe pertenecer a la organización
+      const assigneeId = str(body.assignedToId)
+      if (assigneeId) {
+        const assignee = await db.user.findFirst({ where: { id: assigneeId, organizationId: auth.orgId }, select: { id: true } })
+        if (!assignee) throw new HttpError(400, 'El responsable no pertenece a tu organización')
+      }
+      data.assignedToId = assigneeId
+    }
     if ('identifier' in body || 'cedula' in body) data.cedula = str(body.identifier) ?? str(body.cedula)
 
     const updated = await db.client.update({
@@ -68,7 +76,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/clients/:id — elimina el cliente y sus datos en cascada. */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const client = await getClientOr404(auth.orgId, id)
 

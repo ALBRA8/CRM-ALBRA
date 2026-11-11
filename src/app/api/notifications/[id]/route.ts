@@ -6,7 +6,7 @@ import { handle, json, readBody } from '../../_lib/shared'
 /** PUT /api/notifications/:id — marca/desmarca como leída ({ isRead }). */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const notification = await db.notification.findFirst({ where: { id, organizationId: auth.orgId } })
     if (!notification) throw new HttpError(404, 'Notificación no encontrada')
@@ -21,7 +21,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 /** DELETE /api/notifications/:id */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const { id } = await params
     const notification = await db.notification.findFirst({ where: { id, organizationId: auth.orgId }, select: { id: true } })
     if (!notification) throw new HttpError(404, 'Notificación no encontrada')

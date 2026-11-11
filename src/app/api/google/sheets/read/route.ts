@@ -12,7 +12,7 @@ import { getAccessToken, googleApi } from '@/lib/google'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requirePermission(req, 'integrations.*')
+    const auth = await requirePermission(req, 'integrations.*')
     const body = (await req.json().catch(() => ({}))) as { spreadsheetId?: string; range?: string }
     requireFields(body as unknown as Record<string, unknown>, ['spreadsheetId'])
     const spreadsheetId = String(body.spreadsheetId).trim()

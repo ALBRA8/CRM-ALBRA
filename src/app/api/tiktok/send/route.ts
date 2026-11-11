@@ -12,7 +12,7 @@ import { recordTimelineEvent } from '@/lib/timeline'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const body = (await req.json().catch(() => ({}))) as { to?: string; text?: string }
     const to = String(body.to || '').trim()
     const text = String(body.text || '').trim()

@@ -113,7 +113,7 @@ async function buildWorkbookBuffer(orgId: string, period: string, days: number |
 export async function GET(req: NextRequest) {
   return handle(async () => {
     // RBAC (auditoría externa #1): igual que el PDF — exige reports.read
-    const auth = requirePermission(req, 'reports.read')
+    const auth = await requirePermission(req, 'reports.read')
     const period = new URL(req.url).searchParams.get('period') || '30d'
     const days: number | null = { '7d': 7, '30d': 30, month: 30, '90d': 90, quarter: 90, '1y': 365, year: 365, all: null }[period] ?? 30
 

@@ -10,7 +10,7 @@ import { db } from '@/lib/db'
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAuth(req)
+    const auth = await requireAuth(req)
     const limit = parseIntParam(req, 'limit', 50, 1, 200)
 
     const events = await db.timelineEvent.findMany({

@@ -17,7 +17,7 @@ import {
  */
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const integration = await getIntegration(auth.orgId)
     const tt = parseTikTokState(integration.tiktokTokenEnc)
 

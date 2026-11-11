@@ -29,7 +29,7 @@ import { decryptSecret } from '@/lib/crypto'
 
 async function startHandler(req: NextRequest) {
   return handle(async () => {
-    const auth = requireAdmin(req)
+    const auth = await requireAdmin(req)
     const url = new URL(req.url)
 
     // Credenciales de la app de Meta COMPARTIDAS con Instagram (misma Integration)
