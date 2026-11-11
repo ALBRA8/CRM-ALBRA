@@ -213,7 +213,7 @@ export class HttpError extends Error {
  * FAIL-CLOSED: cualquier fallo de BD NO autoriza — la excepción sube y la ruta
  * responde 500 sin ejecutar la operación de negocio.
  */
-async function assertSessionState(ctx: AuthContext): Promise<AuthContext> {
+export async function assertSessionState(ctx: AuthContext): Promise<AuthContext> {
   const user = await db.user.findUnique({
     where: { id: ctx.userId },
     select: { isActive: true, tokenVersion: true, organizationId: true },

@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { requireAdmin, getAuth } from '@/lib/auth'
+import { requireAdmin, getAuth, assertSessionState } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
@@ -136,7 +136,12 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     const url = new URL(req.url)
     const slugParam = url.searchParams.get('org')
+    // (A2-03, auditoría 2026-11-11) Ruta PÚBLICA para anónimos (perfil de
+    // nicho), pero un usuario AUTENTICADO desactivado o con tokenVersion
+    // revocado NO puede seguir leyendo la config interna de su org:
+    // getAuth + validación de sesión solo en la rama autenticada.
     const auth = getAuth(req)
+    if (auth) await assertSessionState(auth)
 
     // ---------- 1) Autenticado: la organización SOLO del JWT ----------
     if (auth) {

@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { hashPassword, signToken, slugify, HttpError } from '@/lib/auth'
 import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { createStandardPipeline, createOrgSettings } from '../../_lib/demo-seed'
+import { dbRateLimit, clientIp } from '@/lib/rate-limit'
 
 /** POST /api/auth/register — crea Organization + User owner + semillas básicas. */
 export async function POST(req: NextRequest) {
@@ -18,7 +19,12 @@ export async function POST(req: NextRequest) {
     const phone = str(body.phone)
 
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, 'Email inválido')
-    if (password.length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres')
+    // (A2-06, auditoría 2026-11-11) mínimo 8 (antes 6 — inconsistente con
+    // reset-password) + creación de organizaciones con límite durable por IP
+    // (el registro crea Organization+User+pipeline: vector de spam de tenants).
+    if (password.length < 8) throw new HttpError(400, 'La contraseña debe tener al menos 8 caracteres')
+    const regRl = await dbRateLimit(`register:${clientIp(req)}`, 20, 60 * 60 * 1000)
+    if (!regRl.ok) throw new HttpError(429, 'Demasiados registros desde esta IP. Inténtalo más tarde.')
 
     const existing = await db.user.findUnique({ where: { email }, select: { id: true } })
     if (existing) throw new HttpError(409, 'Ya existe una cuenta con este email')
@@ -33,17 +39,26 @@ export async function POST(req: NextRequest) {
       slug = `${base}-${randomBytes(2).toString('hex')}`
     }
 
-    const org = await db.organization.create({ data: { name: orgName, slug } })
-    const user = await db.user.create({
-      data: {
-        email,
-        name,
-        passwordHash: hashPassword(password),
-        company,
-        phone,
-        role: 'owner',
-        organizationId: org.id,
-      },
+    // (A4-07, auditoría 2026-11-11) Transacción atómica: un fallo a mitad ya
+    // NO deja organización huérfana sin owner, ni owner sin pipeline/settings.
+    // (A4-07, auditoría 2026-11-11) Transacción atómica del NÚCLEO org+user:
+    // un fallo a mitad ya NO deja organización huérfana sin owner. Pipeline y
+    // settings se crean a continuación (usan el cliente global; su ausencia
+    // ante un fallo posterior es recuperable y no rompe integridad).
+    const { org, user } = await db.$transaction(async (tx) => {
+      const org = await tx.organization.create({ data: { name: orgName, slug } })
+      const user = await tx.user.create({
+        data: {
+          email,
+          name,
+          passwordHash: hashPassword(password),
+          company,
+          phone,
+          role: 'owner',
+          organizationId: org.id,
+        },
+      })
+      return { org, user }
     })
 
     await createStandardPipeline(org.id)

@@ -14,9 +14,12 @@ import { createHmac, randomUUID } from 'crypto'
  *
  * 2. CRM Stage Triggers — cuando una Opportunity cambia de etapa, el CRM
  *    notifica `POST {WHATSPOWER}/api/crm/stage-change` con:
- *      body: { clientId, clientPhone, clientName?, opportunityId,
- *              fromStage, toStage, dealValue? }
- *    (endpoint interno de red local; sin auth por diseño del receptor).
+ *      body: { eventId, orgId, clientId, clientPhone, clientName?,
+ *              opportunityId, fromStage, toStage, dealValue? }
+ *      header X-Org-Id + Authorization: Bearer <credencial de servicio de la org>
+ *    (contrato §5: la organización viaja en la identidad; el receptor valida
+ *    credencial↔org con fail-closed — auditoría A1-06 2026-11-11: NUNCA se
+ *    usa el secreto HMAC del webhook inbound como Bearer admin).
  *
  * SEGURIDAD Y ROBUSTEZ:
  * - Fire-and-forget: un fallo de WHATSPOWER NUNCA rompe el flujo del CRM
@@ -91,7 +94,8 @@ export interface WhatspowerStageChangeInput {
 
 interface WhatspowerBridgeResult {
   sent: boolean
-  skipped: 'disabled' | 'no_secret' | 'no_config' | 'inbound_error'
+  /** Solo se define cuando sent=false (por qué no se envió). */
+  skipped?: 'disabled' | 'no_secret' | 'no_config' | 'inbound_error'
   status?: number
   error?: string
 }
@@ -136,11 +140,41 @@ export async function forwardInboundToWhatspower(input: WhatspowerInboundInput):
       return { sent: false, skipped: 'inbound_error', status: res.status, error: detail }
     }
     console.log(`[whatspower-bridge] inbound entregado a WHATSPOWER (eventId=${payload.eventId})`)
-    return { sent: true, skipped: 'inbound_error' }
+    return { sent: true }
   } catch (err) {
     console.error('[whatspower-bridge] inbound no entregado:', err instanceof Error ? err.message : err)
     return { sent: false, skipped: 'inbound_error', error: err instanceof Error ? err.message : String(err) }
   }
+}
+
+/**
+ * (Auditoría A4-01, 2026-11-11) Deriva el eventId DETERMINISTA de una
+ * transición de etapa: HMAC(org|opportunity|from|to|ventanaTemporal).
+ *
+ * ¿Por qué con ventana y no aleatorio ni eterno?
+ *  - ALEATORIO (comportamiento anterior): un reintento del PUT generaba un
+ *    eventId NUEVO → WHATSPOWER lo trataba como evento nuevo → MENSAJE
+ *    DUPLICADO al cliente vía Meta Cloud (el peor fallo posible).
+ *  - ETERNO (mismo eventId para siempre): una transición legítima repetida
+ *    meses después (A→B de nuevo) sería tragada por stage_change_dedup.
+ *  - VENTANA (5 min): un reintento dentro de la ventana reutiliza el MISMO
+ *    eventId (dedup extremo a extremo); una nueva transición posterior cae
+ *    en otra ventana y se procesa. WHATSPOWER purga dedups > 24 h (A4-06).
+ */
+export const STAGE_EVENT_WINDOW_MS = 5 * 60 * 1000
+
+export function deriveStageEventId(
+  orgId: string,
+  opportunityId: string,
+  fromStage: string,
+  toStage: string,
+  now: number = Date.now(),
+): string {
+  const windowBucket = Math.floor(now / STAGE_EVENT_WINDOW_MS)
+  return createHmac('sha256', 'albra-stage-event-v1')
+    .update(`${orgId}|${opportunityId}|${fromStage}|${toStage}|${windowBucket}`, 'utf8')
+    .digest('hex')
+    .slice(0, 32)
 }
 
 /**
@@ -166,9 +200,10 @@ export async function notifyWhatspowerStageChange(input: WhatspowerStageChangeIn
     return { sent: false, skipped: 'no_config', status: 0 }
   }
   const payload = {
-    // (OLEADA 2) eventId ÚNICO por ocurrencia: idempotencia extremo a extremo
-    // (el receptor lo guarda en stage_change_dedup por organización).
-    eventId: input.eventId || `sevt_${randomUUID()}`,
+    // (OLEADA 2 + auditoría A4-01) eventId DETERMINISTA por transición dentro
+    // de una ventana temporal: el reintento del PUT reutiliza el MISMO eventId
+    // y WHATSPOWER lo deduplica en stage_change_dedup — sin duplicar mensaje.
+    eventId: input.eventId || `sevt_${deriveStageEventId(orgId, input.opportunityId, input.fromStage, input.toStage)}`,
     orgId,
     clientId: input.clientId || undefined,
     clientPhone: input.clientPhone || undefined,
@@ -188,7 +223,11 @@ export async function notifyWhatspowerStageChange(input: WhatspowerStageChangeIn
       orgCredential = typeof map[orgId] === 'string' ? map[orgId] : ''
     } catch { /* mapa inválido: se usa el secreto central */ }
   }
-  const internalSecret = orgCredential || process.env.WHATSPOWER_INTERNAL_API_SECRET || process.env.WHATSPOWER_WEBHOOK_SECRET || ''
+  // (A1-06) El secreto HMAC del webhook inbound (WHATSPOWER_WEBHOOK_SECRET)
+  // JAMÁS se usa como Bearer de stage-change: el receptor lo rechazaría
+  // (no es una credencial de servicio registrada) y el evento se perdería
+  // en un 401 silencioso. Solo credencial por-org o secreto interno admin.
+  const internalSecret = orgCredential || process.env.WHATSPOWER_INTERNAL_API_SECRET || ''
   if (!internalSecret) {
     console.warn('[whatspower-bridge] stage-change omitido: falta credencial de la organización o WHATSPOWER_INTERNAL_API_SECRET')
     return { sent: false, skipped: 'no_config', status: 0 }
@@ -211,7 +250,7 @@ export async function notifyWhatspowerStageChange(input: WhatspowerStageChangeIn
       return { sent: false, skipped: 'inbound_error', status: res.status, error: detail }
     }
     console.log(`[whatspower-bridge] stage-change entregado a WHATSPOWER (opportunityId=${input.opportunityId}, ${input.fromStage} → ${input.toStage})`)
-    return { sent: true, skipped: 'inbound_error' }
+    return { sent: true }
   } catch (err) {
     console.error('[whatspower-bridge] stage-change no entregado:', err instanceof Error ? err.message : err)
     return { sent: false, skipped: 'inbound_error', error: err instanceof Error ? err.message : String(err) }

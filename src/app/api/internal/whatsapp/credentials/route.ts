@@ -23,21 +23,16 @@ import { json } from '../../../_lib/shared'
 import { requireInternalAdmin } from '@/lib/internal-org-auth'
 import { resolveInternalCredentials } from '@/lib/wa-connections'
 import { db } from '@/lib/db'
+import { dbRateLimit } from '@/lib/rate-limit'
 
-/** Rate limit simple en memoria por orgId (evita fuerza bruta de phoneNumberId). */
-const attempts = new Map<string, { count: number; resetAt: number }>()
-const WINDOW_MS = 60_000
-const MAX_ATTEMPTS = 60
-
-function rateLimited(orgId: string): boolean {
-  const now = Date.now()
-  const entry = attempts.get(orgId)
-  if (!entry || entry.resetAt < now) {
-    attempts.set(orgId, { count: 1, resetAt: now + WINDOW_MS })
-    return false
-  }
-  entry.count += 1
-  return entry.count > MAX_ATTEMPTS
+/**
+ * (A1-12, auditoría 2026-11-11) Rate limit DURABLE por orgId (dbRateLimit,
+ * tabla RateLimitBucket): el límite del contrato §5 es efectivo entre
+ * instancias — el Map por proceso lo multiplicaba por N réplicas.
+ */
+async function rateLimited(orgId: string): Promise<boolean> {
+  const rl = await dbRateLimit(`wa-cred:${orgId}`, 60, 60_000)
+  return !rl.ok
 }
 
 export async function GET(req: NextRequest) {
@@ -46,7 +41,7 @@ export async function GET(req: NextRequest) {
     // la resolución de credenciales es una operación sensible (el daemon de
     // envío opera con credencial admin; un 'agent' jamás obtiene tokens).
     const identity = requireInternalAdmin(req.headers.get('authorization') ?? undefined)
-    if (rateLimited(identity.orgId)) {
+    if (await rateLimited(identity.orgId)) {
       return json({ error: 'Demasiadas peticiones' }, { status: 429, headers: { 'Retry-After': '60' } })
     }
     const url = new URL(req.url)

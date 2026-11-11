@@ -17,9 +17,19 @@ export function errorResponse(err: unknown) {
   if (err instanceof HttpError) {
     return NextResponse.json({ error: err.message }, { status: err.status })
   }
-  const message = err instanceof Error ? err.message : 'Error interno del servidor'
+  // El detalle COMPLETO siempre al log del servidor.
   console.error('[api]', err)
-  return NextResponse.json({ error: message }, { status: 500 })
+  // (A2-02/A4-05, auditoría 2026-11-11) Al cliente NUNCA err.message crudo:
+  // los mensajes de Prisma filtran SQL/tablas/columnas y los de crypto/red
+  // internals del sistema. Espejo del mapeo de _lib/shared.ts.
+  const code = (err as { code?: string })?.code
+  if (code === 'P2002') {
+    return NextResponse.json({ error: 'Conflicto: el registro ya existe' }, { status: 409 })
+  }
+  if (code === 'P2025') {
+    return NextResponse.json({ error: 'Recurso no encontrado' }, { status: 404 })
+  }
+  return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
 }
 
 export async function handle(fn: () => Promise<NextResponse>) {

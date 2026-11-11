@@ -186,7 +186,12 @@ describe('P0.3 — /api/nicho: aislamiento y contrato público', () => {
   })
 
   it('N10: GET autenticado es lectura pura — NO crea NichoConfig (antes sí)', async () => {
-    const ownerC = signToken({ userId: 'user-c-p03', orgId: ORG_C, role: 'owner', email: 'owner-c@test.albra' }, 1)
+    // (A2-03) la sesión autenticada ahora se valida contra BD (usuario activo,
+    // tokenVersion vigente): el usuario del token DEBE existir y estar activo.
+    await db.user.create({
+      data: { id: 'user-c-p03', email: 'owner-c@test.albra', name: 'Owner C', passwordHash: 'x', role: 'owner', isActive: true, organizationId: ORG_C },
+    })
+    const ownerC = signToken({ userId: 'user-c-p03', orgId: ORG_C, role: 'owner', email: 'owner-c@test.albra', tv: 0 }, 1)
     const before = await db.nichoConfig.count({ where: { organizationId: ORG_C } })
     const res = await nichoGET(req('', ownerC))
     expect(res.status).toBe(200)
