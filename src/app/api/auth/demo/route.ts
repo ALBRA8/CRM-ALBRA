@@ -4,7 +4,6 @@ import { signToken } from '@/lib/auth'
 import { dbRateLimit, clientIp } from '@/lib/rate-limit'
 import { handle, json, jsonWithSession } from '../../_lib/shared'
 import { ensureDemoOrganization } from '../../_lib/demo-seed'
-import { dbRateLimit, clientIp } from '@/lib/rate-limit'
 import { HttpError } from '@/lib/auth'
 
 /** POST /api/auth/demo — crea o reutiliza la organización demo y devuelve sesión. */

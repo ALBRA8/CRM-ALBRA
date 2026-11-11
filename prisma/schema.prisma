@@ -660,10 +660,6 @@ model Integration {
   organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   // Tokens SIEMPRE cifrados con AES-256-GCM antes de guardar (auditoría #4)
   telegramBotTokenEnc   String?
-  // (A2-07, auditoría 2026-11-11) El secret vive CIFRADO en telegramSecret
-  // (AES-256-GCM, convención *Enc) y se indexa por HASH para el lookup del
-  // webhook sin exponer el valor en claro.
-  telegramSecretHash    String?
   telegramSecret        String?
   // (A2-23, auditoría 2026-11-11) Lookup por HASH del secret (el valor queda
   // cifrado en reposo con AES-256-GCM); la comparación final es timing-safe.

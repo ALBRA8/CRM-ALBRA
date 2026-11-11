@@ -1,6 +1,5 @@
 import type { NextRequest } from 'next/server'
 import { json } from '@/lib/api-helpers'
-import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
 import { db } from '@/lib/db'
 import { safeEquals, parseTelegramState, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
 import { notifyOrganization } from '@/lib/push'
@@ -9,8 +8,7 @@ import { transcribeAudioBase64 } from '@/lib/asr'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
-import { decryptSecret } from '@/lib/crypto'
-import { createHash } from 'crypto'
+import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
 
 /**
  * POST /api/telegram/webhook — PÚBLICO pero con validación ESTRICTA del header
