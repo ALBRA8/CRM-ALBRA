@@ -80,22 +80,9 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
   const [customValues, setCustomValues] = useState<Record<string, string>>({})
   const [cfLoading, setCfLoading] = useState(false)
 
-  // Reset form when dialog opens or editClient changes
-  useState(() => {
-    setForm({
-      name: editClient?.name ?? '',
-      email: editClient?.email ?? '',
-      phone: editClient?.phone ?? '',
-      identifier: editClient?.identifier ?? '',
-      company: editClient?.company ?? '',
-      address: editClient?.address ?? '',
-      city: editClient?.city ?? '',
-      source: editClient?.source ?? 'manual',
-      temperature: editClient?.temperature ?? 'Frio',
-      tags: editClient?.tags ?? '',
-      notes: editClient?.notes ?? '',
-    })
-  })
+  // (A3-09) ELIMINADO: useState(() => setForm(...)) ejecutaba setState durante
+  // el render (patrón inválido de React) y duplicaba el useEffect inferior.
+  // El reset real lo hace el useEffect de [isOpen, editClient].
 
   // Load custom fields when dialog opens
   useEffect(() => {
@@ -164,6 +151,12 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
     e.preventDefault()
     if (!form.name || !form.phone) {
       toast.error('Nombre y teléfono son requeridos')
+      return
+    }
+    // (A3-11) los custom fields marcados requeridos en settings SÍ se validan
+    const missingRequired = (customFields || []).filter((f) => f.isRequired && !(customValues[f.id] || '').trim())
+    if (missingRequired.length > 0) {
+      toast.error(`Campo obligatorio vacío: ${missingRequired[0].name || missingRequired[0].id}`)
       return
     }
 

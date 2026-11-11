@@ -96,8 +96,9 @@ export function LoginForm() {
       setForgotSent(true)
       toast.success('Si el email existe, recibirás un enlace de recuperación')
       // In dev mode, show the token
-      if (data.devToken) {
-        toast.info(`[DEV] Token: ${data.devToken.slice(0, 20)}...`)
+      // (A3-06) el backend devuelve el token de dev en el campo `resetToken`
+      if (data.resetToken) {
+        toast.info(`[DEV] Token: ${String(data.resetToken).slice(0, 20)}...`)
       }
     } catch {
       toast.error('Error al enviar email de recuperación')

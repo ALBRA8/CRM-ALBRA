@@ -85,14 +85,8 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
     }
   }
 
-  const duplicate = await db.whatsAppConnection.findUnique({ where: { phoneNumberId } })
-  if (duplicate) {
-    // No se revela a qué org pertenece (aislamiento: el llamador no aprende
-    // datos de otras organizaciones).
-    return { ok: false, code: 'duplicate', message: 'Este número de WhatsApp ya está conectado a otra cuenta' }
-  }
-
   // Validación real del token contra Graph (el token debe representar algo operable).
+  // (Fuera de la transacción: son llamadas de red — el gate atómico es el conteo+create.)
   let resolvedPhone = phoneNumber ?? null
   let resolvedName = displayName ?? null
   let tokenOk = true
@@ -118,27 +112,79 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
     return { ok: false, code: 'invalid_token', message: tokenError ?? 'Token inválido' }
   }
 
-  const connection = await db.whatsAppConnection.create({
-    data: {
-      organizationId: orgId,
-      wabaId: wabaId ?? null,
-      phoneNumberId,
-      phoneNumber: resolvedPhone ?? 'desconocido',
-      displayName: resolvedName,
-      accessTokenEnc: encryptSecret(accessToken) ?? '',
-      metaAppSecretEnc: metaAppSecret ? encryptSecret(metaAppSecret) : null,
-      // (A4-13) el verify token por conexión se guarda CIFRADO (AES-256-GCM),
-      // igual que accessTokenEnc/metaAppSecretEnc — convención *Enc del schema.
-      webhookVerifyToken: encryptSecret(generateWebhookVerifyToken())!,
-      status: 'connected',
-      statusDetail: source === 'embedded_signup' ? 'Conectada vía Embedded Signup (flujo oficial Meta)' : 'Conectada manualmente por el administrador',
-      source,
-      tokenExpiresAt: tokenExpiresAt ?? null,
-      lastVerifiedAt: new Date(),
-    },
-  })
-  await auditEvent(connection.id, orgId, 'connected', `Número ${connection.phoneNumber} conectado (${source})`)
-  return { ok: true, connectionId: connection.id, status: connection.status }
+  // ================================================================
+  // (§2.1 ORDEN MAESTRA 2026-11-11) GATE ATÓMICO: conteo del cupo del plan +
+  // unicidad del número + CREACIÓN, todo en UNA transacción interactiva.
+  // SQLite serializa escrituras: dos creaciones concurrentes cuando la org
+  // está en el límite → la SEGUNDA falla; jamás se supera el cupo (antes:
+  // count-then-create permitía la carrera). P2002 (carrera de unicidad) se
+  // resuelve como 'duplicate'; un conflicto transitorio de escritura se
+  // reintenta UNA vez para distinguir plan_limit real de una carrera.
+  // ================================================================
+  const createAtomically = async (retry: boolean): Promise<CreateConnectionResult> => {
+    try {
+      return await db.$transaction(async (tx) => {
+        const activeCount = await tx.whatsAppConnection.count({
+          where: { organizationId: orgId, status: { in: [...ACTIVE_STATUSES] } },
+        })
+        const gate = canAddConnection(org.plan, activeCount)
+        if (!gate.allowed) {
+          return {
+            ok: false, code: 'plan_limit',
+            message: `Tu plan (${gate.planLabel}) permite ${gate.limit} número(s) conectado(s). Libera un número o mejora de plan.`,
+            limit: gate.limit, planLabel: gate.planLabel,
+          }
+        }
+
+        const duplicate = await tx.whatsAppConnection.findUnique({ where: { phoneNumberId } })
+        if (duplicate) {
+          // No se revela a qué org pertenece (aislamiento: el llamador no aprende
+          // datos de otras organizaciones).
+          return { ok: false, code: 'duplicate', message: 'Este número de WhatsApp ya está conectado a otra cuenta' }
+        }
+
+        const connection = await tx.whatsAppConnection.create({
+          data: {
+            organizationId: orgId,
+            wabaId: wabaId ?? null,
+            phoneNumberId,
+            phoneNumber: resolvedPhone ?? 'desconocido',
+            displayName: resolvedName,
+            accessTokenEnc: encryptSecret(accessToken) ?? '',
+            metaAppSecretEnc: metaAppSecret ? encryptSecret(metaAppSecret) : null,
+            // (A4-13) el verify token por conexión se guarda CIFRADO (AES-256-GCM),
+            // igual que accessTokenEnc/metaAppSecretEnc — convención *Enc del schema.
+            webhookVerifyToken: encryptSecret(generateWebhookVerifyToken())!,
+            status: 'connected',
+            statusDetail: source === 'embedded_signup' ? 'Conectada vía Embedded Signup (flujo oficial Meta)' : 'Conectada manualmente por el administrador',
+            source,
+            tokenExpiresAt: tokenExpiresAt ?? null,
+            lastVerifiedAt: new Date(),
+          },
+        })
+        return { ok: true, connectionId: connection.id, status: connection.status }
+      })
+    } catch (err) {
+      if ((err as { code?: string })?.code === 'P2002') {
+        return { ok: false, code: 'duplicate', message: 'Este número de WhatsApp ya está conectado a otra cuenta' }
+      }
+      const msg = err instanceof Error ? err.message : String(err)
+      if (retry && /BUSY|database is locked|Transaction.*timeout|P2024/i.test(msg)) {
+        return createAtomically(false)
+      }
+      throw err
+    }
+  }
+
+  const result = await createAtomically(true)
+  if (result.ok) {
+    await auditEvent(result.connectionId, orgId, 'connected', `Número ${resolvedPhone ?? phoneNumberId} conectado (${source})`)
+  } else if (result.code === 'plan_limit') {
+    await auditEvent(null, orgId, 'plan_limit_blocked', `Plan ${org.plan}: límite ${result.limit} conexiones activas`)
+  } else if (result.code === 'error') {
+    await auditEvent(null, orgId, 'error', result.message)
+  }
+  return result
 }
 
 export type DisconnectResult =

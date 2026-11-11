@@ -242,7 +242,9 @@ export function WhatsAppPage() {
                 )}
               </div>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-                // Navigate to settings -> whatsapp tab
+                // (A3-10) deep-link real: la URL ?tab=whatsapp queda lista para
+                // que settings la lea al montar (SPA: replaceState + setView).
+                try { window.history.replaceState(null, '', '/settings?tab=whatsapp') } catch { /* SSR/test */ }
                 setView('settings')
               }}>
                 <Settings className="w-3.5 h-3.5" />

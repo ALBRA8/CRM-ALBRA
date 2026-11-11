@@ -639,7 +639,9 @@ class ApiClient {
   }
 
   getExportCsvUrl(type: string) {
-    return `${API_BASE}/export/csv?type=${type}${this.token ? '&token=' + this.token : ''}`
+    // (A3-08) SIN token en URL: el backend lo rechaza desde 2026-11-06 y la
+    // descarga funciona por la cookie de sesión. El parámetro era engañoso.
+    return `${API_BASE}/export/csv?type=${type}`
   }
 
   // Report exports (PDF/Excel)
