@@ -108,6 +108,29 @@ sin parámetros            → { organizationId, connections: [id, phoneNumberId
 - `TransportSender.sendMessage(to, text, correlationId, idempotencyKey?, orgId?)`
   — el orgId del evento acompaña al envío.
 
+## §7.1. Ejecutores de automatizaciones stage-change (v2, OLEADA 2)
+
+`POST /api/crm/stage-change` (WHATSPOWER) — ejecución REAL e idempotente:
+
+1. **`eventId` obligatorio por ocurrencia** (el CRM lo genera en
+   `notifyWhatspowerStageChange`, p. ej. `sevt_<uuid>`): clave de
+   idempotencia guardada en `stage_change_dedup` POR ORGANIZACIÓN.
+   Un replay del mismo evento responde `{ triggered: false, duplicate: true }`
+   y **jamás reenvía** el mensaje. Sin `eventId`, el receptor deriva una
+   clave determinista `(org|opportunity|from|to)`.
+2. **Reglas por organización** (`automation_rules`, UNIQUE(org, stage)):
+   cada empresa define sus disparadores; los defaults internos son SOLO
+   fallback para orgs sin regla propia.
+3. **Despacho real por organización**: `send_message` envía con el
+   transporte `meta-cloud` de ESA organización (punto 6 de la decisión);
+   `start_flow` abre sesión de flujo en la org (si el primer nodo envía
+   mensaje, se entrega con las credenciales de la org); `enroll_sequence`
+   inscribe en la secuencia de la org.
+4. **Auditoría honesta** (`automation_events`): `SENT | UNCERTAIN |
+   REJECTED_NO_CONNECTION | REJECTED | RECORDED_NO_TRANSPORT |
+   FLOW_STARTED | FLOW_UNAVAILABLE | SEQUENCE_ENROLLED |
+   SEQUENCE_UNAVAILABLE | SKIPPED_NO_RULE`. Prohibido el éxito fingido.
+
 ## §8. Consumo en ULTRA (Capa 3)
 
 - `TRANSPORT_ENGINE=meta_cloud` + `META_ORG_CREDENTIALS` (standalone) o

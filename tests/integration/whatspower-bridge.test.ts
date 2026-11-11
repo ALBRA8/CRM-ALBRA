@@ -162,7 +162,10 @@ describe('whatspower-bridge: contrato stage-change', () => {
     expect(captured!.url).toBe('http://localhost:3003/api/crm/stage-change')
     const body = JSON.parse(captured!.raw)
     // (contrato §5) la organización viaja en la identidad (X-Org-Id) Y en el body.
+    // (OLEADA 2, contrato §7.1) cada ocurrencia lleva eventId ÚNICO para la
+    // idempotencia de WHATSPOWER: mismo evento reenviado jamás re-dispara.
     expect(body).toEqual({
+      eventId: expect.stringMatching(/^sevt_[0-9a-f-]{36}$/),
       orgId: 'org-a',
       clientId: 'client-a1',
       clientPhone: '573001112233',
@@ -173,6 +176,28 @@ describe('whatspower-bridge: contrato stage-change', () => {
       dealValue: 1500,
     })
     expect(captured!.headers['X-Org-Id']).toBe('org-a')
+  })
+
+  it('enabled genera un eventId DISTINTO por ocurrencia (idempotencia extremo a extremo)', async () => {
+    process.env.WHATSPOWER_ENABLED = 'true'
+    process.env.WHATSPOWER_INTERNAL_API_SECRET = 'x'.repeat(32)
+    const captured: Array<{ url: string; raw: string }> = []
+    global.fetch = (async (url: any, init: any) => {
+      captured.push({ url: String(url), raw: init.body })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as any
+    const input = {
+      orgId: 'org-a',
+      opportunityId: 'opp-e2e-1',
+      fromStage: 'A',
+      toStage: 'B',
+    }
+    await notifyWhatspowerStageChange(input)
+    await notifyWhatspowerStageChange(input)
+    const [first, second] = captured.map((c) => JSON.parse(c.raw))
+    expect(first.eventId).toMatch(/^sevt_/)
+    expect(second.eventId).toMatch(/^sevt_/)
+    expect(first.eventId).not.toBe(second.eventId)
   })
 
   it('disabled por defecto: stage-change no sale de la org', async () => {

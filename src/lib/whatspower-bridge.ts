@@ -80,6 +80,13 @@ export interface WhatspowerStageChangeInput {
   fromStage: string
   toStage: string
   dealValue?: number | null
+  /**
+   * (OLEADA 2, contrato v2) Identidad ÚNICA de esta ocurrencia del evento:
+   * WHATSPOWER la usa como clave de idempotencia — un replay del mismo
+   * evento NO vuelve a disparar la automatización ni reenvía el mensaje.
+   * Si se omite, el receptor deriva una clave determinista.
+   */
+  eventId?: string
 }
 
 interface WhatspowerBridgeResult {
@@ -159,6 +166,9 @@ export async function notifyWhatspowerStageChange(input: WhatspowerStageChangeIn
     return { sent: false, skipped: 'no_config', status: 0 }
   }
   const payload = {
+    // (OLEADA 2) eventId ÚNICO por ocurrencia: idempotencia extremo a extremo
+    // (el receptor lo guarda en stage_change_dedup por organización).
+    eventId: input.eventId || `sevt_${randomUUID()}`,
     orgId,
     clientId: input.clientId || undefined,
     clientPhone: input.clientPhone || undefined,
