@@ -187,8 +187,19 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
-    const value = matchedValue as WaValue
+    // (A1-09, auditoría 2026-11-11) Meta puede agrupar VARIAS entry/changes
+    // en un solo POST: se procesan TODAS las ocurrencias del número de la org
+    // autenticada. Antes solo se leía entry[0].changes[0] y el resto se
+    // descartaba en silencio → mensajes perdidos sin traza.
+    const allValues = (body.entry ?? [])
+      .flatMap((e) => e.changes ?? [])
+      .map((c) => c.value)
+      .filter((v): v is WaValue => !!v)
+    const processableValues = allValues.filter(
+      (v) => !matchedPhoneId || !v.metadata?.phone_number_id || v.metadata.phone_number_id === matchedPhoneId
+    )
 
+    for (const value of processableValues.length ? processableValues : [matchedValue as WaValue]) {
     // Estados de entrega (sent/delivered/read) — solo timeline si hay clientId conocido
     for (const status of value.statuses || []) {
       await recordTimelineEvent({
@@ -234,6 +245,22 @@ export async function POST(req: NextRequest) {
             })
           }
         }
+      }
+      // (A4-02, auditoría 2026-11-11) Dedup DURABLE por waMessageId: Meta
+      // reintenta el webhook ante timeouts y una doble ejecución duplicaría
+      // timeline + respuestas IA + reenvío al puente. Lookup previo del mensaje
+      // ya registrado; el índice único parcial (organizationId, waMessageId) de
+      // la migración 4_audit_indexes es la segunda cerradura.
+      if (message.id) {
+        const seen = await db.timelineEvent.findFirst({
+          where: {
+            organizationId: matchedOrgId,
+            type: 'whatsapp',
+            metadata: { contains: `"messageId":"${message.id}"` },
+          },
+          select: { id: true },
+        })
+        if (seen) continue
       }
       if (!text) continue
       const phone = normalizePhone(message.from)
@@ -312,6 +339,8 @@ export async function POST(req: NextRequest) {
           },
         })
       }
+    }
+
     }
 
     // Meta exige 200 rápido

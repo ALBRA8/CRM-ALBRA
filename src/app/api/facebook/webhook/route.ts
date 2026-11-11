@@ -81,32 +81,44 @@ export async function POST(req: NextRequest) {
       select: { organizationId: true, facebookTokenEnc: true, facebookPageId: true, metaAppSecretEnc: true },
     })
     let matchedOrgId: string | null = null
-    let matchedEntry: FbEntry | null = null
+    let matchedEntries: FbEntry[] = []
 
     for (const candidate of candidates) {
       const appSecret = decryptSecret(candidate.metaAppSecretEnc)
       if (!appSecret) continue
       if (verifyMetaSignature(rawBody, appSecret, signature)) {
-        // Aislamiento multi-tenant: la entrada debe dirigirse a la Página de esta org
-        const entry = (body.entry || []).find((e) => !candidate.facebookPageId || e.id === candidate.facebookPageId)
-        if (entry) {
+        // (A2-12, auditoría 2026-11-11) TODAS las entry dirigidas a la Página
+        // de esta org (antes `.find()` tomaba solo la primera y el resto de un
+        // POST agrupado se perdía). Aislamiento multi-tenant intacto.
+        const entries = (body.entry || []).filter((e) => !candidate.facebookPageId || e.id === candidate.facebookPageId)
+        if (entries.length) {
           matchedOrgId = candidate.organizationId
-          matchedEntry = entry
+          matchedEntries = entries
           break
         }
       }
     }
 
-    if (!matchedOrgId || !matchedEntry) {
+    if (!matchedOrgId || !matchedEntries.length) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
     const orgId = matchedOrgId
-    for (const messaging of matchedEntry.messaging || []) {
+    const messagingItems = matchedEntries.flatMap((entry) => entry.messaging || [])
+    for (const messaging of messagingItems) {
       const msg = messaging.message
       if (!msg?.text || msg.is_echo) continue
       const senderId = messaging.sender?.id
       if (!senderId) continue
+      // (A4-02, auditoría 2026-11-11) Dedup durable por mid: Meta reintenta el
+      // webhook ante timeouts; sin esto duplicaría timeline y respuestas IA.
+      if (msg.mid) {
+        const seen = await db.timelineEvent.findFirst({
+          where: { organizationId: orgId, type: 'facebook', metadata: { contains: `"mid":"${msg.mid}"` } },
+          select: { id: true },
+        })
+        if (seen) continue
+      }
       const text = msg.text.slice(0, 3000)
 
       // find-or-create Client (phone = "fb:<psid>" para deduplicar por canal)
