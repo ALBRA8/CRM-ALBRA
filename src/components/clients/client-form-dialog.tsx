@@ -172,6 +172,12 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
       toast.error('Nombre y teléfono son requeridos')
       return
     }
+    // (A3-11) los custom fields marcados requeridos en settings SÍ se validan
+    const missingRequired = (customFields || []).filter((f) => f.isRequired && !(customValues[f.id] || '').trim())
+    if (missingRequired.length > 0) {
+      toast.error(`Campo obligatorio vacío: ${missingRequired[0].name || missingRequired[0].id}`)
+      return
+    }
 
     setLoading(true)
     try {

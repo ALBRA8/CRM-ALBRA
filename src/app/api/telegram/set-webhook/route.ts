@@ -5,6 +5,8 @@ import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { getIntegration, parseTelegramState, encodeTelegramState, generateWebhookSecret } from '@/lib/integrations'
 import { auditAndTimeline } from '@/lib/api-helpers'
+import { encryptSecret, decryptSecret } from '@/lib/crypto'
+import { createHash } from 'crypto'
 
 /**
  * POST /api/telegram/set-webhook — configura el webhook en Telegram Bot API

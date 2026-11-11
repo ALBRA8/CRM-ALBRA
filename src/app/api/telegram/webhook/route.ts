@@ -9,6 +9,8 @@ import { transcribeAudioBase64 } from '@/lib/asr'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
+import { decryptSecret } from '@/lib/crypto'
+import { createHash } from 'crypto'
 
 /**
  * POST /api/telegram/webhook — PÚBLICO pero con validación ESTRICTA del header

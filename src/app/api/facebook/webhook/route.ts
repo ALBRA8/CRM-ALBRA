@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { json } from '@/lib/api-helpers'
-import { verifyMetaSignature, parseFacebookState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords } from '@/lib/integrations'
+import { verifyMetaSignature, parseFacebookState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals } from '@/lib/integrations'
 import { decryptSecret } from '@/lib/crypto'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
@@ -55,7 +55,8 @@ export async function GET(req: NextRequest) {
   })
   for (const integration of integrations) {
     const state = parseFacebookState(integration.facebookTokenEnc)
-    if (state.webhookVerifyToken && token === state.webhookVerifyToken) {
+    // (A2-12) comparación en tiempo constante.
+    if (state.webhookVerifyToken && safeEquals(token, state.webhookVerifyToken)) {
       return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
     }
   }
