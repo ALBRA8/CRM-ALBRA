@@ -74,38 +74,32 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
   const org = await db.organization.findUnique({ where: { id: orgId }, select: { plan: true } })
   if (!org) return { ok: false, code: 'error', message: 'Organización no encontrada' }
 
-  const activeCount = await activeConnectionCount(orgId)
-  const gate = canAddConnection(org.plan, activeCount)
-  if (!gate.allowed) {
-    await auditEvent(null, orgId, 'plan_limit_blocked', `Plan ${org.plan}: límite ${gate.limit} conexiones activas`)
+  // (2.2) Chequeo PREVIO del límite (rápido, sin quemar llamadas a Graph cuando
+  // el plan ya está agotado). NO es el chequeo de autoridad: la transacción de
+  // abajo lo re-verifica atómicamente justo antes de crear.
+  const preCount = await activeConnectionCount(orgId)
+  const preGate = canAddConnection(org.plan, preCount)
+  if (!preGate.allowed) {
+    await auditEvent(null, orgId, 'plan_limit_blocked', `Plan ${org.plan}: límite ${preGate.limit} conexiones activas`)
     return {
       ok: false, code: 'plan_limit',
-      message: `Tu plan (${gate.planLabel}) permite ${gate.limit} número(s) conectado(s). Libera un número o mejora de plan.`,
-      limit: gate.limit, planLabel: gate.planLabel,
+      message: `Tu plan (${preGate.planLabel}) permite ${preGate.limit} número(s) conectado(s). Libera un número o mejora de plan.`,
+      limit: preGate.limit, planLabel: preGate.planLabel,
     }
   }
 
-  const duplicate = await db.whatsAppConnection.findUnique({ where: { phoneNumberId } })
-  if (duplicate) {
-    // No se revela a qué org pertenece (aislamiento: el llamador no aprende
-    // datos de otras organizaciones).
-    return { ok: false, code: 'duplicate', message: 'Este número de WhatsApp ya está conectado a otra cuenta' }
-  }
-
-  // Validación real del token contra Graph (el token debe representar algo operable).
+  // (2.1, auditoría 2026-11-11) Validación real del token contra Graph ANTES de
+  // la transacción: la red JAMÁS se llama con el lock de escritura retenido.
   let resolvedPhone = phoneNumber ?? null
   let resolvedName = displayName ?? null
-  let tokenOk = true
   let tokenError: string | null = null
   if (verifyAgainstGraph) {
     const identity = await inspectTokenIdentity(accessToken, fetchImpl)
     if (!identity.ok) {
-      tokenOk = false
       tokenError = `Token rechazado por Meta: ${identity.error}`
     } else {
       const info = await fetchPhoneNumberInfo(phoneNumberId, accessToken, fetchImpl)
       if (!info.ok) {
-        tokenOk = false
         tokenError = `El número ${phoneNumberId} no es operable con este token: ${info.error}`
       } else {
         resolvedPhone = info.displayPhoneNumber ?? info.phoneNumber ?? resolvedPhone
@@ -113,30 +107,68 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
       }
     }
   }
-  if (!tokenOk) {
-    await auditEvent(null, orgId, 'error', tokenError ?? undefined)
-    return { ok: false, code: 'invalid_token', message: tokenError ?? 'Token inválido' }
+  if (tokenError) {
+    await auditEvent(null, orgId, 'error', tokenError)
+    return { ok: false, code: 'invalid_token', message: tokenError }
   }
 
-  const connection = await db.whatsAppConnection.create({
-    data: {
-      organizationId: orgId,
-      wabaId: wabaId ?? null,
-      phoneNumberId,
-      phoneNumber: resolvedPhone ?? 'desconocido',
-      displayName: resolvedName,
-      accessTokenEnc: encryptSecret(accessToken) ?? '',
-      metaAppSecretEnc: metaAppSecret ? encryptSecret(metaAppSecret) : null,
-      webhookVerifyToken: generateWebhookVerifyToken(),
-      status: 'connected',
-      statusDetail: source === 'embedded_signup' ? 'Conectada vía Embedded Signup (flujo oficial Meta)' : 'Conectada manualmente por el administrador',
-      source,
-      tokenExpiresAt: tokenExpiresAt ?? null,
-      lastVerifiedAt: new Date(),
-    },
-  })
-  await auditEvent(connection.id, orgId, 'connected', `Número ${connection.phoneNumber} conectado (${source})`)
-  return { ok: true, connectionId: connection.id, status: connection.status }
+  // (2.1/2.2, auditoría 2026-11-11) Límite del plan + unicidad + creación en UNA
+  // transacción: el chequeo separado del create permitía la carrera — dos
+  // Embedded Signup concurrentes superaban el límite del plan o se pasaban el
+  // findUnique mutuamente (el UNIQUE(phoneNumberId) terminaba en 500 sin manejo).
+  // SQLite serializa escrituras → la transacción es atómica.
+  let outcome: { blocked: 'plan_limit'; gate: { limit: number; planLabel: string } } | { blocked: 'duplicate' } | { blocked: null; conn: { id: string; phoneNumber: string; status: string } }
+  try {
+    outcome = await db.$transaction(async (tx) => {
+      const activeCount = await tx.whatsAppConnection.count({
+        where: { organizationId: orgId, status: { in: [...ACTIVE_STATUSES] } },
+      })
+      const gate = canAddConnection(org.plan, activeCount)
+      if (!gate.allowed) return { blocked: 'plan_limit' as const, gate: { limit: gate.limit, planLabel: gate.planLabel } }
+      const duplicate = await tx.whatsAppConnection.findUnique({ where: { phoneNumberId } })
+      if (duplicate) return { blocked: 'duplicate' as const }
+      const conn = await tx.whatsAppConnection.create({
+        data: {
+          organizationId: orgId,
+          wabaId: wabaId ?? null,
+          phoneNumberId,
+          phoneNumber: resolvedPhone ?? 'desconocido',
+          displayName: resolvedName,
+          accessTokenEnc: encryptSecret(accessToken) ?? '',
+          metaAppSecretEnc: metaAppSecret ? encryptSecret(metaAppSecret) : null,
+          webhookVerifyToken: generateWebhookVerifyToken(),
+          status: 'connected',
+          statusDetail: source === 'embedded_signup' ? 'Conectada vía Embedded Signup (flujo oficial Meta)' : 'Conectada manualmente por el administrador',
+          source,
+          tokenExpiresAt: tokenExpiresAt ?? null,
+          lastVerifiedAt: new Date(),
+        },
+      })
+      return { blocked: null, conn: { id: conn.id, phoneNumber: conn.phoneNumber, status: conn.status } }
+    })
+  } catch (err) {
+    // Carrera residual entre instancias: el UNIQUE(phoneNumberId) es la
+    // cerradura definitiva. Sin filtrar a qué org pertenece (aislamiento).
+    if ((err as { code?: string } | null)?.code === 'P2002') {
+      return { ok: false, code: 'duplicate', message: 'Este número de WhatsApp ya está conectado a otra cuenta' }
+    }
+    throw err
+  }
+  if (outcome.blocked === 'plan_limit') {
+    await auditEvent(null, orgId, 'plan_limit_blocked', `Plan ${org.plan}: límite ${outcome.gate.limit} conexiones activas`)
+    return {
+      ok: false, code: 'plan_limit',
+      message: `Tu plan (${outcome.gate.planLabel}) permite ${outcome.gate.limit} número(s) conectado(s). Libera un número o mejora de plan.`,
+      limit: outcome.gate.limit, planLabel: outcome.gate.planLabel,
+    }
+  }
+  if (outcome.blocked === 'duplicate') {
+    // No se revela a qué org pertenece (aislamiento: el llamador no aprende
+    // datos de otras organizaciones).
+    return { ok: false, code: 'duplicate', message: 'Este número de WhatsApp ya está conectado a otra cuenta' }
+  }
+  await auditEvent(outcome.conn.id, orgId, 'connected', `Número ${outcome.conn.phoneNumber} conectado (${source})`)
+  return { ok: true, connectionId: outcome.conn.id, status: outcome.conn.status }
 }
 
 export type DisconnectResult =
