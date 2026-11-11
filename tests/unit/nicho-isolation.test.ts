@@ -186,7 +186,22 @@ describe('P0.3 — /api/nicho: aislamiento y contrato público', () => {
   })
 
   it('N10: GET autenticado es lectura pura — NO crea NichoConfig (antes sí)', async () => {
-    const ownerC = signToken({ userId: 'user-c-p03', orgId: ORG_C, role: 'owner', email: 'owner-c@test.albra' }, 1)
+    // (A2-19) La ruta ahora valida el ESTADO de sesión contra BD cuando hay
+    // token: el JWT necesita un usuario REAL, activo y con la `tv` vigente.
+    await db.user.deleteMany({ where: { OR: [{ id: 'user-c-p03' }, { email: 'owner-c@test.albra' }] } })
+    await db.user.create({
+      data: {
+        id: 'user-c-p03',
+        email: 'owner-c@test.albra',
+        name: 'Owner C',
+        passwordHash: 'no-login',
+        role: 'owner',
+        organizationId: ORG_C,
+        isActive: true,
+        tokenVersion: 0,
+      },
+    })
+    const ownerC = signToken({ userId: 'user-c-p03', orgId: ORG_C, role: 'owner', email: 'owner-c@test.albra', tv: 0 }, 1)
     const before = await db.nichoConfig.count({ where: { organizationId: ORG_C } })
     const res = await nichoGET(req('', ownerC))
     expect(res.status).toBe(200)

@@ -17,9 +17,23 @@ export function errorResponse(err: unknown) {
   if (err instanceof HttpError) {
     return NextResponse.json({ error: err.message }, { status: err.status })
   }
-  const message = err instanceof Error ? err.message : 'Error interno del servidor'
+  // (A2-14, auditoría 2026-11-11) Errores de Prisma con semántica HTTP propia:
+  // P2002 (violación de unicidad) → 409; P2025 (registro no encontrado) → 404.
+  // El mensaje interno del motor JAMÁS se filtra al cliente: 500 genérico.
+  const code = (err as { code?: string } | null)?.code
+  if (code === 'P2002') {
+    console.error('[api] conflicto de unicidad:', err instanceof Error ? err.message : err)
+    return NextResponse.json(
+      { error: 'Conflicto: el registro ya existe o viola una restricción única' },
+      { status: 409 }
+    )
+  }
+  if (code === 'P2025') {
+    console.error('[api] registro no encontrado:', err instanceof Error ? err.message : err)
+    return NextResponse.json({ error: 'Recurso no encontrado' }, { status: 404 })
+  }
   console.error('[api]', err)
-  return NextResponse.json({ error: message }, { status: 500 })
+  return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
 }
 
 export async function handle(fn: () => Promise<NextResponse>) {

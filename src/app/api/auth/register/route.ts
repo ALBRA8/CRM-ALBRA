@@ -4,10 +4,26 @@ import { db } from '@/lib/db'
 import { hashPassword, signToken, slugify, HttpError } from '@/lib/auth'
 import { handle, jsonWithSession, readBody, requireFields, str } from '../../_lib/shared'
 import { createStandardPipeline, createOrgSettings } from '../../_lib/demo-seed'
+import { dbRateLimit, clientIp } from '@/lib/rate-limit'
+import { json } from '../../_lib/shared'
+
+/** (A2-16) Respuesta uniforme 429 con Retry-After. */
+function jsonRateLimited(retryAfter: number) {
+  return json(
+    { error: 'Demasiadas solicitudes. Intenta más tarde.' },
+    { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+  )
+}
 
 /** POST /api/auth/register — crea Organization + User owner + semillas básicas. */
 export async function POST(req: NextRequest) {
   return handle(async () => {
+    // (A2-16, auditoría 2026-11-11) Registro abierto: rate limit DURABLE por IP
+    // (compartido entre instancias, sobrevive reinicios) — 5 cuentas/min/IP.
+    const rl = await dbRateLimit(`register:${clientIp(req)}`, 5, 60_000)
+    if (!rl.ok) {
+      return jsonRateLimited(rl.retryAfter)
+    }
     const body = await readBody(req)
     requireFields(body, ['name', 'email', 'password'])
 
@@ -18,7 +34,8 @@ export async function POST(req: NextRequest) {
     const phone = str(body.phone)
 
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, 'Email inválido')
-    if (password.length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres')
+    // (A2-17) Mínimo 8 caracteres (NIST SP 800-63B: longitud sobre complejidad).
+    if (password.length < 8) throw new HttpError(400, 'La contraseña debe tener al menos 8 caracteres')
 
     const existing = await db.user.findUnique({ where: { email }, select: { id: true } })
     if (existing) throw new HttpError(409, 'Ya existe una cuenta con este email')
@@ -33,18 +50,25 @@ export async function POST(req: NextRequest) {
       slug = `${base}-${randomBytes(2).toString('hex')}`
     }
 
-    const org = await db.organization.create({ data: { name: orgName, slug } })
-    const user = await db.user.create({
-      data: {
-        email,
-        name,
-        passwordHash: hashPassword(password),
-        company,
-        phone,
-        role: 'owner',
-        organizationId: org.id,
-      },
+    // (A2-18, auditoría 2026-11-11) Org + usuario owner en UNA transacción:
+    // jamás una organización huérfana sin owner (ni un owner sin organización)
+    // por un fallo a mitad de camino.
+    const { org: orgTx, user } = await db.$transaction(async (tx) => {
+      const createdOrg = await tx.organization.create({ data: { name: orgName, slug } })
+      const createdUser = await tx.user.create({
+        data: {
+          email,
+          name,
+          passwordHash: hashPassword(password),
+          company,
+          phone,
+          role: 'owner',
+          organizationId: createdOrg.id,
+        },
+      })
+      return { org: createdOrg, user: createdUser }
     })
+    const org = orgTx
 
     await createStandardPipeline(org.id)
     await createOrgSettings(org.id)

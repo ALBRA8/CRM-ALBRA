@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { requireAdmin, getAuth } from '@/lib/auth'
+import { requireAdmin, getAuth, assertSessionState } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
@@ -140,6 +140,11 @@ export async function GET(req: NextRequest) {
 
     // ---------- 1) Autenticado: la organización SOLO del JWT ----------
     if (auth) {
+      // (A2-19, auditoría 2026-11-11) Si hay token, se valida el ESTADO de la
+      // sesión contra BD (usuario activo, tv vigente, org consistente): un token
+      // revocado no puede seguir leyendo ni siquiera su propia configuración.
+      // El acceso anónimo legítimo (?org=<slug>) NO se rompe.
+      await assertSessionState(auth)
       if (slugParam) {
         // Parámetro controlado por el cliente → ignorado SIEMPRE; se deja constancia.
         logSecurityEvent('nicho.org_param_ignorado', { userId: auth.userId, orgId: auth.orgId, solicitado: slugParam })
