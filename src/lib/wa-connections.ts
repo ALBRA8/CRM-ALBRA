@@ -123,6 +123,13 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
   let outcome: { blocked: 'plan_limit'; gate: { limit: number; planLabel: string } } | { blocked: 'duplicate' } | { blocked: null; conn: { id: string; phoneNumber: string; status: string } }
   try {
     outcome = await db.$transaction(async (tx) => {
+      // (1) Adquirir bloqueo exclusivo a nivel de organización para serializar
+      // solicitudes simultáneas bajo concurrencia y evitar sobrepasar el límite del plan.
+      await tx.organization.update({
+        where: { id: orgId },
+        data: { updatedAt: new Date() },
+      })
+
       const activeCount = await tx.whatsAppConnection.count({
         where: { organizationId: orgId, status: { in: [...ACTIVE_STATUSES] } },
       })

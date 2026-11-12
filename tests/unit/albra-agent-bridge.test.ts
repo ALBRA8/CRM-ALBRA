@@ -12,6 +12,8 @@ describe('ALBRA AGENT Bridge (AGENTE GENERAL Integration)', () => {
   async function loadBridgeWith(env: Record<string, string>) {
     vi.resetModules()
     vi.unstubAllEnvs()
+    delete process.env.ALBRA_AGENT_API_KEY
+    delete process.env.ALBRA_API_KEY
     for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v)
     return import('@/lib/albra-agent-bridge')
   }
@@ -23,6 +25,8 @@ describe('ALBRA AGENT Bridge (AGENTE GENERAL Integration)', () => {
   afterEach(() => {
     global.fetch = originalFetch
     vi.unstubAllEnvs()
+    delete process.env.ALBRA_AGENT_API_KEY
+    delete process.env.ALBRA_API_KEY
   })
 
   it('isAgentBridgeEnabled() devuelve true con ALBRA_AGENT_ENABLED=true', async () => {
@@ -228,3 +232,4 @@ describe('ALBRA AGENT Bridge (AGENTE GENERAL Integration)', () => {
     expect(init.headers['X-Albra-Signature']).toBe(expected)
   })
 })
+

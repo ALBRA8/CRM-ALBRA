@@ -722,7 +722,6 @@ export function SettingsPage() {
     }
     window.history.replaceState({}, '', '/settings?tab=google')
     void loadGoogleConfig()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Retorno del OAuth de Messenger (?facebook_connected=<página> | ?facebook_error=<código> | ?facebook_warning=subscribe_failed)

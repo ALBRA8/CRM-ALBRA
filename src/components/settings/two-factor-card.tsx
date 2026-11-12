@@ -199,7 +199,6 @@ export function TwoFactorCard() {
             ) : (
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row gap-4 items-start">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={setup.qrDataUrl} alt="QR de configuración TOTP" className="rounded-lg border border-slate-200" width={160} height={160} />
                   <div className="space-y-2 text-sm">
                     <p className="text-slate-700 font-medium">1. Escanea el QR con tu app (Google Authenticator, Authy, 1Password…)</p>

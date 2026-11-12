@@ -58,3 +58,28 @@ export function maskSecret(s: string | null | undefined): string {
   if (s.length <= 6) return '••••••'
   return s.slice(0, 3) + '••••••' + s.slice(-3)
 }
+
+/** Detecta si un secreto en reposo está almacenado en texto plano antiguo (sin prefijo v1:) */
+export function isLegacyPlaintext(payload: string | null | undefined): boolean {
+  if (!payload || typeof payload !== 'string' || payload.trim() === '') return false
+  return !payload.startsWith('v1:')
+}
+
+/**
+ * Migra de forma segura un valor heredado a formato cifrado v1:AES-256-GCM.
+ * Si ya estaba cifrado, lo preserva. Si es nulo o vacío, lo maneja elegantemente.
+ */
+export function migrateSecret(payload: string | null | undefined): {
+  isLegacy: boolean
+  encrypted: string | null
+  plain: string | null
+} {
+  if (!payload) return { isLegacy: false, encrypted: null, plain: null }
+  if (payload.startsWith('v1:')) {
+    const plain = decryptSecret(payload)
+    return { isLegacy: false, encrypted: payload, plain }
+  }
+  const plain = payload
+  const encrypted = encryptSecret(plain)
+  return { isLegacy: true, encrypted, plain }
+}

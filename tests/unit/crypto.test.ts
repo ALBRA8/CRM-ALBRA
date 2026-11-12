@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { encryptSecret, decryptSecret, maskSecret } from '@/lib/crypto'
+import { encryptSecret, decryptSecret, maskSecret, isLegacyPlaintext, migrateSecret } from '@/lib/crypto'
 
 /**
  * Tests unitarios de src/lib/crypto.ts (AES-256-GCM para secretos en reposo).
@@ -93,5 +93,39 @@ describe('maskSecret', () => {
     expect(maskSecret('')).toBe('')
     expect(maskSecret(null)).toBe('')
     expect(maskSecret(undefined)).toBe('')
+  })
+})
+
+describe('isLegacyPlaintext & migrateSecret (migración segura de secretos heredados)', () => {
+  it('detecta correctamente texto plano vs formato v1', () => {
+    expect(isLegacyPlaintext('token-plano-antiguo')).toBe(true)
+    expect(isLegacyPlaintext('v1:iv:tag:data')).toBe(false)
+    expect(isLegacyPlaintext('')).toBe(false)
+    expect(isLegacyPlaintext(null)).toBe(false)
+    expect(isLegacyPlaintext(undefined)).toBe(false)
+  })
+
+  it('migra texto plano a formato cifrado v1 manteniendo el valor original al descifrar', () => {
+    const legacyValue = 'token-antiguo-12345'
+    const result = migrateSecret(legacyValue)
+    expect(result.isLegacy).toBe(true)
+    expect(result.plain).toBe(legacyValue)
+    expect(result.encrypted).toMatch(/^v1:.+:.+:.+$/)
+    expect(result.encrypted).not.toContain(legacyValue)
+    expect(decryptSecret(result.encrypted)).toBe(legacyValue)
+  })
+
+  it('preserva valores ya cifrados sin re-encriptación innecesaria', () => {
+    const enc = encryptSecret('secreto-vigente')
+    const result = migrateSecret(enc)
+    expect(result.isLegacy).toBe(false)
+    expect(result.encrypted).toBe(enc)
+    expect(result.plain).toBe('secreto-vigente')
+  })
+
+  it('maneja valores vacíos o nulos de forma segura', () => {
+    expect(migrateSecret(null)).toEqual({ isLegacy: false, encrypted: null, plain: null })
+    expect(migrateSecret(undefined)).toEqual({ isLegacy: false, encrypted: null, plain: null })
+    expect(migrateSecret('')).toEqual({ isLegacy: false, encrypted: null, plain: null })
   })
 })

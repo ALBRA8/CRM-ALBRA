@@ -100,7 +100,6 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
       tags: editClient?.tags ?? '',
       notes: editClient?.notes ?? '',
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editClient])
 
   // Load custom fields when dialog opens

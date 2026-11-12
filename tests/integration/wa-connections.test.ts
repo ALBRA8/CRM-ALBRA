@@ -163,6 +163,64 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
     }))
     expect(r2.status).toBe(201)
   })
+
+  it('dos solicitudes simultáneas para conectar números distintos respetan el límite del plan (concurrencia atómica)', async () => {
+    const { createConnection } = await import('@/lib/wa-connections')
+    const [res1, res2] = await Promise.all([
+      createConnection({
+        orgId: 'org-a',
+        phoneNumberId: '555000001',
+        accessToken: 'EAAG-token-concurrente-1-0123456789', // scan-secrets:allow
+        verifyAgainstGraph: false,
+      }),
+      createConnection({
+        orgId: 'org-a',
+        phoneNumberId: '555000002',
+        accessToken: 'EAAG-token-concurrente-2-0123456789', // scan-secrets:allow
+        verifyAgainstGraph: false,
+      }),
+    ])
+
+    const successes = [res1, res2].filter((r) => r.ok === true)
+    const blocked = [res1, res2].filter((r) => !r.ok && r.code === 'plan_limit')
+
+    expect(successes).toHaveLength(1)
+    expect(blocked).toHaveLength(1)
+
+    const count = await db.whatsAppConnection.count({
+      where: { organizationId: 'org-a', status: { in: ['connected', 'pending'] } },
+    })
+    expect(count).toBe(1)
+  })
+
+  it('dos solicitudes simultáneas con el MISMO número rechazan la duplicación sin colisión ni carrera', async () => {
+    const { createConnection } = await import('@/lib/wa-connections')
+    const [res1, res2] = await Promise.all([
+      createConnection({
+        orgId: 'org-a',
+        phoneNumberId: '777000777',
+        accessToken: 'EAAG-token-dup-1-0123456789', // scan-secrets:allow
+        verifyAgainstGraph: false,
+      }),
+      createConnection({
+        orgId: 'org-b',
+        phoneNumberId: '777000777',
+        accessToken: 'EAAG-token-dup-2-0123456789', // scan-secrets:allow
+        verifyAgainstGraph: false,
+      }),
+    ])
+
+    const successes = [res1, res2].filter((r) => r.ok === true)
+    const duplicates = [res1, res2].filter((r) => !r.ok && r.code === 'duplicate')
+
+    expect(successes).toHaveLength(1)
+    expect(duplicates).toHaveLength(1)
+
+    const allWithPhone = await db.whatsAppConnection.findMany({
+      where: { phoneNumberId: '777000777' },
+    })
+    expect(allWithPhone).toHaveLength(1)
+  })
 })
 
 describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {

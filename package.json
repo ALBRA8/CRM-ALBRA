@@ -8,10 +8,11 @@
     "start": "node scripts/start-standalone.mjs",
     "lint": "eslint .",
     "test": "vitest run",
-    "db:push": "prisma db push --accept-data-loss",
+    "db:push": "node scripts/db-guard.mjs push",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset",
+    "db:migrate": "node scripts/db-guard.mjs migrate",
+    "db:reset": "node scripts/db-guard.mjs reset",
+    "db:migrate-secrets": "node scripts/migrate-secrets.mjs",
     "wa:daemon": "node src/whatsapp-daemon/daemon.mjs",
     "predev": "node scripts/ensure-env.mjs",
     "wa:daemon:detached": "node scripts/start-daemon-detached.mjs",
@@ -91,7 +92,7 @@
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
-    "uuid": "^11.1.0",
+    "uuid": "^11.1.1",
     "vaul": "^1.1.2",
     "web-push": "^3.6.7",
     "z-ai-web-dev-sdk": "^0.0.18",
@@ -109,9 +110,12 @@
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
     "vite": "^8.3.8",
-    "vitest": "^5.0.1"
+    "vitest": "^5.1.0"
   },
   "overrides": {
-    "js-yaml": "^5.5.0"
+    "js-yaml": "^5.5.0",
+    "uuid": "^11.1.1",
+    "prismjs": "^1.30.0",
+    "minimatch": "^11.0.8"
   }
 }
