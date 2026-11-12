@@ -58,6 +58,15 @@ export async function POST(req: NextRequest) {
       return ''
     }
 
+    // (A4-12, auditoría 2026-11-11) Pre-carga de teléfonos existentes en UNA
+    // consulta (antes: 1 findFirst por fila) + dedup DENTRO del propio lote.
+    const existingPhones = new Set(
+      (await db.client.findMany({
+        where: { organizationId: auth.orgId, phone: { not: null } },
+        select: { phone: true },
+      })).map((c) => c.phone as string),
+    )
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const rowNumber = i + 2 // +1 cabecera, +1 humano
@@ -71,13 +80,11 @@ export async function POST(req: NextRequest) {
           }
           const phone = normalizePhone(pick(row, 'phone', 'telefono', 'teléfono', 'celular', 'whatsapp'))
           const email = pick(row, 'email', 'correo') || null
-          if (phone) {
-            const dup = await db.client.findFirst({ where: { organizationId: auth.orgId, phone }, select: { id: true } })
-            if (dup) {
-              result.skipped++
-              result.errorList.push({ row: rowNumber, error: `Duplicado: ${name} (${phone})` })
-              continue
-            }
+          if (phone && existingPhones.has(phone)) {
+            // (A4-12) lookup O(1) en memoria + cobertura de duplicados en lote
+            result.skipped++
+            result.errorList.push({ row: rowNumber, error: `Duplicado: ${name} (${phone})` })
+            continue
           }
           const statusRaw = pick(row, 'status', 'estado').toLowerCase()
           const status = ['prospect', 'active', 'inactive'].includes(statusRaw) ? statusRaw : 'prospect'
@@ -103,6 +110,7 @@ export async function POST(req: NextRequest) {
           } catch {
             /* workflow no debe romper la importación */
           }
+          if (phone) existingPhones.add(phone)
           result.created++
         } else {
           const name = pick(row, 'name', 'nombre', 'servicio')

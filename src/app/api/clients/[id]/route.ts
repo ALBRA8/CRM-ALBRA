@@ -80,7 +80,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const { id } = await params
     const client = await getClientOr404(auth.orgId, id)
 
-    await db.client.delete({ where: { id: client.id } })
+    // (A2-22, auditoría 2026-11-11) El timeline del cliente NO tiene FK con
+    // borrado en cascada: sin esto quedaban eventos huérfanos (fantasmas en el
+    // historial y referencias a un cliente inexistente). Misma transacción:
+    // o se borra todo, o nada.
+    await db.$transaction([
+      db.timelineEvent.deleteMany({ where: { clientId: client.id, organizationId: auth.orgId } }),
+      db.client.delete({ where: { id: client.id } }),
+    ])
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,

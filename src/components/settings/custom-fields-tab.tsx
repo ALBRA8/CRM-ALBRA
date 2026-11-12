@@ -65,12 +65,24 @@ export function CustomFieldsTab() {
     setEditField(null)
   }
 
+  /** (A3-11) Parse tolerante de `options` (JSON array esperado). */
+  function safeParseOptions(raw: string): string {
+    try {
+      const arr = JSON.parse(raw)
+      return Array.isArray(arr) ? arr.map(String).join(', ') : ''
+    } catch {
+      return ''
+    }
+  }
+
   const handleEdit = (f: CustomField) => {
     setEditField(f)
     setName(f.name)
     setFieldType(f.fieldType)
     setEntity(f.entity)
-    setOptions(f.options ? JSON.parse(f.options).join(', ') : '')
+    // (A3-11, auditoría 2026-11-11) JSON.parse blindado: un `options` malformado
+    // (dato viejo o edición manual en BD) crasheaba TODO el tab de settings.
+    setOptions(f.options ? safeParseOptions(f.options) : '')
     setIsRequired(f.isRequired)
     setShowForm(true)
   }

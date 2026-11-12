@@ -131,7 +131,10 @@ export function QuotesList() {
         </Button>
         <Button
           variant="outline"
-          onClick={() => window.open('/api/export/csv?type=quotes', '_blank')}
+          onClick={async () => {
+            // (A3-08) Exportación autenticada por header (window.open no envía JWT → 401).
+            await api.downloadExportCsv('quotes', `presupuestos_${new Date().toISOString().split('T')[0]}.csv`)
+          }}
           className="gap-1.5"
         >
           <Download className="w-4 h-4" /> Exportar CSV

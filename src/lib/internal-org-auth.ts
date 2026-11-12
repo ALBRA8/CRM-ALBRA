@@ -65,7 +65,12 @@ export function parseInternalKeys(raw: string | undefined): { entries: InternalK
  * Devuelve null si no hay identidad válida (la ruta debe responder 401/403).
  */
 export function resolveInternalIdentity(authHeader: string | undefined): InternalIdentity | null {
-  const legacySecret = process.env.INTERNAL_API_SECRET
+  // (A2-20, auditoría 2026-11-11) FAIL-CLOSED dual: si hay claves POR
+  // ORGANIZACIÓN configuradas, el secreto global legado queda DESACTIVADO —
+  // una fuga del global no puede operar organizaciones cuando ya existe el
+  // esquema por-org (mismo criterio que WHATSPOWER §1 / ULTRA security.ts).
+  const { entries } = parseInternalKeys(process.env.INTERNAL_API_KEYS)
+  const legacySecret = entries.length ? undefined : process.env.INTERNAL_API_SECRET
   if (legacySecret && authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice('Bearer '.length)
     // El legado solo es válido cuando no hay claves por-org configuradas
@@ -75,7 +80,6 @@ export function resolveInternalIdentity(authHeader: string | undefined): Interna
       return { orgId: 'default', role: 'admin', source: 'legacy' }
     }
   }
-  const { entries } = parseInternalKeys(process.env.INTERNAL_API_KEYS)
   if (!entries.length) return null
   if (!authHeader?.startsWith('Bearer ')) return null
   const token = authHeader.slice('Bearer '.length)

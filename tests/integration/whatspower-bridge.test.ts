@@ -5,6 +5,7 @@ import {
   notifyWhatspowerStageChange,
   signWhatspowerPayload,
   isWhatspowerEnabled,
+  deriveStageEventId,
 } from '@/lib/whatspower-bridge'
 
 /**
@@ -34,6 +35,9 @@ function restoreEnv() {
 function enableBridge(url = 'http://localhost:3003') {
   process.env.WHATSPOWER_ENABLED = 'true'
   process.env.WHATSPOWER_WEBHOOK_SECRET = SECRET
+  // (A1-06) El stage-change exige credencial de servicio por-org o secreto
+  // interno: el secreto HMAC del webhook inbound JAMÁS sirve de Bearer.
+  process.env.WHATSPOWER_INTERNAL_API_SECRET = 'x'.repeat(32)
   process.env.WHATSPOWER_INBOUND_URL = `${url}/api/inbound`
   process.env.WHATSPOWER_STAGE_URL = `${url}/api/crm/stage-change`
 }
@@ -162,10 +166,11 @@ describe('whatspower-bridge: contrato stage-change', () => {
     expect(captured!.url).toBe('http://localhost:3003/api/crm/stage-change')
     const body = JSON.parse(captured!.raw)
     // (contrato §5) la organización viaja en la identidad (X-Org-Id) Y en el body.
-    // (OLEADA 2, contrato §7.1) cada ocurrencia lleva eventId ÚNICO para la
-    // idempotencia de WHATSPOWER: mismo evento reenviado jamás re-dispara.
+    // (Auditoría A4-01) eventId DETERMINISTA por transición dentro de una
+    // ventana temporal: un reintento reutiliza el MISMO eventId y WHATSPOWER
+    // deduplica — sin duplicar mensaje al cliente.
     expect(body).toEqual({
-      eventId: expect.stringMatching(/^sevt_[0-9a-f-]{36}$/),
+      eventId: expect.stringMatching(/^sevt_[0-9a-f]{32}$/),
       orgId: 'org-a',
       clientId: 'client-a1',
       clientPhone: '573001112233',
@@ -176,28 +181,60 @@ describe('whatspower-bridge: contrato stage-change', () => {
       dealValue: 1500,
     })
     expect(captured!.headers['X-Org-Id']).toBe('org-a')
+    // (A1-06) el Bearer es el secreto interno configurado, no el de webhook.
+    expect(captured!.headers['Authorization']).toBe(`Bearer ${'x'.repeat(32)}`)
   })
 
-  it('enabled genera un eventId DISTINTO por ocurrencia (idempotencia extremo a extremo)', async () => {
+  it('enabled reutiliza el MISMO eventId dentro de la ventana y DISTINCTO entre ventanas (A4-01)', async () => {
     process.env.WHATSPOWER_ENABLED = 'true'
     process.env.WHATSPOWER_INTERNAL_API_SECRET = 'x'.repeat(32)
-    const captured: Array<{ url: string; raw: string }> = []
-    global.fetch = (async (url: any, init: any) => {
-      captured.push({ url: String(url), raw: init.body })
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
-    }) as any
     const input = {
       orgId: 'org-a',
       opportunityId: 'opp-e2e-1',
       fromStage: 'A',
       toStage: 'B',
     }
+    // Mismo instante (reintento): mismo eventId → dedup en WHATSPOWER.
+    const t = Date.now()
+    const e1 = deriveStageEventId(input.orgId, input.opportunityId, input.fromStage, input.toStage, t)
+    const e2 = deriveStageEventId(input.orgId, input.opportunityId, input.fromStage, input.toStage, t + 1000)
+    expect(e1).toBe(e2)
+    // Ventana distinta (transición legítima posterior): eventId nuevo.
+    const e3 = deriveStageEventId(input.orgId, input.opportunityId, input.fromStage, input.toStage, t + 6 * 60 * 1000)
+    expect(e3).not.toBe(e1)
+    // Y el bridge realmente deriva (no inventa aleatorio):
+    const captured: Array<{ url: string; raw: string }> = []
+    global.fetch = (async (url: any, init: any) => {
+      captured.push({ url: String(url), raw: init.body })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as any
     await notifyWhatspowerStageChange(input)
     await notifyWhatspowerStageChange(input)
     const [first, second] = captured.map((c) => JSON.parse(c.raw))
-    expect(first.eventId).toMatch(/^sevt_/)
-    expect(second.eventId).toMatch(/^sevt_/)
-    expect(first.eventId).not.toBe(second.eventId)
+    expect(first.eventId).toMatch(/^sevt_[0-9a-f]{32}$/)
+    expect(first.eventId).toBe(second.eventId)
+    expect(first.eventId).toBe(`sevt_${e1}`)
+  })
+
+  it('A1-06: WHATSPOWER_WEBHOOK_SECRET (HMAC inbound) jamás se usa como Bearer de stage-change', async () => {
+    process.env.WHATSPOWER_ENABLED = 'true'
+    delete process.env.WHATSPOWER_INTERNAL_API_SECRET
+    process.env.WHATSPOWER_ORG_SERVICE_CREDENTIALS = JSON.stringify({ 'org-a': 'cred-org-a-123456' })
+    process.env.WHATSPOWER_WEBHOOK_SECRET = 'secreto-de-webhook-inbound'
+    let bearer = ''
+    global.fetch = (async (_url: any, init: any) => {
+      bearer = String(init.headers['Authorization'] || '')
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as any
+    const res = await notifyWhatspowerStageChange({ orgId: 'org-a', opportunityId: 'o1', fromStage: 'A', toStage: 'B' })
+    expect(res.sent).toBe(true)
+    expect(bearer).toBe('Bearer cred-org-a-123456')
+    // Sin credencial por-org NI secreto interno → no_config (fail-closed),
+    // aunque el secreto de webhook exista.
+    process.env.WHATSPOWER_ORG_SERVICE_CREDENTIALS = '{}'
+    const res2 = await notifyWhatspowerStageChange({ orgId: 'org-a', opportunityId: 'o1', fromStage: 'A', toStage: 'B' })
+    expect(res2.sent).toBe(false)
+    expect(res2.skipped).toBe('no_config')
   })
 
   it('disabled por defecto: stage-change no sale de la org', async () => {

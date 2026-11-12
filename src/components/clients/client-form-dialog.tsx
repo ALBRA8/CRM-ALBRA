@@ -81,7 +81,12 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
   const [cfLoading, setCfLoading] = useState(false)
 
   // Reset form when dialog opens or editClient changes
-  useState(() => {
+  // (A3-09, auditoría 2026-11-11) ERA useState(() => {...}): el initializer de
+  // useState solo corre en el PRIMER render — al abrir el diálogo para EDITAR
+  // otro cliente, el formulario seguía mostrando los datos anteriores.
+  // (reauditoría ciclo 2) CON array de dependencias: sin él el efecto corría en
+  // CADA render y borraba cada tecla del usuario (form inutilizable).
+  useEffect(() => {
     setForm({
       name: editClient?.name ?? '',
       email: editClient?.email ?? '',
@@ -95,7 +100,8 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
       tags: editClient?.tags ?? '',
       notes: editClient?.notes ?? '',
     })
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editClient])
 
   // Load custom fields when dialog opens
   useEffect(() => {
@@ -164,6 +170,12 @@ export function ClientFormDialog({ open, onClose, editClient }: ClientFormDialog
     e.preventDefault()
     if (!form.name || !form.phone) {
       toast.error('Nombre y teléfono son requeridos')
+      return
+    }
+    // (A3-11) los custom fields marcados requeridos en settings SÍ se validan
+    const missingRequired = (customFields || []).filter((f) => f.isRequired && !(customValues[f.id] || '').trim())
+    if (missingRequired.length > 0) {
+      toast.error(`Campo obligatorio vacío: ${missingRequired[0].name || missingRequired[0].id}`)
       return
     }
 

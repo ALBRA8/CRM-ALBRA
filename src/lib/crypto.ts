@@ -45,6 +45,13 @@ export function decryptSecret(payload: string | null | undefined): string | null
   }
 }
 
+/** (A2-23) Hash SHA-256 hex para lookup de secretos cifrados en reposo:
+ *  la igualdad sobre el ciphertext no es posible; se indexa el hash del valor
+ *  en claro y la comparación final es timing-safe sobre el descifrado. */
+export function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
 /** Enmascara un secreto para mostrarlo en UI/logs */
 export function maskSecret(s: string | null | undefined): string {
   if (!s) return ''

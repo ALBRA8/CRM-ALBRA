@@ -242,7 +242,11 @@ export function WhatsAppPage() {
                 )}
               </div>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-                // Navigate to settings -> whatsapp tab
+                // (A3-10, auditoría 2026-11-11) Deep-link REAL: Settings abre la
+                // pestaña de conexiones WhatsApp (?tab=whatsapp — el mismo canal
+                // que consume el retorno del OAuth de Meta). replaceState no
+                // navega: es compatible con la navegación SPA por setView.
+                window.history.replaceState(null, '', '/settings?tab=whatsapp')
                 setView('settings')
               }}>
                 <Settings className="w-3.5 h-3.5" />
@@ -268,7 +272,7 @@ export function WhatsAppPage() {
               <div className="p-6 text-center">
                 <QrCode className="w-8 h-8 text-slate-200 mx-auto mb-2" />
                 <p className="text-xs text-slate-400 mb-2">WhatsApp no conectado</p>
-                <Button size="sm" className="mt-1 bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-xs gap-1" onClick={() => setView('settings')}>
+                <Button size="sm" className="mt-1 bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-xs gap-1" onClick={() => { window.history.replaceState(null, '', '/settings?tab=whatsapp'); setView('settings') }}>
                   <QrCode className="w-3 h-3" /> Conectar por QR
                 </Button>
               </div>
@@ -456,7 +460,7 @@ export function WhatsAppPage() {
               </p>
               <div className="flex flex-col gap-2 items-center">
                 {!isWaConnected && (
-                  <Button className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2" onClick={() => setView('settings')}>
+                  <Button className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2" onClick={() => { window.history.replaceState(null, '', '/settings?tab=whatsapp'); setView('settings') }}>
                     <QrCode className="w-4 h-4" /> Conectar por QR
                   </Button>
                 )}

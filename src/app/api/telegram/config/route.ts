@@ -1,8 +1,8 @@
 import type { NextRequest } from 'next/server'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, HttpError } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
-import { maskSecret } from '@/lib/crypto'
+import { decryptSecret, encryptSecret, maskSecret, sha256Hex } from '@/lib/crypto'
 import { getIntegration, parseTelegramState, encodeTelegramState, generateWebhookSecret } from '@/lib/integrations'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
@@ -51,14 +51,23 @@ export async function PUT(req: NextRequest) {
     }
     if (typeof body.autoReply === 'boolean') next.autoReply = body.autoReply
 
-    // Secret para validar el webhook (X-Telegram-Bot-Api-Secret-Token) — se genera una vez
-    const telegramSecret = integration.telegramSecret || generateWebhookSecret()
+    // Secret para validar el webhook (X-Telegram-Bot-Api-Secret-Token) — se genera una vez.
+    // (A2-23) Se LEE descifrado (decryptSecret devuelve el plano legacy tal cual)
+    // y se PERSISTE cifrado + hash de lookup.
+    const telegramSecret = decryptSecret(integration.telegramSecret) || generateWebhookSecret()
 
+    // (reauditoría ciclo 2) Falla EXPLÍCITA si no hay clave de cifrado: persistir
+    // secret null con hash válido dejaría el webhook de la org en 401 silencioso.
+    const encSecret = encryptSecret(telegramSecret)
+    if (!encSecret) {
+      throw new HttpError(500, 'Cifrado no disponible: configura APP_ENCRYPTION_KEY o APP_SECRET')
+    }
     const updated = await db.integration.update({
       where: { organizationId: auth.orgId },
       data: {
         telegramBotTokenEnc: encodeTelegramState(next),
-        telegramSecret,
+        telegramSecret: encSecret,
+        telegramSecretHash: sha256Hex(telegramSecret),
         enableTelegram: !!next.token,
       },
     })

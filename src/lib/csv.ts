@@ -65,8 +65,13 @@ export function csvToObjects(rows: string[][]): CsvRecord[] {
 }
 
 function escapeCsv(value: unknown): string {
-  const s = value === null || value === undefined ? '' : String(value)
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  let s = value === null || value === undefined ? '' : String(value)
+  // (A2-05, auditoría 2026-11-11) CSV injection: celdas que empiezan por
+  // = + - @ pueden ejecutar fórmulas al abrir el export en Excel (p. ej.
+  // =WEBSERVICE(...) con datos de terceros del perfil de WhatsApp).
+  // Se prefija apóstrofe para neutralizarlas.
+  if (/^[=+\-@]/.test(s)) s = `'${s}`
+  if (/^["",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
 }
 

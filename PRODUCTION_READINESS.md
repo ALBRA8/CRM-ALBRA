@@ -37,3 +37,37 @@
 ## Veredicto
 
 **APTO PARA STAGING / PRE-PRODUCCIÓN HOY.** Producción plena tras completar los 5 puntos anteriores. Ningún criterio se declaró aprobado sin evidencia; lo no ejecutable desde este entorno está marcado como ⚠️ con su causa.
+
+
+---
+
+## Checklist de producción — verificación 2026-11-12
+
+Solo se marca lo EJECUTADO y verificado en este ciclo (nada "presumido"):
+
+- [x] Suites de prueba completas en verde (CRM 569/569, WP 203/203, ULTRA 152/152).
+- [x] tsc --noEmit 0 errores en los 3 repos.
+- [x] npm audit: 0 críticas / 0 altas en runtime (5 moderadas documentadas en CRM).
+- [x] Secretos: sin valores hardcodeados; .env.example con valores vacíos y comentarios propios;
+      escáner de secretos en CI (scripts/scan-secrets.mjs + tests/security).
+- [x] Secretos en reposo cifrados (AES-256-GCM) + lookup por hash; backfill idempotente incluido.
+- [x] Migraciones seguras: no destructivas; respaldo reversible en dedup; migrador con selftest.
+- [x] Aislamiento multi-empresa probado NEGATIVAMENTE (multitenancy, cross-org, nicho, doctor,
+      dashboard-isolation, multiorg-isolation en los 3 repos).
+- [x] Rate limiting durable en endpoints públicos (CRM auth/demo/register/creds; WP inbound/payments).
+- [x] Anti-replay durable + dedup de webhooks (Meta, Telegram, pagos, stage-change).
+- [x] Idempotencia extremo a extremo CRM→WHATSPOWER (eventId determinista + dedup 24 h + liberación on-throw).
+- [x] Backups: nightly + drill de restauración (scripts/backup-nightly.sh, backup-restore-drill.sh).
+- [x] Docker/compose: usuario sin privilegios, restart unless-stopped, volúmenes persistentes, WAL+busy_timeout.
+- [ ] DESPLIEGUE A PRODUCCIÓN: BLOQUEADO POR DISEÑO hasta autorización expresa del propietario.
+
+### Matriz de seguridad multiusuario / multiempresa
+| Vector | CRM | WHATSPOWER | ULTRA |
+| --- | --- | --- | --- |
+| Identidad por request | JWT + estado de sesión en BD (tv, isActive, org) | X-Org-Id + credencial de servicio por org | Bearer ADMIN_API_KEYS dual-formato + X-Org-Id |
+| Aislamiento de datos | Scoping por organizationId en TODA consulta (probado negativamente) | org en cada fila/consulta; '__legacy__' reservado inalcanzable | campañas/credenciales por org; cuarentena null-org |
+| Credenciales de canal | Cifradas AES-256-GCM, jamás en respuestas | resolución por org vía endpoint interno (ids sin tokens) | resuelve por org vía CRM (fail-closed sin mapa) |
+| Webhooks | Firma HMAC por org + anti-replay durable + dedup waMessageId | HMAC por org + timestamp ±5 min + anti-replay durable | firma + anti-replay + uncertain fail-safe |
+| Rate limiting | Durable por IP/org (auth, demo, registro, credenciales internas) | Durable por IP (inbound 120/min, pagos 60/min) | login timing-safe; paginación obligatoria |
+| Operaciones destructivas | Rol admin exigido; timeline del cliente en transacción | rol admin en adminOnly; locks con lease | transacción única de creación; claim atómico |
+| Auditoría | ActivityLog + Timeline + security-log por evento | automation_events + sentLog acotado | journal de efectos + eventos UNCERTAIN |

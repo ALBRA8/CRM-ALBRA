@@ -175,19 +175,36 @@ export async function findOrCreateChannelClient(opts: {
     select: { id: true, name: true, phone: true },
   })
   if (existing) return existing
-  const created = await db.client.create({
-    data: {
-      organizationId: orgId,
-      name: (name || '').trim() || `Contacto ${platformKey}`,
-      phone: platformKey,
-      status: 'prospect',
-      source,
-      // Fase 2: leads de WhatsApp/Telegram/Instagram/landing entran al round-robin
-      assignedToId: await assignLeadRoundRobin(orgId),
-      lastContactAt: new Date(),
-    },
-    select: { id: true, name: true, phone: true, assignedToId: true },
-  })
+  let created: { id: string; name: string; phone: string | null; assignedToId?: string | null }
+  try {
+    created = await db.client.create({
+      data: {
+        organizationId: orgId,
+        name: (name || '').trim() || `Contacto ${platformKey}`,
+        phone: platformKey,
+        status: 'prospect',
+        source,
+        // Fase 2: leads de WhatsApp/Telegram/Instagram/landing entran al round-robin
+        assignedToId: await assignLeadRoundRobin(orgId),
+        lastContactAt: new Date(),
+      },
+      select: { id: true, name: true, phone: true, assignedToId: true },
+    })
+  } catch (err) {
+    // (A2-21, auditoría 2026-11-11) Carrera benigna: dos webhooks concurrentes
+    // del MISMO contacto se pasan el findFirst mutuamente y ambos intentan
+    // crear. Con el índice único parcial (organizationId, phone) el perdedor
+    // recibe P2002 → re-leer al ganador en vez de 500 (Meta reintentaría y
+    // duplicaría timeline/respuestas). Sin índice, el catch es inocuo.
+    if ((err as { code?: string } | null)?.code === 'P2002') {
+      const winner = await db.client.findFirst({
+        where: { organizationId: orgId, phone: platformKey },
+        select: { id: true, name: true, phone: true },
+      })
+      if (winner) return winner
+    }
+    throw err
+  }
   // El workflow engine reacciona a nuevos leads de canales
   try {
     const { runWorkflowsForTrigger } = await import('./workflow-engine')

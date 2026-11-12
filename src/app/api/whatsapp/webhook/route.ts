@@ -11,6 +11,7 @@ import {
   buildNichoContext,
   getHandoffKeywords,
   sendWhatsAppCloud,
+  safeEquals,
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
 import { forwardInboundToWhatspower } from '@/lib/whatspower-bridge'
@@ -66,7 +67,8 @@ export async function GET(req: NextRequest) {
   if (mode !== 'subscribe') return new Response('Forbidden', { status: 403 })
 
   const globalToken = process.env.WHATSAPP_VERIFY_TOKEN
-  if (globalToken && token === globalToken) {
+  // (A2-12) comparación en tiempo constante también en la verificación GET.
+  if (globalToken && safeEquals(token, globalToken)) {
     return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
   }
 
@@ -142,11 +144,20 @@ export async function POST(req: NextRequest) {
         if (platformSecret) secrets.push(platformSecret)
         for (const secret of secrets) {
           if (verifyMetaSignature(rawBody, secret, signature)) {
-            matchedOrgId = connection.organizationId
-            matchedValue = body.entry?.[0]?.changes?.[0]?.value ?? null
-            matchedCloudToken = decryptSecret(connection.accessTokenEnc)
-            matchedPhoneId = phoneNumberId
-            break
+            // (A1-09, auditoría 2026-11-11) Iterar TODAS las entry/changes:
+            // Meta agrupa varios cambios por app en un solo webhook; procesar
+            // solo entry[0].changes[0] perdía mensajes silenciosamente.
+            for (const change of (body.entry || []).flatMap((e) => e.changes || [])) {
+              const value = change.value
+              if (!value) continue
+              if (value.metadata?.phone_number_id && value.metadata.phone_number_id !== phoneNumberId) continue
+              matchedOrgId = connection.organizationId
+              matchedValue = value
+              matchedCloudToken = decryptSecret(connection.accessTokenEnc)
+              matchedPhoneId = phoneNumberId
+              break
+            }
+            if (matchedOrgId) break
           }
         }
       }
@@ -187,10 +198,34 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
-    const value = matchedValue as WaValue
+    // (A1-09, auditoría 2026-11-11) Meta puede agrupar VARIAS entry/changes
+    // en un solo POST: se procesan TODAS las ocurrencias del número de la org
+    // autenticada. Antes solo se leía entry[0].changes[0] y el resto se
+    // descartaba en silencio → mensajes perdidos sin traza.
+    const allValues = (body.entry ?? [])
+      .flatMap((e) => e.changes ?? [])
+      .map((c) => c.value)
+      .filter((v): v is WaValue => !!v)
+    const processableValues = allValues.filter(
+      (v) => !matchedPhoneId || !v.metadata?.phone_number_id || v.metadata.phone_number_id === matchedPhoneId
+    )
 
-    // Estados de entrega (sent/delivered/read) — solo timeline si hay clientId conocido
+    for (const value of processableValues.length ? processableValues : [matchedValue as WaValue]) {
+    // Estados de entrega (sent/delivered/read) — dedup por messageId también
+    // aquí (reauditoría ciclo 2): los reintentos de Meta duplicaban el timeline
+    // de estados aunque los mensajes ya se filtraran.
     for (const status of value.statuses || []) {
+      if (status.id) {
+        const seenStatus = await db.timelineEvent.findFirst({
+          where: {
+            organizationId: matchedOrgId,
+            type: 'whatsapp',
+            metadata: { contains: `"messageId":"${status.id}"` },
+          },
+          select: { id: true },
+        })
+        if (seenStatus) continue
+      }
       await recordTimelineEvent({
         orgId: matchedOrgId,
         type: 'whatsapp',
@@ -201,6 +236,20 @@ export async function POST(req: NextRequest) {
     }
 
     for (const message of value.messages || []) {
+      // ================================================================
+      // (A4-02, auditoría 2026-11-11) DEDUP por waMessageId: Meta re-entrega
+      // webhooks ante timeout; sin dedup, la auto-respuesta IA salía DOS
+      // veces al cliente. El índice único (organizationId, waMessageId) —
+      // migración 4 — respalda el lookup; si ya existe, se omite (200 temprano
+      // ya fue respondido por Meta en la primera entrega).
+      // ================================================================
+      if (message.id) {
+        const seen = await db.whatsAppMessage.findFirst({
+          where: { organizationId: matchedOrgId, waMessageId: message.id },
+          select: { id: true },
+        })
+        if (seen) continue
+      }
       let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
       let isVoice = false
 
@@ -234,6 +283,25 @@ export async function POST(req: NextRequest) {
             })
           }
         }
+      }
+      // (A4-02, auditoría 2026-11-11) Dedup DURABLE por waMessageId: Meta
+      // reintenta el webhook ante timeouts y una doble ejecución duplicaría
+      // timeline + respuestas IA + reenvío al puente. Lookup previo del mensaje
+      // ya registrado en TimelineEvent. Nota honesta (reauditoría ciclo 2): el
+      // índice único parcial (organizationId, waMessageId) de la migración
+      // 4_audit_indexes cierra la vía de escritura del DAEMON (tabla
+      // WhatsAppMessage); este lookup check-then-act conserva una ventana
+      // TOCTOU residual ante POSTs verdaderamente simultáneos.
+      if (message.id) {
+        const seen = await db.timelineEvent.findFirst({
+          where: {
+            organizationId: matchedOrgId,
+            type: 'whatsapp',
+            metadata: { contains: `"messageId":"${message.id}"` },
+          },
+          select: { id: true },
+        })
+        if (seen) continue
       }
       if (!text) continue
       const phone = normalizePhone(message.from)
@@ -312,6 +380,8 @@ export async function POST(req: NextRequest) {
           },
         })
       }
+    }
+
     }
 
     // Meta exige 200 rápido
