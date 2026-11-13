@@ -190,16 +190,16 @@ export async function POST(req: NextRequest) {
         })
         if (canonical) {
           if (canonical.organizationId !== matchedOrgId || canonical.channel !== 'whatsapp' || canonical.status !== 'connected') {
-            return json({ error: 'Conexión WhatsApp no disponible' }, { status: 401 })
+            continue
           }
           const plaintext = decryptSecret(canonical.credentialsEnc)
-          if (!plaintext) return json({ error: 'Credenciales WhatsApp no disponibles' }, { status: 401 })
+          if (!plaintext) continue
           try {
             const credentials = JSON.parse(plaintext) as { accessToken?: string }
-            if (!credentials.accessToken) return json({ error: 'Token WhatsApp no disponible' }, { status: 401 })
+            if (!credentials.accessToken) continue
             matchedCloudToken = credentials.accessToken
           } catch {
-            return json({ error: 'Credenciales WhatsApp inválidas' }, { status: 401 })
+            continue
           }
         }
       }
