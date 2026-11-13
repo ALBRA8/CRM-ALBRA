@@ -792,6 +792,7 @@ model ChannelConnection {
   @@index([organizationId, channel, status])
   @@index([organizationId, createdAt])
   @@index([provider, externalAccountId])
+  @@unique([id, organizationId])
 }
 
 model ChannelConnectionEvent {
@@ -816,7 +817,7 @@ model ChannelWebhookEvent {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   connectionId   String
-  connection     ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connection     ChannelConnection @relation(fields: [connectionId, organizationId], references: [id, organizationId], onDelete: Cascade)
   eventKey       String
   eventType      String
   status         String   @default("processing") // processing | processed | failed
