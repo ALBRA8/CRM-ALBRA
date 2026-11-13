@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/lib/db'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { FIX } from '../setup/seed-data'
+import { decryptSecret } from '@/lib/crypto'
 
 vi.mock('@/lib/workflow-engine', async (importOriginal) => (await importOriginal<typeof import('@/lib/workflow-engine')>()) as typeof import('@/lib/workflow-engine'))
 
@@ -18,6 +19,7 @@ afterEach(async () => {
     notificationIds.length = 0
   }
   if (automationIds.length) {
+    await db.workflowOutboundMessage.deleteMany({ where: { automationId: { in: automationIds } } })
     await db.automationRun.deleteMany({ where: { automationId: { in: automationIds } } })
     await db.automation.deleteMany({ where: { id: { in: automationIds } } })
     automationIds.length = 0
@@ -62,7 +64,7 @@ describe('workflow trigger idempotency for channel messages', () => {
     expect(runs).toHaveLength(1)
     expect(runs[0].idempotencyKey).toBe('message_received:wamid.workflow-idempotency-test')
   })
-  it('keeps workflow sends blocked even if the legacy opt-in flag is set, until durable outbox exists', async () => {
+  it('persists workflow sends in the encrypted durable outbox even when the legacy send flag is requested', async () => {
     process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = 'true'
     const fetchSpy = vi.spyOn(global, 'fetch')
     const automation = await db.automation.create({
@@ -89,14 +91,19 @@ describe('workflow trigger idempotency for channel messages', () => {
     const notification = await db.notification.findFirst({
       where: {
         organizationId: FIX.orgA.id,
-        title: 'Mensaje whatsapp PENDIENTE (outbox workflow no configurada)',
+        title: 'Mensaje whatsapp en cola durable',
       },
       orderBy: { createdAt: 'desc' },
     })
     expect(notification).not.toBeNull()
     if (notification) notificationIds.push(notification.id)
-    expect(notification?.data).toContain('"sent":false')
-    expect(notification?.data).toContain('WORKFLOW_OUTBOX_NOT_CONFIGURED')
+    expect(notification?.data).toContain('"status":"queued"')
+    const outbound = await db.workflowOutboundMessage.findFirst({ where: { organizationId: FIX.orgA.id, automationId: automation.id } })
+    expect(outbound).not.toBeNull()
+    expect(outbound?.status).toBe('queued')
+    expect(outbound?.payloadEnc).toMatch(/^v1:/)
+    expect(outbound?.payloadEnc).not.toContain(FIX.clientA1.phone || 'never-match')
+    expect(decryptSecret(outbound?.payloadEnc)).toContain(FIX.clientA1.phone || '')
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
   })
