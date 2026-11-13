@@ -269,7 +269,7 @@ async function main() {
       if (botToken && botId) {
         const credentialsEnc = encryptedCredentials({
           botToken,
-          webhookSecret: legacy.telegramSecret || null,
+          webhookSecret: safeDecrypt(legacy.telegramSecret) || null,
         })
         if (credentialsEnc) {
           plans.push({
