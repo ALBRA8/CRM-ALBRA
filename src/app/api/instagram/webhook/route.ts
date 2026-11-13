@@ -104,7 +104,6 @@ export async function POST(req: NextRequest) {
       if (!verifyMetaSignature(rawBody, credentials.appSecret, signature)) continue
       const entries = (body.entry || []).filter((item) => item.id === candidate.externalAccountId)
       for (const entry of entries) {
-        if (matchedTargets.some((target) => target.accountId === candidate.externalAccountId && target.orgId === candidate.organizationId)) continue
         matchedTargets.push({
           orgId: candidate.organizationId,
           entry,
@@ -115,7 +114,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fallback de compatibilidad: solo cuentas no migradas al modelo canónico.
-    if (matchedTargets.length === 0) {
+    {
       const legacyCandidates = await db.integration.findMany({
         where: { instagramTokenEnc: { not: null } },
         select: { organizationId: true, instagramTokenEnc: true, instagramAccountId: true },
@@ -124,9 +123,9 @@ export async function POST(req: NextRequest) {
         const state = parseInstagramState(candidate.instagramTokenEnc)
         if (!state.webhookSecret || !candidate.instagramAccountId) continue
         if (!verifyMetaSignature(rawBody, state.webhookSecret, signature)) continue
+        if (matchedTargets.some((target) => target.accountId === candidate.instagramAccountId)) continue
         const entries = (body.entry || []).filter((item) => item.id === candidate.instagramAccountId)
         for (const entry of entries) {
-          if (matchedTargets.some((target) => target.accountId === candidate.instagramAccountId && target.orgId === candidate.organizationId)) continue
           if (!state.token) continue
           matchedTargets.push({
             orgId: candidate.organizationId,
