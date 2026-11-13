@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process'
 const action = process.argv[2] // 'push' | 'reset' | 'migrate'
 const isProd = process.env.NODE_ENV === 'production'
 const dbUrl = process.env.DATABASE_URL || ''
-const isProdDb = /prod|production|amazonaws|neon\\.tech|supabase|render|fly\\.io/i.test(dbUrl)
+const isProdDb = /prod|production|amazonaws|neon\.tech|supabase|render|fly\.io/i.test(dbUrl)
 const allowDestructive = process.env.ALLOW_DESTRUCTIVE_DB_OPERATION === 'true'
 
 if ((isProd || isProdDb) && !allowDestructive) {
