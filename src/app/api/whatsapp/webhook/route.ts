@@ -219,6 +219,9 @@ export async function POST(req: NextRequest) {
       // aquí (reauditoría ciclo 2): los reintentos de Meta duplicaban el timeline
       // de estados aunque los mensajes ya se filtraran.
       for (const status of value.statuses || []) {
+        // Aceptar únicamente los estados documentados por Meta; un valor
+        // desconocido nunca debe entrar al ledger ni contaminar deliveryStatus.
+        if (!['sent', 'delivered', 'read', 'failed'].includes(status.status)) continue
         // Correlación mediante biz_opaque_callback_data. El callback puede
         // adelantarse al ACK HTTP y convertir sending/unknown en sent.
         if (
