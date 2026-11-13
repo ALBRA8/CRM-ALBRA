@@ -114,7 +114,9 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - [x] Credenciales del registro canónico cifradas con AES-256-GCM; metadata limitada a IDs/nombres no secretos.
 - [x] La escritura canónica, su evento de auditoría y la actualización legacy `Integration` ocurren en una transacción.
 - [x] Se rechaza vincular a otro tenant una cuenta Instagram ya reclamada en el inventario canónico.
-- [x] El callback registra todas las páginas devueltas por Meta que tengan Instagram Business vinculado; mantiene la primera como selección legacy provisional.\n- [x] Se añadió `GET /api/instagram/connections` (listado por tenant sin secretos) y `POST /api/instagram/connections` (selección validada por `connectionId`, solo dentro de la organización autenticada).\n- [ ] La pantalla de ajustes aún debe consumir el listado y el endpoint de selección para que el usuario elija visualmente la cuenta activa.
+- [x] El callback registra todas las páginas devueltas por Meta que tengan Instagram Business vinculado; mantiene la primera como selección legacy provisional.
+- [x] Se añadió `GET /api/instagram/connections` (listado por tenant sin secretos) y `POST /api/instagram/connections` (selección validada por `connectionId`, solo dentro de la organización autenticada).
+- [ ] La pantalla de ajustes aún debe consumir el listado y el endpoint de selección para que el usuario elija visualmente la cuenta activa.
 - [ ] Los webhooks y envíos de Instagram siguen usando `Integration`; el endpoint de selección mantiene compatibilidad legacy pero todavía no cambia el enrutamiento por mensaje.
 - [x] Se añadió `ChannelConversation`, con unicidad `[connectionId, externalContactKey]`, para separar conversaciones nuevas sin tocar históricos legacy.
 - [x] Se añadió `src/lib/channel-conversations.ts`: resuelve por `providerAccountKey` exacta y rechaza canal/estado incompatibles; crea conversación dentro de la conexión resuelta.
