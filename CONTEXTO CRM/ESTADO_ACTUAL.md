@@ -175,3 +175,28 @@ Revisión de lectura sobre los heads publicados de las tres ramas correctivas. N
 ### Siguiente acción requerida
 
 No preparar ni abrir los PR todavía. Cerrar B2 primero: el daemon debe recibir y persistir una clave de idempotencia scoped por organización antes del envío; solicitudes repetidas de una clave ya PENDING/IN_FLIGHT/UNCERTAIN deben devolver estado incierto sin reenviar. Si Baileys no ofrece una clave externa consultable/deduplicable, la caída tras aceptación debe permanecer UNCERTAIN y requerir reconciliación con evidencia, nunca reenvío automático. Añadir una prueba de crash-window que simule aceptación real del stub antes de perder la respuesta y demuestre que el segundo intento no produce un segundo envío. Después ejecutar una prueba integrada con 2A, ULTRA y daemon en procesos separados y etiquetar los mocks restantes.
+
+## Actualización — Selector multiempresa de Super Admin (2026-11-13)
+
+**Estado de entrega:** implementado en la rama `fix/migration-safety-audit` y publicado en la [PR #3](https://github.com/ALBRA8/CRM-ALBRA/pull/3), abierta/en draft según el último registro. No integrado en `main` y no desplegado.
+
+### Cambios incluidos
+- `src/lib/auth.ts`: validación de sesión contra BD, estado activo del usuario, `tokenVersion`, rol vigente y organización activa; excepción de contexto cross-organization reservada al superadmin.
+- `src/app/api/super/switch-organization/route.ts`: endpoint protegido para cambiar el contexto de organización del superadmin.
+- `src/lib/api.ts`: método `switchSuperOrganization(organizationId)`.
+- `src/components/super/super-page.tsx`: botón **Ingresar** por organización activa, bloqueo mientras cambia, sincronización de token y usuario, recarga de sesión y navegación al dashboard.
+- `tests/integration/superadmin-organization-switch.test.ts`: pruebas para cambio permitido, usuario normal denegado y organización inexistente (404).
+
+### Límites de verificación
+- La consulta de GitHub para el SHA `27870abcc9b6c27e843ff17a48dde18068c0c0d6` no mostró statuses ni workflow runs asociados.
+- Build y suite de pruebas de esta versión no han sido ejecutados/verificados de forma reproducible en esta sesión.
+- Por tanto, el estado correcto es **implementado en rama / pendiente de validación**, no “100 % funcional”.
+- La PR agrupa 15 archivos, incluyendo trabajo anterior de seguridad, migraciones, Docker, CI y guardas de BD; revisar el diff completo antes de integrar.
+
+### Próximos criterios de cierre
+1. Confirmar el head y el estado actual de PR #3.
+2. Ejecutar CI, build, TypeScript y pruebas unitarias/de integración.
+3. Probar que un usuario normal no puede cambiar ni consultar otra organización, incluso manipulando el body o el token.
+4. Probar que el superadmin puede entrar a otra organización, que el contexto se refleja en `/me` y que los datos del dashboard quedan correctamente limitados a esa organización.
+5. Revisar expiración/rotación del token y regreso al contexto administrativo.
+6. Integrar solo con verificaciones satisfactorias y autorización; desplegar por separado, con plan de rollback.
