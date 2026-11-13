@@ -453,8 +453,8 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
   })
 
   it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
-    const connA = await seedConnection('org-a', '121000201')
-    const connB = await seedConnection('org-b', '121000202')
+    await seedConnection('org-a', '121000201')
+    await seedConnection('org-b', '121000202')
     const canonicalA = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000201' }, select: { id: true } })
     const canonicalB = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000202' }, select: { id: true } })
     expect(canonicalA).not.toBeNull()
