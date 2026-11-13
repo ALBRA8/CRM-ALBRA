@@ -97,6 +97,8 @@ describe('Instagram OAuth callback tenant ownership', () => {
 
     expect(response.status).toBe(307)
     expect(response.headers.get('location')).toContain('ig_error=instagram_account_in_use')
+    expect(response.headers.get('set-cookie')).toContain('Path=/api/instagram/oauth')
+    expect(response.headers.get('set-cookie')).toContain('Max-Age=0')
     const unchanged = await db.channelConnection.findUniqueOrThrow({ where: { id: foreign.id } })
     expect(unchanged.organizationId).toBe(FIX.orgB.id)
     expect(unchanged.credentialsEnc).toBe(foreignCredentials)
