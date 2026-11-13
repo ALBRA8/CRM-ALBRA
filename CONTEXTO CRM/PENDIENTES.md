@@ -27,7 +27,7 @@
 
 ## Alto — multicuenta
 - [x] Diseñar entidad canónica `ChannelConnection`, conversaciones y mensajes aislados por conexión.
-- [ ] Migrar Integration uno-a-uno con backfill repetible, dual-read, reporte de conflictos y rollback ensayado.
+- [~] Backfill repetible disponible con dry-run por defecto, doble/triple confirmación y reporte de conflictos; ejecutar en staging, completar dual-read/paridad y ensayar rollback sigue pendiente.
 - [x] Documentar que Baileys separa sesiones por organización, no por cada cuenta individual; no confundirlo con multicuenta completa.
 - [~] Instagram OAuth/selector y WhatsApp Cloud sincronizan conexiones canónicas; falta auditoría integral de state/PKCE, renovación y revocación por proveedor.
 - [~] WhatsApp Cloud e Instagram tienen webhooks y outbox canónicos en transición; Telegram, Facebook Messenger y TikTok siguen pendientes de adaptadores, ciclo de vida y pruebas.
