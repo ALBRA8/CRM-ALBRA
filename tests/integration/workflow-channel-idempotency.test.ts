@@ -4,8 +4,11 @@ import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { FIX } from '../setup/seed-data'
 
 const automationIds: string[] = []
+const previousExternalSendFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
 
 afterEach(async () => {
+  if (previousExternalSendFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+  else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = previousExternalSendFlag
   if (automationIds.length) {
     await db.automationRun.deleteMany({ where: { automationId: { in: automationIds } } })
     await db.automation.deleteMany({ where: { id: { in: automationIds } } })
