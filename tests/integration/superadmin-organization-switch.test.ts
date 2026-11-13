@@ -46,7 +46,7 @@ describe('superadmin: cambio de contexto entre organizaciones', () => {
     expect(res.status).toBe(403)
   })
 
-  it('rechaza organizaciones inactivas o inexistentes', async () => {
+  it('rechaza organizaciones inexistentes', async () => {
     const original = await db.user.findUniqueOrThrow({ where: { id: FIX.userA.id } })
     await db.user.update({ where: { id: FIX.userA.id }, data: { role: 'superadmin' } })
     try {
