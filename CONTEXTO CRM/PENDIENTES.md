@@ -235,7 +235,7 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Auto-respuestas WhatsApp/Instagram persistidas primero en `ChannelOutboundMessage` con clave estable SHA-256 de `message.id`/`msg.mid`; el webhook no llama directamente a Meta.
 - [x] Pruebas de integración en ambos webhooks: con opt-in explícito, la respuesta IA se encola con clave estable y estado `queued`, sin despacho directo al proveedor.
 - [x] CI del HEAD previo (`51a7775`) aprobó toda la suite y build; la nueva fase outbox necesita CI final propio.
-- [~] La idempotencia de workflow impide runs duplicados, pero no reanuda automáticamente una ejecución que caiga a mitad de una acción. Las acciones externas de workflows aún no están integradas con la outbox canónica; no certificar exactly-once.
+- [~] La idempotencia de workflow impide runs duplicados. El sweeper marca `running` huérfanos como `failed` tras 10 minutos, sin reejecutar acciones de resultado incierto. Las acciones externas de workflows aún no están integradas con la outbox canónica; no certificar exactly-once.
 - [ ] Validar las nuevas protecciones con CI del HEAD final.
 - [ ] Probar webhooks con sandbox/cuentas de prueba Meta; no se ha hecho desde este entorno.
 - [ ] Ejecutar dry-run de backfill y ensayo de reversión en staging con backup restaurable; no se ha hecho desde este entorno.
