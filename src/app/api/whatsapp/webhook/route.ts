@@ -259,20 +259,6 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-        if (status.id) {
-          const seenStatus = await db.timelineEvent.findFirst({
-            where: {
-              organizationId: matchedOrgId,
-              type: 'whatsapp',
-              AND: [
-                { metadata: { contains: `"messageId":"${status.id}"` } },
-                { metadata: { contains: `"status":"${status.status}"` } },
-              ],
-            },
-            select: { id: true },
-          })
-          if (seenStatus) continue
-        }
         if (status.id && matchedCanonicalConnectionId) {
           const claim = await claimChannelWebhookEvent({
             organizationId: matchedOrgId,
@@ -288,6 +274,26 @@ export async function POST(req: NextRequest) {
           }
           activeWebhookEventId = claim.id
         }
+        if (status.id) {
+          const seenStatus = await db.timelineEvent.findFirst({
+            where: {
+              organizationId: matchedOrgId,
+              type: 'whatsapp',
+              AND: [
+                { metadata: { contains: `"messageId":"${status.id}"` } },
+                { metadata: { contains: `"status":"${status.status}"` } },
+              ],
+            },
+            select: { id: true },
+          })
+          if (seenStatus) {
+            if (activeWebhookEventId) {
+              await completeChannelWebhookEvent(activeWebhookEventId)
+              activeWebhookEventId = null
+            }
+            continue
+          }
+        }
         await recordTimelineEvent({
           orgId: matchedOrgId,
           type: 'whatsapp',
@@ -302,6 +308,21 @@ export async function POST(req: NextRequest) {
       }
   
       for (const message of value.messages || []) {
+        if (message.id && matchedCanonicalConnectionId) {
+          const claim = await claimChannelWebhookEvent({
+            organizationId: matchedOrgId,
+            connectionId: matchedCanonicalConnectionId,
+            eventKey: `message:${message.id}`,
+            eventType: 'whatsapp.message',
+          })
+          if (!claim) {
+            const eventKey = `message:${message.id}`
+            const state = await getChannelWebhookEventStatus(matchedCanonicalConnectionId, eventKey)
+            if (state === 'processed') continue
+            throw new Error('WEBHOOK_EVENT_BUSY')
+          }
+          activeWebhookEventId = claim.id
+        }
         // ================================================================
         // (A4-02, auditoría 2026-11-11) DEDUP por waMessageId: Meta re-entrega
         // webhooks ante timeout; sin dedup, la auto-respuesta IA salía DOS
@@ -314,7 +335,13 @@ export async function POST(req: NextRequest) {
             where: { organizationId: matchedOrgId, waMessageId: message.id },
             select: { id: true },
           })
-          if (seen) continue
+          if (seen) {
+            if (activeWebhookEventId) {
+              await completeChannelWebhookEvent(activeWebhookEventId)
+              activeWebhookEventId = null
+            }
+            continue
+          }
         }
         let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
         let isVoice = false
@@ -367,27 +394,32 @@ export async function POST(req: NextRequest) {
             },
             select: { id: true },
           })
-          if (seen) continue
-        }
-        if (!text) continue
-        const phone = normalizePhone(message.from)
-        if (!phone) continue
-        const profileName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name || null
-        if (message.id && matchedCanonicalConnectionId) {
-          const claim = await claimChannelWebhookEvent({
-            organizationId: matchedOrgId,
-            connectionId: matchedCanonicalConnectionId,
-            eventKey: `message:${message.id}`,
-            eventType: 'whatsapp.message',
-          })
-          if (!claim) {
-            const eventKey = `message:${message.id}`
-            const state = await getChannelWebhookEventStatus(matchedCanonicalConnectionId, eventKey)
-            if (state === 'processed') continue
-            throw new Error('WEBHOOK_EVENT_BUSY')
+          if (activeWebhookEventId) {
+            await completeChannelWebhookEvent(activeWebhookEventId)
+            activeWebhookEventId = null
           }
-          activeWebhookEventId = claim.id
+          if (activeWebhookEventId) {
+            await completeChannelWebhookEvent(activeWebhookEventId)
+            activeWebhookEventId = null
+          }
+          continue
         }
+        if (!text) {
+          if (activeWebhookEventId) {
+            await completeChannelWebhookEvent(activeWebhookEventId)
+            activeWebhookEventId = null
+          }
+          continue
+        }
+        const phone = normalizePhone(message.from)
+        if (!phone) {
+          if (activeWebhookEventId) {
+            await completeChannelWebhookEvent(activeWebhookEventId)
+            activeWebhookEventId = null
+          }
+          continue
+        }
+        const profileName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name || null
   
         // Conversación canónica: particionada por el phone_number_id exacto
         // (conexión) y el teléfono externo del contacto.
