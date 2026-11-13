@@ -99,10 +99,11 @@ describe('aislamiento de contexto en acciones workflow', () => {
       })
       expect(results[0]?.status).toBe('success')
       const notification = await db.notification.findFirst({
-        where: { organizationId: 'org-a', body: marker },
+        where: { organizationId: 'org-a', title: { contains: 'Mensaje email PENDIENTE' } },
         orderBy: { createdAt: 'desc' },
       })
       expect(notification).not.toBeNull()
+      expect(notification!.body).not.toContain('attacker@example.invalid')
       const data = JSON.parse(notification!.data || '{}') as Record<string, unknown>
       expect(data.email).toBeNull()
       expect(data.phone).toBeNull()
@@ -133,7 +134,7 @@ describe('aislamiento de contexto en acciones workflow', () => {
       })
       expect(results[0]?.status).toBe('success')
       const notification = await db.notification.findFirst({
-        where: { organizationId: 'org-a', title: { contains: 'Mensaje whatsapp PENDIENTE' }, body: { contains: 'Prueba de aislamiento' } },
+        where: { organizationId: 'org-a', title: { contains: 'Mensaje whatsapp PENDIENTE' } },
         orderBy: { createdAt: 'desc' },
       })
       expect(notification).not.toBeNull()
@@ -142,7 +143,7 @@ describe('aislamiento de contexto en acciones workflow', () => {
       expect(notificationData.phone).toBeNull()
       expect(notificationData.email).toBeNull()
       const timeline = await db.timelineEvent.findFirst({
-        where: { organizationId: 'org-a', type: 'whatsapp', description: { contains: 'Prueba de aislamiento' } },
+        where: { organizationId: 'org-a', type: 'whatsapp', title: { contains: 'destinatario no disponible' } },
         orderBy: { createdAt: 'desc' },
       })
       expect(timeline).not.toBeNull()
