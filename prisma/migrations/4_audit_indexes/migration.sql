@@ -14,13 +14,13 @@ CREATE UNIQUE INDEX "WhatsAppMessage_org_wamid_uidx"
 -- A2-21: consolidar clientes repetidos sin borrar relaciones ni historiales.
 -- Regla: MIN(id) es el registro canónico por organización + teléfono.
 -- Se conserva una copia de auditoría de los clientes y preferencias absorbidos.
-DROP TABLE IF EXISTS "Client_dedup_backup_20261111";
+-- No borrar respaldos existentes: si el nombre ya existe, abortar y revisar estado.
 CREATE TABLE "Client_dedup_backup_20261111" AS
   SELECT * FROM "Client" WHERE "phone" IS NOT NULL AND "id" NOT IN (
     SELECT MIN("id") FROM "Client" WHERE "phone" IS NOT NULL GROUP BY "organizationId", "phone"
   );
 
-DROP TABLE IF EXISTS "ClientPreferences_dedup_backup_20261111";
+-- Igual para preferencias: un reintento no debe sobrescribir el respaldo.
 CREATE TABLE "ClientPreferences_dedup_backup_20261111" AS
   SELECT p.* FROM "ClientPreferences" p
   JOIN "Client_dedup_backup_20261111" d ON d."id" = p."clientId";
