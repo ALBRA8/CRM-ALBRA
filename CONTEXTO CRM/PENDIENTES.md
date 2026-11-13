@@ -96,3 +96,20 @@ Cerrar cada pendiente con commit/PR, evidencia de pruebas y revisión de segurid
 
 ### Criterio de estado
 La base multiusuario y multiempresa está implementada según el contexto y las auditorías registradas. La preparación de producción, la integración real de extremo a extremo, la multicuenta general y la gestión de identidades virtuales permanecen sujetas a los criterios de aceptación anteriores. No se declara ninguna de estas últimas como terminada por el mero hecho de existir modelos, documentación, mocks o CI satisfactorio.
+
+## Selector multiempresa Super Admin — PR #3 (2026-11-13)
+
+- [x] Endpoint protegido `POST /api/super/switch-organization` añadido en la rama `fix/migration-safety-audit`.
+- [x] Método cliente `switchSuperOrganization()` conectado.
+- [x] Acción **Ingresar** conectada en la tabla del panel Super Admin; sincroniza token/sesión y abre el dashboard de la organización seleccionada.
+- [x] Bloqueo de organizaciones inactivas y del cambio simultáneo.
+- [x] Pruebas de integración añadidas: cambio superadmin, denegación de usuario normal y organización inexistente.
+- [x] Pull Request #3 abierta en draft hacia `main`: https://github.com/ALBRA8/CRM-ALBRA/pull/3.
+- [ ] Verificar build y TypeScript sobre el head actual de la PR.
+- [ ] Ejecutar suite unitaria e integración y confirmar resultados en GitHub Actions.
+- [ ] Revisar aislamiento cross-tenant con usuario normal y superadmin, incluyendo manipulación de `organizationId`.
+- [ ] Revisar renovación/expiración del token y retorno al panel superadmin.
+- [ ] Integrar PR #3 en `main` solo tras CI verde, revisión del diff completo y autorización.
+- [ ] Desplegar en staging/producción solo después de integración, pruebas de humo, respaldo y autorización expresa.
+
+**Nota de estado:** los checks marcados [x] documentan cambios de código y publicación en la rama/PR; no certifican build, pruebas aprobadas, merge ni despliegue. La PR agrupa 15 archivos y commits anteriores de la misma rama, por lo que la revisión debe cubrir el diff completo.
