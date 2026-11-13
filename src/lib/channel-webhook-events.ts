@@ -19,6 +19,12 @@ export async function claimChannelWebhookEvent(input: {
     throw new Error('Invalid channel webhook event identity')
   }
 
+  const connection = await db.channelConnection.findFirst({
+    where: { id: input.connectionId, organizationId: input.organizationId },
+    select: { id: true },
+  })
+  if (!connection) throw new Error('Channel webhook event connection not found')
+
   const now = new Date()
   try {
     const created = await db.channelWebhookEvent.create({
