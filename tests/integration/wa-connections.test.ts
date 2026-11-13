@@ -107,6 +107,22 @@ describe('OLEADA 2 — credenciales cifradas y asociadas a su organización', ()
     const events = await db.whatsAppConnectionEvent.findMany({ where: { type: 'connected' } })
     expect(events).toHaveLength(1)
     expect(events[0].organizationId).toBe('org-a')
+
+    const canonical = await db.channelConnection.findUnique({
+      where: { providerAccountKey: 'meta:whatsapp:222000222' },
+    })
+    expect(canonical).toMatchObject({
+      organizationId: 'org-a',
+      channel: 'whatsapp',
+      provider: 'meta_cloud',
+      externalAccountId: '222000222',
+      status: 'connected',
+    })
+    expect(canonical!.credentialsEnc).not.toContain('EAAG-token-admin')
+    const { decryptSecret } = await import('@/lib/crypto')
+    expect(JSON.parse(decryptSecret(canonical!.credentialsEnc)!)).toMatchObject({
+      accessToken: 'EAAG-token-admin-0123456789',
+    })
   })
 
   it('un member (no admin) no puede conectar números (permiso, punto 5)', async () => {
@@ -162,6 +178,11 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
       routeParams(conn!.id),
     )
     expect(del.status).toBe(200)
+    const canonical = await db.channelConnection.findUnique({
+      where: { providerAccountKey: 'meta:whatsapp:777000777' },
+    })
+    expect(canonical?.status).toBe('disconnected')
+    expect(JSON.parse((await import('@/lib/crypto')).decryptSecret(canonical!.credentialsEnc)!)).toEqual({})
     stubGraphOk('777000778')
     const r2 = await connectionsPost(req('/api/whatsapp/connections', {
       token: tokenFor({ ...FIX.userA, role: 'owner' }),
