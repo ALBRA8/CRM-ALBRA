@@ -137,3 +137,11 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 - El callback OAuth de Instagram debe actualizar únicamente una conexión cuya clave global pertenezca también a la organización autenticada. Un conflicto concurrente de ownership debe abortar, nunca ejecutar un upsert global que reemplace credenciales.
 - Los workflows no deben usar teléfonos/correos suministrados libremente en el payload del evento; solo datos de un cliente resuelto en la organización del run pueden ser destinatarios.
 - El estado de entrega no debe retroceder: callbacks tardíos de fallo no reemplazan estados de éxito ya observados.
+
+
+## Seguridad de callbacks y correo
+
+- El callback OAuth elimina la cookie CSRF en todos los resultados y mantiene el mismo path de cookie.
+- El webhook WhatsApp descarta estados de entrega no reconocidos antes de persistirlos.
+- El HTML de correo de workflows escapa el cuerpo como texto plano; el asunto se limita a 200 caracteres y elimina saltos CR/LF.
+- Estas protecciones están cubiertas por tests automatizados; no sustituyen las pruebas con sandbox Meta ni una prueba SMTP controlada en staging.
