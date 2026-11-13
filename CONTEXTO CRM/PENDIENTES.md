@@ -59,6 +59,14 @@
 - [x] Persistencia/deduplicación durable por conexión mediante `ChannelWebhookEvent`; los handlers reclaman eventos y responden 500 cuando un evento sigue ocupado o falla para permitir reintento.
 - [ ] CI completa del HEAD vigente (push y pull_request); no marcar como validado hasta conclusión exitosa.
 
+## Backfill de conexiones legacy — 2026-11-13
+
+- [x] Script `scripts/backfill-channel-connections.ts` disponible con dry-run predeterminado, confirmación doble para aplicar, cifrado de credenciales, transacción por conexión, auditoría y no-destructivo.
+- [x] Fuentes soportadas: WhatsAppConnection, Integration legacy de WhatsApp/Instagram/Messenger/Telegram/TikTok cuando existe identidad y token exactos.
+- [x] Evita sobrescribir conexiones canónicas y deduplica la misma clave entre fuentes legacy; conflictos entre tenants no se reasignan.
+- [ ] Ejecutar dry-run en staging y revisar conteos/conflictos.
+- [ ] Aplicar backfill solo tras backup restaurable y aprobación explícita; nunca ejecutar en producción automáticamente.
+
 ## Continuación multicanal — estado técnico 2026-11-13
 
 - [x] Correlación WhatsApp Cloud outbox ↔ webhook mediante `biz_opaque_callback_data`, comprobando tenant/conexión/provider antes de conciliar.
