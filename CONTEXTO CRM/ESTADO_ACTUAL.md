@@ -221,3 +221,13 @@ No preparar ni abrir los PR todavía. Cerrar B2 primero: el daemon debe recibir 
 - Head final de PR #3: `5c1e73e0c99c488c843d42aff6fe8cef6928bf23`.
 - CI `43380198626`: **success**; 64/64 archivos, 580/580 pruebas; TypeScript, lint, migraciones, escáner y build aprobados.
 - Estado: cambio de contexto + lectura de sesión + lectura de datos de organización B acreditados por integración automatizada. Sigue pendiente la prueba manual/visual en navegador/staging y el ciclo de retorno al panel Super Admin.
+
+
+## Tanda de cierre multiusuario — 2026-11-13
+
+- Se unificó la política de contraseñas de invitación de equipo en 8 caracteres mínimos (igual que registro).
+- Se amplió `tests/integration/team-multitenant.test.ts` para cubrir asignación de organización desde sesión, rechazo de member sin permisos, no concesión de superadmin, listado aislado, mutaciones cross-tenant con admin de org B y revocación de JWT al cambiar rol.
+- La prueba cross-tenant se ajustó después de observar un 403 legítimo para member: ahora usa un admin de org B, verifica 404 y restaura su rol al finalizar.
+- CI run `43384116466`: success sobre commit de código `268a124ce8ee2d3a06d33978d3cc31a509efa8a8`; 65/65 archivos, 587/587 pruebas, TypeScript, lint, migraciones Prisma, escáner de secretos y build aprobados.
+- Preparación SaaS: `CONTEXTO CRM/PREPARACION_SAAS.md`. Brechas principales: multicuenta general de canales no-WA, más de una sesión Baileys por org, invitación por enlace/verificación de email, billing/entitlements, PostgreSQL y pruebas operativas en staging.
+- PR #3 continúa abierta/en draft, sin merge ni despliegue.
