@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { db } from '@/lib/db'
 import { getInboxMessages, listInbox, markInboxRead, parseInboxKey } from '@/lib/inbox'
 import { FIX } from '../setup/seed-data'
+import { createChannelOutboundIntent } from '@/lib/channel-outbox'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const connectionIds: string[] = []
@@ -97,4 +98,23 @@ describe('Inbox canónico — tenant y conexión exacta', () => {
     const updated = await db.channelConversation.findUnique({ where: { id: own.conversation.id } })
     expect(updated?.unreadCount).toBe(0)
   })
+ 
+  it('muestra intenciones queued en el hilo canónico sin exponerlas a otro tenant', async () => {
+    const own = await createConversation(FIX.orgA.id, 'QUEUE', 'queue-contact')
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: own.conversation.id,
+      clientRequestId: `queue-request-${suffix()}`,
+      body: 'Respuesta pendiente',
+    })
+
+    const ownMessages = await getInboxMessages(FIX.orgA.id, `cc:${own.conversation.id}`)
+    expect(ownMessages.some((message) =>
+      message.id === `outbox:${intent.id}` &&
+      message.deliveryStatus === 'queued' &&
+      message.text === 'Respuesta pendiente'
+    )).toBe(true)
+    expect(await getInboxMessages(FIX.orgB.id, `cc:${own.conversation.id}`)).toEqual([])
+  })
+
 })
