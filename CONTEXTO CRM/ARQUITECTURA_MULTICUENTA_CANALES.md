@@ -390,4 +390,6 @@ La migración 10 agrega `claimToken` de forma aditiva y nullable para preservar 
 
 El runbook ahora define criterios operativos: staleSending > 0 por 5 min (crítica), unknown > 0 (alta inmediata), staleProcessing > 0 por dos sondeos (alta), failed > 0 (alta), y cola queued envejecida > 10 min/creciente (media). El endpoint actual no expone antigüedad de queued ni series temporales; el monitor debe tomar snapshots o se debe ampliar la instrumentación. Estos umbrales están documentados, no desplegados como alertas.
 
-No se marca como terminada la auditoría integral del PR: quedan la validación de CI sobre el HEAD final, revisión de módulos restantes y pruebas manuales en staging.
+CI completo del HEAD `04db615ea35192aa8998e5ec04ddf88d2e8d0661` aprobado en push run `43497893649` y pull_request run `43497905739`: secret scan, migraciones SQLite limpias, TypeScript, lint ratchet, suite completa y build de producción. El endpoint de salud también expone `oldestQueuedAgeSeconds` para alertar backlog envejecido sin revelar datos de mensajes.
+
+La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento multitenant, conexiones, webhooks, outbox, migraciones, backfill, tests y documentación operativa. El alcance es amplio (271 commits/63 archivos en el último corte). Aún quedan pruebas manuales en staging, validación de proveedores Meta reales/sandbox, idempotencia/outbox de workflows/autorespuestas y revisión funcional por parte del operador. No se declara producción lista ni exactly-once.
