@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { decryptSecret } from '@/lib/crypto'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent } from '@/lib/channel-webhook-events'
 import { json } from '@/lib/api-helpers'
 import { verifyMetaSignature, parseInstagramState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
@@ -78,11 +79,12 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
+  let activeWebhookEventId: string | null = null
   try {
     const signature = req.headers.get('x-hub-signature-256')
     if (!signature) return json({ error: 'Firma X-Hub-Signature-256 requerida' }, { status: 401 })
 
-    const matchedTargets: Array<{ orgId: string; entry: IgEntry; accountId: string; accessToken: string }> = []
+    const matchedTargets: Array<{ orgId: string; entry: IgEntry; accountId: string; connectionId?: string; accessToken: string }> = []
     let body: IgWebhookBody
     try {
       body = JSON.parse(rawBody) as IgWebhookBody
@@ -93,7 +95,7 @@ export async function POST(req: NextRequest) {
     // Resolver por ID de cuenta exacto y credenciales de esa conexión.
     const connectionCandidates = await db.channelConnection.findMany({
       where: { channel: 'instagram', provider: 'meta_graph', status: 'connected' },
-      select: { organizationId: true, externalAccountId: true, credentialsEnc: true },
+      select: { id: true, organizationId: true, externalAccountId: true, credentialsEnc: true },
     })
     for (const candidate of connectionCandidates) {
       const plaintext = decryptSecret(candidate.credentialsEnc)
@@ -108,6 +110,7 @@ export async function POST(req: NextRequest) {
           orgId: candidate.organizationId,
           entry,
           accountId: candidate.externalAccountId,
+          connectionId: candidate.id,
           accessToken: credentials.accessToken,
         })
       }
@@ -145,7 +148,7 @@ export async function POST(req: NextRequest) {
     // puede agrupar entries de varias cuentas; nunca reutilizar el token de
     // una cuenta para otra ni descartar las entries posteriores.
     for (const target of matchedTargets) {
-      const { orgId, entry, accountId, accessToken } = target
+      const { orgId, entry, accountId, connectionId, accessToken } = target
       for (const messaging of entry.messaging || []) {
       const msg = messaging.message
 
@@ -153,6 +156,16 @@ export async function POST(req: NextRequest) {
       // Persistirlos como salientes: si el worker confirma después el mismo mid,
       // markChannelOutboundSent enlazará esa fila y no creará un duplicado.
       if (msg?.is_echo && msg.text && messaging.recipient?.id) {
+        if (msg.mid && connectionId) {
+          const claim = await claimChannelWebhookEvent({
+            organizationId: orgId,
+            connectionId,
+            eventKey: `message:${msg.mid}`,
+            eventType: 'instagram.echo',
+          })
+          if (!claim) continue
+          activeWebhookEventId = claim.id
+        }
         const echoText = msg.text.slice(0, 3000)
         const echoConversation = await getOrCreateChannelConversation({
           providerAccountKey: `meta:instagram:${accountId}`,
@@ -183,6 +196,10 @@ export async function POST(req: NextRequest) {
             data: { lastMessage: echoText.slice(0, 500), lastMessageAt: new Date() },
           })
         }
+        if (activeWebhookEventId) {
+          await completeChannelWebhookEvent(activeWebhookEventId)
+          activeWebhookEventId = null
+        }
         continue
       }
 
@@ -190,6 +207,16 @@ export async function POST(req: NextRequest) {
       const senderId = messaging.sender?.id
       if (!senderId) continue
       const text = msg.text.slice(0, 3000)
+      if (msg.mid && connectionId) {
+        const claim = await claimChannelWebhookEvent({
+          organizationId: orgId,
+          connectionId,
+          eventKey: `message:${msg.mid}`,
+          eventType: 'instagram.message',
+        })
+        if (!claim) continue
+        activeWebhookEventId = claim.id
+      }
 
       const conversation = await getOrCreateChannelConversation({
         providerAccountKey: `meta:instagram:${accountId}`,
@@ -273,13 +300,20 @@ export async function POST(req: NextRequest) {
           },
         })
       }
+      if (activeWebhookEventId) {
+        await completeChannelWebhookEvent(activeWebhookEventId)
+        activeWebhookEventId = null
+      }
       }
     }
 
     // Meta exige 200 rápido
     return json({ ok: true })
   } catch (err) {
+    if (activeWebhookEventId) {
+      await failChannelWebhookEvent(activeWebhookEventId, 'PROCESSING_FAILED').catch(() => undefined)
+    }
     console.error('[instagram webhook]', err)
-    return json({ ok: true, processed: false })
+    return json({ ok: false, processed: false }, { status: 500 })
   }
 }
