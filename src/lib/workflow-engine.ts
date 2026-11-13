@@ -110,7 +110,15 @@ export function evaluateConditions(conditions: Condition[] | null | undefined, r
 async function buildActionContext(orgId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   const safePayload = { ...payload }
   const clientId = payload.clientId as string | undefined
-  if (!clientId) return safePayload
+  if (!clientId) {
+    // No permitir que un payload de evento arbitrario inyecte destinatarios
+    // de canales. Solo un cliente resuelto dentro del tenant puede aportar
+    // teléfono/email para acciones externas.
+    delete safePayload.phone
+    delete safePayload.email
+    delete safePayload.clientName
+    return safePayload
+  }
   try {
     // Nunca enriquecer un workflow con datos de un cliente de otro tenant,
     // incluso si un trigger interno recibe un clientId ajeno o manipulado.
