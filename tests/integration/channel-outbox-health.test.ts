@@ -43,6 +43,17 @@ describe('GET /api/internal/channel-outbox — aggregate health', () => {
     expect(response.status).toBe(503)
   })
 
+  it('reports workflow sends hard-disabled even if the legacy opt-in flag is requested', async () => {
+    const secret = 'x'.repeat(40)
+    process.env.CHANNEL_OUTBOX_WORKER_SECRET = secret
+    process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = 'true'
+    const response = await GET(request(secret))
+    const body = await response.json() as Record<string, unknown>
+    expect(response.status).toBe(200)
+    expect(body.workflowExternalSendsEnabled).toBe(false)
+    expect(body.workflowExternalSendsFlagRequested).toBe(true)
+  })
+
   it('returns only aggregate counts and reports disabled dispatch without exposing records', async () => {
     const secret = 'x'.repeat(40)
     process.env.CHANNEL_OUTBOX_WORKER_SECRET = secret
@@ -62,7 +73,7 @@ describe('GET /api/internal/channel-outbox — aggregate health', () => {
     expect(body).toHaveProperty('webhookEvents')
     expect(body).toHaveProperty('connectedMetaConnections')
     expect(body).toHaveProperty('sampledAt')
-    expect(Object.keys(body).sort()).toEqual(['autoReplyEnabled', 'connectedMetaConnections', 'outbox', 'sampledAt', 'webhookEvents', 'workerEnabled', 'workflowExternalSendsEnabled', 'whatspowerBridgeEnabled'].sort())
+    expect(Object.keys(body).sort()).toEqual(['autoReplyEnabled', 'connectedMetaConnections', 'outbox', 'sampledAt', 'webhookEvents', 'workerEnabled', 'workflowExternalSendsEnabled', 'workflowExternalSendsFlagRequested', 'whatspowerBridgeEnabled'].sort())
     expect(JSON.stringify(body)).not.toContain(secret)
   })
 })
