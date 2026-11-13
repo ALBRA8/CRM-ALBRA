@@ -73,3 +73,19 @@ Ambas líneas de trabajo se conservan en el historial:
 - B3 tiene validación por organización en el servidor 2A y credenciales por org en ULTRA, pero no se acreditó una prueba entre procesos reales en esta rama.
 - `contracts-integration.test.ts` usa stubs para daemon y 2A; no es integración real de los tres servicios. No se certifica 15/15 real.
 - Próximo paso: corregir B2 en daemon + journal con deduplicación durable scoped por org y comportamiento no-reenvío para PENDING/UNCERTAIN; agregar crash-window test y luego ejecutar integración real multi-proceso. No abrir PR hasta cerrar el bloqueo.
+
+## 2026-11-13 — Selector multiempresa y auditoría de sesión superadmin (PR #3)
+
+- Repositorio: `ALBRA8/CRM-ALBRA`.
+- Rama de trabajo: `fix/migration-safety-audit`; destino previsto: `main`.
+- Pull Request: [#3 — feat(super-admin): conectar selector de organizaciones](https://github.com/ALBRA8/CRM-ALBRA/pull/3). Estado registrado: abierta/en draft; no integrada.
+- Autenticación (`src/lib/auth.ts`): se reforzó la validación de la sesión contra la base de datos, usuario activo, `tokenVersion`, rol vigente y organización activa. El contexto entre organizaciones queda reservado al superadmin.
+- Endpoint (`src/app/api/super/switch-organization/route.ts`): se incorporó el cambio protegido de organización para superadmin y emisión de un token de sesión actualizado.
+- Cliente API (`src/lib/api.ts`): se añadió `switchSuperOrganization(organizationId)`.
+- Interfaz (`src/components/super/super-page.tsx`): se conectó la acción **Ingresar** en la tabla de organizaciones; sincroniza el token con el cliente API y el store, vuelve a consultar `/me`, actualiza el usuario y navega al dashboard. Se bloquea el cambio simultáneo y no se permite ingresar a organizaciones inactivas.
+- Pruebas (`tests/integration/superadmin-organization-switch.test.ts`): se añadieron escenarios para cambio de organización, denegación a usuario normal y organización inexistente (404).
+- La PR #3 incluye además cambios previos de esta rama: workflow CI, Docker/entrypoint, guardas de BD, documentación de migraciones e índices de auditoría, y pruebas de `db-guard`. El conjunto reportado en la PR fue de 15 archivos.
+- Verificación de CI consultada para el SHA `27870abcc9b6c27e843ff17a48dde18068c0c0d6`: no se encontraron statuses ni ejecuciones de workflow asociadas en esa consulta. No equivale a una ejecución satisfactoria.
+- **Estado de validación:** build y pruebas de esta versión aún no verificados de forma reproducible en esta sesión. No declarar funcionalidad al 100 %.
+- **Estado de entrega:** cambios publicados en la rama y contenidos en la PR; no integrados en `main`, no desplegados en producción. No se modificó producción.
+- Siguiente paso: verificar el head actual de la PR, ejecutar CI/build/pruebas, corregir fallos y revisar aislamiento positivo/negativo antes de integrar. No hacer merge ni despliegue sin validación y autorización.
