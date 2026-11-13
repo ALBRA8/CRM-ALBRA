@@ -108,8 +108,9 @@ describe('aislamiento de contexto en acciones workflow', () => {
       expect(data.email).toBeNull()
       expect(data.phone).toBeNull()
       expect(data.clientId).toBeNull()
-      await db.notification.deleteMany({ where: { organizationId: 'org-a', body: marker } })
-      await db.timelineEvent.deleteMany({ where: { organizationId: 'org-a', description: marker } })
+      await db.notification.deleteMany({ where: { id: notification!.id } })
+      const emailTimeline = await db.timelineEvent.findFirst({ where: { organizationId: 'org-a', type: 'email', title: { contains: 'destinatario no disponible' } }, orderBy: { createdAt: 'desc' } })
+      if (emailTimeline) await db.timelineEvent.delete({ where: { id: emailTimeline.id } })
     } finally {
       await db.automation.delete({ where: { id: auto.id } })
       if (previousFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
@@ -148,6 +149,8 @@ describe('aislamiento de contexto en acciones workflow', () => {
       })
       expect(timeline).not.toBeNull()
       expect(timeline!.clientId).toBeNull()
+      await db.notification.deleteMany({ where: { id: notification!.id } })
+      await db.timelineEvent.deleteMany({ where: { id: timeline!.id } })
     } finally {
       await db.automation.delete({ where: { id: auto.id } })
     }
