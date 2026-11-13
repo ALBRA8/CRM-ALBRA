@@ -343,10 +343,14 @@ export function InboxPage() {
                         {m.deliveryStatus && (
                           <span className={cn(
                             'block text-[10px] mt-1 font-medium',
-                            m.deliveryStatus === 'failed' ? 'text-red-200' : m.deliveryStatus === 'unknown' ? 'text-amber-200' : 'text-emerald-100'
+                            m.deliveryStatus === 'failed' || m.deliveryStatus === 'delivery_failed' ? 'text-red-200' : m.deliveryStatus === 'unknown' ? 'text-amber-200' : 'text-emerald-100'
                           )}>
                             {m.deliveryStatus === 'queued' ? 'En cola · aún no enviado' :
                               m.deliveryStatus === 'sending' ? 'En proceso de entrega' :
+                              m.deliveryStatus === 'sent' ? 'Aceptado por el proveedor' :
+                              m.deliveryStatus === 'delivered' ? 'Entregado' :
+                              m.deliveryStatus === 'read' ? 'Leído' :
+                              m.deliveryStatus === 'delivery_failed' ? 'No se pudo entregar' :
                               m.deliveryStatus === 'failed' ? 'Rechazado · no enviado' :
                               'Resultado incierto · verificar antes de reenviar'}
                           </span>
