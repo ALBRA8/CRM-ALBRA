@@ -82,10 +82,7 @@ export async function POST(req: NextRequest) {
     const signature = req.headers.get('x-hub-signature-256')
     if (!signature) return json({ error: 'Firma X-Hub-Signature-256 requerida' }, { status: 401 })
 
-    let matchedOrgId: string | null = null
-    let matchedEntry: IgEntry | null = null
-    let matchedAccountId: string | null = null
-    let matchedAccessToken: string | null = null
+    const matchedTargets: Array<{ orgId: string; entry: IgEntry; accountId: string; accessToken: string }> = []
     let body: IgWebhookBody
     try {
       body = JSON.parse(rawBody) as IgWebhookBody
@@ -105,17 +102,20 @@ export async function POST(req: NextRequest) {
       try { credentials = JSON.parse(plaintext) as typeof credentials } catch { continue }
       if (!credentials.appSecret || !credentials.accessToken) continue
       if (!verifyMetaSignature(rawBody, credentials.appSecret, signature)) continue
-      const entry = (body.entry || []).find((item) => item.id === candidate.externalAccountId)
-      if (!entry) continue
-      matchedOrgId = candidate.organizationId
-      matchedEntry = entry
-      matchedAccountId = candidate.externalAccountId
-      matchedAccessToken = credentials.accessToken
-      break
+      const entries = (body.entry || []).filter((item) => item.id === candidate.externalAccountId)
+      for (const entry of entries) {
+        if (matchedTargets.some((target) => target.accountId === candidate.externalAccountId && target.orgId === candidate.organizationId)) continue
+        matchedTargets.push({
+          orgId: candidate.organizationId,
+          entry,
+          accountId: candidate.externalAccountId,
+          accessToken: credentials.accessToken,
+        })
+      }
     }
 
     // Fallback de compatibilidad: solo cuentas no migradas al modelo canónico.
-    if (!matchedOrgId) {
+    if (matchedTargets.length === 0) {
       const legacyCandidates = await db.integration.findMany({
         where: { instagramTokenEnc: { not: null } },
         select: { organizationId: true, instagramTokenEnc: true, instagramAccountId: true },
@@ -124,22 +124,30 @@ export async function POST(req: NextRequest) {
         const state = parseInstagramState(candidate.instagramTokenEnc)
         if (!state.webhookSecret || !candidate.instagramAccountId) continue
         if (!verifyMetaSignature(rawBody, state.webhookSecret, signature)) continue
-        const entry = (body.entry || []).find((item) => item.id === candidate.instagramAccountId)
-        if (!entry) continue
-        matchedOrgId = candidate.organizationId
-        matchedEntry = entry
-        matchedAccountId = candidate.instagramAccountId
-        matchedAccessToken = state.token || null
-        break
+        const entries = (body.entry || []).filter((item) => item.id === candidate.instagramAccountId)
+        for (const entry of entries) {
+          if (matchedTargets.some((target) => target.accountId === candidate.instagramAccountId && target.orgId === candidate.organizationId)) continue
+          if (!state.token) continue
+          matchedTargets.push({
+            orgId: candidate.organizationId,
+            entry,
+            accountId: candidate.instagramAccountId,
+            accessToken: state.token,
+          })
+        }
       }
     }
 
-    if (!matchedOrgId || !matchedEntry || !matchedAccountId || !matchedAccessToken) {
+    if (matchedTargets.length === 0) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
-    const orgId = matchedOrgId
 
-    for (const messaging of matchedEntry.messaging || []) {
+    // Procesar cada cuenta destinataria por separado. Un mismo POST de Meta
+    // puede agrupar entries de varias cuentas; nunca reutilizar el token de
+    // una cuenta para otra ni descartar las entries posteriores.
+    for (const target of matchedTargets) {
+      const { orgId, entry, accountId, accessToken } = target
+      for (const messaging of entry.messaging || []) {
       const msg = messaging.message
       if (!msg?.text || msg.is_echo) continue
       const senderId = messaging.sender?.id
@@ -183,7 +191,7 @@ export async function POST(req: NextRequest) {
 
       // Auto-respuesta IA
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      if (matchedAccessToken && (nicho?.autoReplyEnabled ?? true)) {
+      if (accessToken && (nicho?.autoReplyEnabled ?? true)) {
         await llmReplyOrNotification({
           orgId,
           clientId: client?.id || null,
@@ -193,7 +201,7 @@ export async function POST(req: NextRequest) {
           nichoContext: await buildNichoContext(orgId),
           send: async (reply) => {
             const { sendInstagramGraphMessage } = await import('@/lib/integrations')
-            const sent = await sendInstagramGraphMessage({ token: matchedAccessToken!, accountId: matchedAccountId!, recipientId: senderId, text: reply })
+            const sent = await sendInstagramGraphMessage({ token: accessToken, accountId, recipientId: senderId, text: reply })
             await recordTimelineEvent({
               orgId,
               clientId: client?.id || null,
@@ -205,6 +213,7 @@ export async function POST(req: NextRequest) {
             })
           },
         })
+      }
       }
     }
 
