@@ -57,7 +57,7 @@
 - [x] Carrera WhatsApp Cloud cubierta mediante `biz_opaque_callback_data` y conciliación de status callbacks antes/después del ACK.
 - [x] Fixtures firmados de POST batch para WhatsApp (dos tenants + destino desconectado) e Instagram (dos cuentas + cuenta desconectada), con replay deduplicado.
 - [x] Persistencia/deduplicación durable por conexión mediante `ChannelWebhookEvent`; los handlers reclaman eventos y responden 500 cuando un evento sigue ocupado o falla para permitir reintento.
-- [ ] CI completa del HEAD vigente (push y pull_request); no marcar como validado hasta conclusión exitosa.
+- [x] CI completa del HEAD `61c35988a54ee3182169122de0681c6724454940` (push y pull_request) — éxito: TypeScript, lint ratchet, migraciones limpias, suite de tests y build de producción.
 
 ## Backfill de conexiones legacy — 2026-11-13
 
