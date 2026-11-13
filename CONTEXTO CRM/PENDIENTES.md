@@ -62,3 +62,37 @@ Cerrar cada pendiente con commit/PR, evidencia de pruebas y revisión de segurid
 3. **`npm audit --omit=dev`**: paso de CI no bloqueante; hacer triage y elevar a bloqueante tras revisar hallazgos.
 4. **Trabajo concurrente de terceros**: existe WIP sin seguimiento (chat/agent) que incumple el gate de independencia del chaleco (`tests/unit/harness-independence.test.ts` falla con ese WIP presente y pasa 4/4 en checkout limpio). Coordinar con su autor: o se integra correctamente o se retira.
 5. **Migración Prisma**: `User.tokenVersion` se aplica con `prisma db push` (BD actual ya la tiene). Si se adoptan migraciones formales, crear la migración correspondiente (reversible: DROP COLUMN).
+
+
+## Plan de cierre y evolución — 2026-11-12
+
+**Propósito:** continuar desde la base existente y cerrar brechas verificables. Esta sección complementa el inventario anterior; no sustituye ni elimina entradas históricas.
+
+### Base que se conserva
+- Multiusuario en CRM-ALBRA: usuarios, roles y permisos por organización. No reconstruir.
+- Multiempresa/multi-tenant: organización como límite de propiedad y aislamiento en los tres repositorios. No reconstruir; mantener pruebas negativas entre organizaciones.
+- Capacidades conversacionales, campañas e integraciones existentes: reutilizar y ampliar solo donde la evidencia demuestre una brecha.
+
+### Plan priorizado
+1. **Línea base común de los tres repositorios.** Registrar SHA de cada rama objetivo, PR/ramas de evolución, CI y pruebas reproducibles. Distinguir explícitamente `main`, ramas repair/fix y `stable-production`; no asumir que cambios en ramas están integrados o desplegados.
+   - Aceptación: matriz por repositorio con commit, estado de CI, pruebas ejecutadas, alcance (mock/real) y estado de integración/despliegue.
+2. **Contratos e integración CRM-ALBRA ↔ WHATSPOWER ↔ WHATSPOWER-ULTRA.** Verificar identidad de organización, autorización, eventos, webhooks, bajas/supresiones, reintentos e idempotencia de extremo a extremo.
+   - Aceptación: pruebas reproducibles con procesos reales separados para los flujos críticos; mocks identificados como tales. Cerrar especialmente la ventana de duplicación del envío WhatsApp señalada en la revisión B2: si no puede demostrarse deduplicación externa, mantener el resultado UNCERTAIN y prohibir reenvío automático sin reconciliación.
+3. **Seguridad y cierre operativo.** Unificar política de contraseñas y permisos; revisar/rotar secretos históricos según el procedimiento aprobado; resolver baseline de lint; formalizar migraciones y respaldos/restauración.
+   - Aceptación: evidencias de escaneo, pruebas de autorización, rotación confirmada, migración ensayada y restauración comprobada. Las acciones que reescriban historial Git o requieran force-push necesitan autorización expresa del propietario.
+4. **Multicuenta y multicanal.** Diseñar y migrar sin pérdida desde la configuración actual uno-a-uno hacia conexiones múltiples por organización y canal. Cada conexión debe tener credenciales, OAuth/sesión, webhook, estado y ciclo de revocación propios. Validar resolución inequívoca de cuenta entrante y selección explícita de cuenta saliente.
+   - Aceptación: pruebas de dos o más cuentas del mismo canal en una organización, sin cruces de mensajes, credenciales ni eventos. WhatsApp multi-sesión reportado/verificado en ramas concretas no equivale por sí solo a multicuenta general para todas las plataformas.
+5. **Identidades virtuales y memoria aislada.** Definir una entidad de perfil/persona/marca dentro de la organización (sin confundirla con usuario humano ni crear organizaciones artificiales por defecto). Vincular a cada perfil sus cuentas de canal, número, correo, clientes, conversaciones, preferencias y memoria.
+   - Aceptación: pruebas con al menos dos perfiles que demuestren aislamiento de clientes, historial, memoria, credenciales y respuestas; permisos administrativos y trazabilidad de cambios.
+6. **Preparación SaaS/producción.** Decidir base de datos de producción y estrategia de despliegue; evaluar migración desde SQLite, concurrencia, observabilidad, cuotas/onboarding, retención, exportación/eliminación, SLO, RPO/RTO y carga.
+   - Aceptación: entorno de staging reproducible, migración y rollback ensayados, backup/restauración y pruebas de carga; no declarar producción lista solo por CI verde.
+
+### Reglas de ejecución
+- No reescribir módulos funcionales ni reconstruir multiusuario/multiempresa sin evidencia de defecto.
+- Antes de modificar, identificar repositorio, rama, archivos y pruebas afectadas; preservar cambios ajenos y el historial.
+- Cada tarea se cierra con commit/PR, evidencia de pruebas y revisión; separar implementado, probado, integrado y desplegado.
+- No desplegar, activar envíos reales ni reescribir historial sin autorización expresa.
+- Actualizar este documento y ROADMAP.md con fecha, SHA y evidencia al cerrar cada bloque.
+
+### Criterio de estado
+La base multiusuario y multiempresa está implementada según el contexto y las auditorías registradas. La preparación de producción, la integración real de extremo a extremo, la multicuenta general y la gestión de identidades virtuales permanecen sujetas a los criterios de aceptación anteriores. No se declara ninguna de estas últimas como terminada por el mero hecho de existir modelos, documentación, mocks o CI satisfactorio.
