@@ -262,4 +262,20 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     expect(await claimChannelOutboundMessage(intent.id)).toBeNull()
   })
 
+ 
+  it('rejects enqueue when provider and canonical channel do not match', async () => {
+    const conversation = await createConversation()
+    await db.channelConnection.update({
+      where: { id: conversation.connectionId },
+      data: { provider: 'meta_cloud' },
+    })
+    await expect(createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'request-provider-mismatch',
+      body: 'No debe encolarse',
+    })).rejects.toMatchObject({ code: 'NOT_SENDABLE' })
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(0)
+  })
+
 })
