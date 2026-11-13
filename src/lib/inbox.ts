@@ -416,7 +416,7 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
       where: { id: parsed.id, organizationId: orgId },
       select: { id: true, channel: true, connection: { select: { status: true, channel: true } } },
     })
-    if (!conversation || conversation.connection.status !== 'connected') return []
+    if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return []
     const rows = await db.channelMessage.findMany({
       where: { conversationId: conversation.id },
       orderBy: { createdAt: 'desc' },
