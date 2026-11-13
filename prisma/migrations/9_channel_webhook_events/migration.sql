@@ -14,9 +14,11 @@ CREATE TABLE "ChannelWebhookEvent" (
   "updatedAt" DATETIME NOT NULL,
   CONSTRAINT "ChannelWebhookEvent_organizationId_fkey"
     FOREIGN KEY ("organizationId") REFERENCES "Organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT "ChannelWebhookEvent_connectionId_fkey"
-    FOREIGN KEY ("connectionId") REFERENCES "ChannelConnection" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT "ChannelWebhookEvent_connectionId_organizationId_fkey"
+    FOREIGN KEY ("connectionId", "organizationId") REFERENCES "ChannelConnection" ("id", "organizationId") ON DELETE CASCADE ON UPDATE CASCADE
 );
+CREATE UNIQUE INDEX "ChannelConnection_id_organizationId_key"
+  ON "ChannelConnection"("id", "organizationId");
 CREATE UNIQUE INDEX "ChannelWebhookEvent_connectionId_eventKey_key"
   ON "ChannelWebhookEvent"("connectionId", "eventKey");
 CREATE INDEX "ChannelWebhookEvent_organizationId_receivedAt_idx"
