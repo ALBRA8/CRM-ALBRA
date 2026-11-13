@@ -72,6 +72,24 @@ describe('Channel webhook event ledger', () => {
     expect(stored).toMatchObject({ status: 'processing', attemptCount: 2, lastErrorCode: null })
   })
 
+  it('reclaims a processing lease abandoned by a crashed handler', async () => {
+    const connection = await createConnection()
+    const input = {
+      organizationId: FIX.orgA.id,
+      connectionId: connection.id,
+      eventKey: 'message:wamid_stale_123',
+      eventType: 'whatsapp.message',
+    }
+    const first = await claimChannelWebhookEvent(input)
+    await db.channelWebhookEvent.update({
+      where: { id: first!.id },
+      data: { updatedAt: new Date(Date.now() - 10 * 60 * 1000) },
+    })
+    const retry = await claimChannelWebhookEvent(input)
+    expect(retry?.id).toBe(first?.id)
+    expect((await db.channelWebhookEvent.findUnique({ where: { id: first!.id } }))?.attemptCount).toBe(2)
+  })
+
   it('rejects malformed event keys and never stores raw payloads', async () => {
     const connection = await createConnection()
     await expect(claimChannelWebhookEvent({
