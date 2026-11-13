@@ -43,6 +43,7 @@ describe('GET /api/internal/channel-outbox — aggregate health', () => {
     expect(response.status).toBe(200)
     expect(body.workerEnabled).toBe(false)
     expect(body).toHaveProperty('outbox')
+    expect((body.outbox as Record<string, unknown>).oldestQueuedAgeSeconds).toBeTypeOf('number')
     expect(body).toHaveProperty('webhookEvents')
     expect(body).toHaveProperty('connectedMetaConnections')
     expect(body).toHaveProperty('sampledAt')
