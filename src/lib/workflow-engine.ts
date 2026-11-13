@@ -108,8 +108,9 @@ export function evaluateConditions(conditions: Condition[] | null | undefined, r
  * post-venta disparadas por opportunity_stage_changed).
  */
 async function buildActionContext(orgId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const safePayload = { ...payload }
   const clientId = payload.clientId as string | undefined
-  if (!clientId) return { ...payload }
+  if (!clientId) return safePayload
   try {
     // Nunca enriquecer un workflow con datos de un cliente de otro tenant,
     // incluso si un trigger interno recibe un clientId ajeno o manipulado.
@@ -117,10 +118,17 @@ async function buildActionContext(orgId: string, payload: Record<string, unknown
       where: { id: clientId, organizationId: orgId },
       select: { name: true, phone: true, email: true },
     })
-    if (!client) return { ...payload }
-    return { ...payload, clientName: client.name, name: client.name, phone: client.phone, email: client.email }
+    if (!client) {
+      // El ID foráneo tampoco debe llegar a acciones que creen timeline,
+      // oportunidades o notificaciones dentro de la organización actual.
+      delete safePayload.clientId
+      return safePayload
+    }
+    return { ...safePayload, clientName: client.name, name: client.name, phone: client.phone, email: client.email }
   } catch {
-    return { ...payload }
+    // Ante fallo de lectura, fallar cerrado respecto al vínculo con el cliente.
+    delete safePayload.clientId
+    return safePayload
   }
 }
 
