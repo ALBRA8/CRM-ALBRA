@@ -89,7 +89,7 @@ describe('workflow trigger idempotency for channel messages', () => {
     const notification = await db.notification.findFirst({
       where: {
         organizationId: FIX.orgA.id,
-        title: 'Mensaje whatsapp PENDIENTE de envío (fallo de canal)',
+        title: 'Mensaje whatsapp PENDIENTE (outbox workflow no configurada)',
       },
       orderBy: { createdAt: 'desc' },
     })
