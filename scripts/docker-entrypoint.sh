@@ -3,7 +3,7 @@
 # CRM ALBRA — Entrypoint de Docker (POSIX sh, sin bash)
 #
 # Roles (primer argumento):
-#   app    (default) → sincroniza el esquema Prisma con la BD SQLite y
+#   app    (default) → aplica las migraciones Prisma pendientes en la BD SQLite y
 #                      arranca el servidor Next.js standalone (server.js).
 #   daemon           → espera a que el esquema exista y arranca el daemon
 #                      de WhatsApp (src/whatsapp-daemon/daemon.mjs, :3002).
@@ -19,7 +19,7 @@ mkdir -p /app/db
 if [ "$ROLE" = "daemon" ]; then
   # Defensa extra: en Compose el orden ya lo garantiza
   # `depends_on: app: condition: service_healthy` (app solo está sano
-  # después del db push). Esto cubre `docker run` manuales o reinicios
+  # después de migrate deploy). Esto cubre `docker run` manuales o reinicios
   # fuera de Compose: evita que better-sqlite3 abra una BD sin esquema.
   i=0
   until node scripts/docker-wait-db.mjs >/dev/null 2>&1; do
@@ -46,17 +46,13 @@ fi
 #   se añade --accept-data-loss (misma conducta que antes de este hardening).
 #   Desactiva por completo con SKIP_DB_PUSH=1 (BD ya en producción):
 #     docker compose exec app npx prisma db push
-if [ "${SKIP_DB_PUSH:-0}" != "1" ]; then
-  if [ "${ALLOW_DATA_LOSS:-0}" = "1" ]; then
-    echo "[entrypoint] Sincronizando esquema Prisma (db push --accept-data-loss)..."
-    npx prisma db push --skip-generate --accept-data-loss
-  else
-    echo "[entrypoint] Sincronizando esquema Prisma (db push, FAIL-CLOSED ante pérdida de datos)..."
-    if ! npx prisma db push --skip-generate; then
-      echo "[entrypoint] ERROR: el cambio de esquema exigiría destruir datos." >&2
-      echo "[entrypoint] Haz BACKUP del volumen db-data y re-ejecuta con ALLOW_DATA_LOSS=1 si aceptas la pérdida." >&2
-      exit 1
-    fi
+if [ "${SKIP_DB_MIGRATE:-0}" != "1" ]; then
+  echo "[entrypoint] Aplicando migraciones Prisma pendientes (migrate deploy)..."
+  if ! node scripts/db-guard.mjs migrate; then
+    echo "[entrypoint] ERROR: migrate deploy no pudo aplicar las migraciones." >&2
+    echo "[entrypoint] Si la BD ya tenía esquema previo y no tiene _prisma_migrations, no marques el baseline automáticamente." >&2
+    echo "[entrypoint] Haz backup, compara el esquema con 0_baseline y sigue docs/MIGRACIONES.md (P3005)." >&2
+    exit 1
   fi
 fi
 
