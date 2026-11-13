@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
 import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
-import { markChannelOutboundSent, updateChannelMessageDeliveryStatus } from '@/lib/channel-outbox'
+import { createChannelOutboundIntent, markChannelOutboundSent, updateChannelMessageDeliveryStatus } from '@/lib/channel-outbox'
 import { json } from '@/lib/api-helpers'
 import { decryptSecret } from '@/lib/crypto'
 import { safeEqual } from '@/lib/internal-org-auth'
@@ -506,26 +506,32 @@ export async function POST(req: NextRequest) {
             handoffKeywords: await getHandoffKeywords(matchedOrgId),
             nichoContext: await buildNichoContext(matchedOrgId),
             send: async (reply) => {
-              if (matchedCloudToken && matchedPhoneId) {
-                const sent = await sendWhatsAppCloud({ token: matchedCloudToken, phoneId: matchedPhoneId, to: phone, text: reply })
+              // Persistir primero en la outbox canónica. El webhook nunca llama
+              // directamente al proveedor: el worker separado decide cuándo despachar.
+              if (channelConversation && message.id && matchedCloudToken && matchedPhoneId) {
+                const intent = await createChannelOutboundIntent({
+                  organizationId: matchedOrgId,
+                  conversationId: channelConversation.id,
+                  clientRequestId: `autoreply:${message.id}`,
+                  body: reply,
+                })
                 await recordTimelineEvent({
                   orgId: matchedOrgId,
                   clientId: client?.id || null,
                   type: 'whatsapp',
-                  title: 'Respuesta automática del agente IA',
+                  title: intent.status === 'sent' ? 'Respuesta automática del agente IA' : 'Respuesta automática en cola (outbox)',
                   description: reply.slice(0, 500),
-                  metadata: { to: phone, direction: 'out', delivered: sent.ok, via: 'cloud-api' },
+                  metadata: { to: phone, direction: 'out', delivered: intent.status === 'sent', queued: intent.status === 'queued', outboundId: intent.id, via: 'outbox' },
                   source: 'agent',
                 })
               } else {
-                // Sin Cloud token: la respuesta queda registrada en el timeline para envío manual
                 await recordTimelineEvent({
                   orgId: matchedOrgId,
                   clientId: client?.id || null,
                   type: 'whatsapp',
-                  title: 'Respuesta sugerida por el agente IA (sin envío automático)',
+                  title: 'Respuesta sugerida por el agente IA (requiere revisión manual)',
                   description: reply.slice(0, 500),
-                  metadata: { to: phone, direction: 'out', delivered: false, via: 'timeline' },
+                  metadata: { to: phone, direction: 'out', delivered: false, queued: false, via: 'timeline' },
                   source: 'agent',
                 })
               }
