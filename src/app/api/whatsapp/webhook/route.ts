@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
 import { markChannelOutboundSent, updateChannelMessageDeliveryStatus } from '@/lib/channel-outbox'
 import { json } from '@/lib/api-helpers'
 import { decryptSecret } from '@/lib/crypto'
@@ -280,7 +280,12 @@ export async function POST(req: NextRequest) {
             eventKey: `status:${status.id}:${status.status}`,
             eventType: 'whatsapp.status',
           })
-          if (!claim) continue
+          if (!claim) {
+            const eventKey = `status:${status.id}:${status.status}`
+            const state = await getChannelWebhookEventStatus(matchedCanonicalConnectionId, eventKey)
+            if (state === 'processed') continue
+            throw new Error('WEBHOOK_EVENT_BUSY')
+          }
           activeWebhookEventId = claim.id
         }
         await recordTimelineEvent({
@@ -375,7 +380,12 @@ export async function POST(req: NextRequest) {
             eventKey: `message:${message.id}`,
             eventType: 'whatsapp.message',
           })
-          if (!claim) continue
+          if (!claim) {
+            const eventKey = `message:${message.id}`
+            const state = await getChannelWebhookEventStatus(matchedCanonicalConnectionId, eventKey)
+            if (state === 'processed') continue
+            throw new Error('WEBHOOK_EVENT_BUSY')
+          }
           activeWebhookEventId = claim.id
         }
   
