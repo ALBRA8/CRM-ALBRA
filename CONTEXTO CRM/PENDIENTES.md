@@ -281,3 +281,18 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Reportar `pending: true`, `queued: false` y `WORKFLOW_OUTBOX_NOT_CONFIGURED` para no afirmar que el mensaje está encolado.
 - [x] Endpoint de salud informa envío workflow efectivo deshabilitado y el flag legacy solicitado por separado.
 - [ ] Implementar outbox/dispatcher durable para Baileys, Telegram y SMTP antes de reconsiderar el bloqueo.
+
+
+## Outbox durable de workflows — 2026-11-13 (implementación en rama)
+
+- [x] Añadir modelo/migración WorkflowOutboundMessage con aislamiento por organización, clave idempotente por run/paso y payload cifrado.
+- [x] Integrar send_whatsapp, send_telegram y send_email del motor: persistir antes de cualquier red y registrar estado en notificación/Timeline.
+- [x] Implementar worker pull autenticado en POST /api/internal/workflow-outbox, con flag independiente apagado por defecto.
+- [x] Añadir adaptadores Baileys multi-org, Telegram por Integration de la organización y SMTP por Settings/fallback configurado.
+- [x] Asegurar que los resultados ambiguos y leases vencidos pasan a unknown; nunca reencolar automáticamente.
+- [x] Añadir pruebas de integración para cifrado, ausencia de llamadas de red durante enqueue, estado del run e idempotencia.
+- [ ] Ejecutar migración y pruebas de worker en staging con destinatarios sandbox/consentidos; verificar conciliación manual de unknown.
+- [ ] Configurar scheduler externo y monitorización solo después de validar staging y recibir autorización operativa.
+- [ ] Mantener WORKFLOW_OUTBOX_DISPATCH_ENABLED=false y no configurar WORKFLOW_OUTBOX_WORKER_SECRET hasta completar las pruebas y la autorización.
+
+Nota: WORKFLOW_EXTERNAL_SENDS_ENABLED queda como flag legacy ignorado. El nuevo gate operativo es WORKFLOW_OUTBOX_DISPATCH_ENABLED, que no se activa por esta implementación.
