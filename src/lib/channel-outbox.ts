@@ -246,7 +246,7 @@ export async function updateChannelMessageDeliveryStatus(input: {
       return message
     }
     metadata.deliveryStatus = input.status
-    if (input.timestamp && /^\\d{1,12}$/.test(input.timestamp)) metadata.deliveryStatusAt = input.timestamp
+    if (input.timestamp && /^\d{1,12}$/.test(input.timestamp)) metadata.deliveryStatusAt = input.timestamp
     return tx.channelMessage.update({
       where: { id: message.id },
       data: { metadata: JSON.stringify(metadata) },
