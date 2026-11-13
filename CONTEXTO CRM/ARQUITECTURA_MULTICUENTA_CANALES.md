@@ -170,7 +170,7 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - La conciliación manual de `unknown → sent` aplica la misma vinculación segura.
 - El webhook de Instagram ya no descarta silenciosamente los eventos `is_echo`: los persiste como mensajes salientes usando el destinatario como contacto y el `mid` de Meta. Así, si el echo llega antes del ACK del worker, la confirmación posterior enlaza la fila existente.
 - Se añadió una prueba de integración que simula el orden echo-antes-de-ACK y comprueba que queda una sola fila y se enlaza al outbox.
-- Límite conocido: esto cierra la carrera para echoes de Instagram con `mid` coincidente; no demuestra deduplicación exactly-once de todos los webhooks ni cubre todavía echoes/estados equivalentes de WhatsApp. La CI del HEAD `61c35988a54ee3182169122de0681c6724454940` terminó correctamente (push y pull_request, incluidos tests y build).
+- Límite conocido: esto cierra la carrera para echoes de Instagram con `mid` coincidente; no demuestra exactly-once de todos los tipos de evento; WhatsApp Cloud sí tiene correlación de status callbacks y deduplicación batch probada. La CI del HEAD `61c35988a54ee3182169122de0681c6724454940` terminó correctamente (push y pull_request, incluidos tests y build).
 
 ## Estado de implementación
 
@@ -232,7 +232,7 @@ A fecha 2026-11-13, inspección de `src/lib/inbox.ts`, `src/app/api/inbox/route.
 
 ### Orden de trabajo y pruebas obligatorias
 
-1. Confirmar CI del HEAD actual y registrar SHA exacto; no extrapolar CI de un commit padre.
+1. [x] CI completa confirmada en HEAD `61c35988a54ee3182169122de0681c6724454940` (push y pull_request): TypeScript, lint, migraciones, suite y build exitosos. Los commits posteriores son solo documentación.
 2. Documentar cambios y reglas aquí antes de modificar código sustantivo.
 3. Añadir parser y tests unitarios de key canónica; probar key malformada.
 4. Migrar lectura/listado canónico con aislamiento tenant; pruebas para mismo contacto en dos conexiones y dos tenants.
@@ -240,7 +240,7 @@ A fecha 2026-11-13, inspección de `src/lib/inbox.ts`, `src/app/api/inbox/route.
 6. Implementar envío por adaptador canónico WhatsApp Cloud e Instagram primero; pruebas mockeadas que aseguren que token/endpoint corresponden a la conexión exacta. No usar daemon Baileys para WhatsApp Cloud salvo que el provider de esa conexión sea Baileys.
 7. Persistir salientes y probar fallo proveedor, duplicados y recuperación; después integrar UI y `listClientChannels`.
 8. Añadir Facebook, Telegram y TikTok solo con adaptadores oficiales/permisos validados, respetando prioridad y limitaciones.
-9. Ejecutar CI completa (migraciones SQLite limpias, TypeScript, lint, suite y build) sobre el nuevo HEAD. Actualizar este documento con SHA/run y limitaciones reales.
+9. [x] CI completa ejecutada sobre el HEAD de código `61c35988a54ee3182169122de0681c6724454940`; actualizar de nuevo si se modifica código.
 10. Mantener PR en draft y sin merge/deploy hasta autorización.
 
 ### CI y estado del PR verificados
@@ -354,7 +354,7 @@ Sobre el estado descrito en las secciones anteriores, se amplió `tests/integrat
 - Una pareja provider/canal incompatible devuelve 409, sin intención y sin fallback al envío legacy.
 - Repetir la misma solicitud con el mismo requestId devuelve la misma intención; reutilizarlo con otro cuerpo devuelve 409 y no duplica filas.
 
-**Validación pendiente al registrar este cambio:** commit `98fee6991df657ad564530e2dd1e0643d639f269`; CI run `43466211765` está en ejecución. No marcar estos nuevos escenarios como aprobados hasta que ese run termine exitosamente. Las validaciones CI de commits anteriores que aparecen arriba son evidencia histórica, no sustituyen la ejecución del HEAD actual.
+**Validación actualizada:** los escenarios posteriores de webhook batch, ledger, outbox y backfill pasan en CI del HEAD `61c35988a54ee3182169122de0681c6724454940` (run `43482049712`, push `43482037533`). Las entradas de runs anteriores en este documento son evidencia histórica.
 
 Este bloque no cambia el alcance operativo: el worker sigue deshabilitado, no hay scheduler y no se ha autorizado envío real, merge ni despliegue.
 
