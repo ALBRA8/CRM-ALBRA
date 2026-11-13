@@ -420,3 +420,10 @@ La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento m
 
 
 - Los adaptadores Meta solo confirman `sent` si la respuesta 2xx incluye el ID de mensaje del proveedor. Un 2xx sin ID se marca `unknown` porque no puede correlacionarse con callbacks posteriores; no se reintenta automáticamente.
+
+
+## Invariante de tenant en la bandeja canónica — 2026-11-13
+
+- La conversación canónica debe pertenecer a la misma organización que su conexión. La creación normal toma `organizationId` directamente de la conexión resuelta.
+- Las lecturas/listado y el marcado como leído filtran además por `connection.organizationId = organizationId`; esto protege también frente a filas inconsistentes creadas fuera del servicio canónico.
+- Se añadió una prueba negativa que crea deliberadamente una conversación con organización A y conexión de B y comprueba que A no puede listar, leer mensajes ni alterar el contador de no leídos.
