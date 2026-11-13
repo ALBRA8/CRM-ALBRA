@@ -114,16 +114,17 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 
 ## 8. Limitaciones conocidas
 
-- La tabla de eventos evita claims concurrentes y permite recuperar fallos/leases vencidos. El token de fencing impide que un propietario antiguo marque como completado/fallido un claim posterior; no evita por sí solo que un proceso antiguo continúe un efecto externo que ya inició. Un crash después de un efecto externo y antes de marcar `processed` puede repetir ese efecto en una recuperación. Workflows y auto-respuestas requieren idempotencia/outbox propia.
+- La tabla de eventos evita claims concurrentes y permite recuperar fallos/leases vencidos. El token de fencing impide que un propietario antiguo marque como completado/fallido un claim posterior; no evita por sí solo que un proceso antiguo continúe un efecto externo que ya inició. Un crash después de un efecto externo y antes de marcar `processed` puede repetir ese efecto en una recuperación. Workflows requieren idempotencia/outbox propia; las auto-respuestas de WhatsApp e Instagram ya usan la outbox canónica.
 - Los webhooks propagan `message.id`/`msg.mid` al motor de workflows; la clave única `(automationId, idempotencyKey)` deduplica reentregas del mismo mensaje por automatización.
 - Los envíos externos de workflows y las auto-respuestas tienen opt-in explícito separado. No habilitar estas variables durante pruebas de recepción.
-- No hay garantía exactly-once de extremo a extremo. La deduplicación de workflows evita crear un segundo run, pero no recupera automáticamente una acción que haya quedado `running` tras un crash a mitad de ejecución; las auto-respuestas todavía no usan una outbox durable con clave por mensaje.
+- Las auto-respuestas WhatsApp/Instagram ahora persisten primero en `ChannelOutboundMessage` con clave derivada del ID del proveedor; el webhook no llama directamente a Meta. El worker de outbox sigue apagado por defecto y los reintentos se protegen por clave idempotente.
+- No hay garantía exactly-once de extremo a extremo. La deduplicación de workflows evita crear un segundo run, pero no recupera automáticamente una acción que haya quedado `running` tras un crash a mitad de ejecución; las acciones externas de workflow no están integradas todavía con la outbox canónica.
 - No se han validado todavía cuentas reales/sandbox de Meta ni el batch firmado completo en rutas.
 - No hay scheduler, alertas, dashboard de conciliación ni SLO/RPO/RTO aprobados.
 
 ### Reversión segura de esta fase
 
-1. Deshabilitar `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED` y `WORKFLOW_EXTERNAL_SENDS_ENABLED`; detener cualquier scheduler externo.
+1. Deshabilitar `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_EXTERNAL_SENDS_ENABLED` y `WHATSPOWER_ENABLED`; detener cualquier scheduler externo.
 2. No borrar ni reencolar registros `unknown`, `sending` o `queued`; exportar únicamente IDs/códigos sanitizados para conciliación.
 3. Si se revierte el código, mantener las migraciones aditivas aplicadas: no existe una migración down automática y las tablas/columnas nuevas no deben eliminarse mientras la versión anterior siga operando.
 4. Restaurar backup solo si se verificó el punto de recuperación y se evaluó la pérdida de escrituras posteriores. Nunca usar `migrate reset` en un entorno con datos.
