@@ -267,3 +267,5 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Escapar HTML del cuerpo de email workflow y neutralizar CR/LF en asunto.
 - [x] Añadir pruebas de regresión para cookie CSRF, estados desconocidos y escape HTML.
 - [ ] Confirmar CI completo sobre HEAD final tras los últimos tests.
+
+- [x] Poner en cuarentena como `unknown` una respuesta HTTP 2xx de Meta sin ID de mensaje, para conservar correlación y evitar falsos `sent`.
