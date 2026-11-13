@@ -327,6 +327,26 @@ export async function POST(req: NextRequest) {
             },
           })
         }
+        if (channelConversation && message.id) {
+          await db.channelMessage.upsert({
+            where: {
+              conversationId_externalMessageId: {
+                conversationId: channelConversation.id,
+                externalMessageId: message.id,
+              },
+            },
+            create: {
+              conversationId: channelConversation.id,
+              externalMessageId: message.id,
+              direction: 'in',
+              senderType: 'contact',
+              body: text,
+              messageType: isVoice ? 'voice' : message.type || 'text',
+              metadata: JSON.stringify({ from: phone }),
+            },
+            update: {},
+          })
+        }
   
         // find-or-create Client por teléfono (aislado por org)
         const client = await findOrCreateChannelClient({ orgId: matchedOrgId, platformKey: phone, name: profileName, source: 'whatsapp' })
