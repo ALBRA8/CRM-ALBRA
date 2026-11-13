@@ -15,6 +15,8 @@ const SAFE_ERROR = /^[A-Z0-9_.-]{1,64}$/
 /** Persist encrypted recipient/content before the workflow step can finish. */
 export async function enqueueWorkflowOutboundMessage(input: { organizationId: string; automationId: string; automationRunId: string; stepIndex: number; channel: WorkflowOutboundChannel; payload: WorkflowOutboundPayload }) {
   if (!input.organizationId || !input.automationRunId || !Number.isInteger(input.stepIndex) || input.stepIndex < 0) throw new Error('WORKFLOW_OUTBOX_INVALID_INPUT')
+  const validRun = await db.automationRun.findFirst({ where: { id: input.automationRunId, organizationId: input.organizationId, automationId: input.automationId }, select: { id: true } })
+  if (!validRun) throw new Error('WORKFLOW_OUTBOX_RUN_TENANT_MISMATCH')
   const plain = JSON.stringify(input.payload)
   const payloadEnc = encryptSecret(plain)
   if (!payloadEnc) throw new Error('WORKFLOW_OUTBOX_ENCRYPTION_UNAVAILABLE')
