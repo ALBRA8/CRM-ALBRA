@@ -17,12 +17,11 @@ prisma/migrations/
 ├── 2_whatsapp_connections_per_org/migration.sql
 ├── 3_two_factor_totp/migration.sql
 ├── 4_audit_indexes/migration.sql
-├── 5_client_dedup_field_merge/migration.sql
 └── migration_lock.toml
 ```
 
-La secuencia 0–5 es la que debe aplicar `prisma migrate deploy` en una
-instalación nueva. El baseline crea el esquema previo; las migraciones 1–5
+La secuencia 0–4 es la que debe aplicar `prisma migrate deploy` en una
+instalación nueva. El baseline crea el esquema previo; las migraciones 1–4
 añaden cambios posteriores. No se debe marcar el baseline como aplicado en
 una base existente sin comparar antes su esquema real con el baseline.
 
@@ -165,50 +164,18 @@ ALTER TABLE "User" DROP COLUMN "twoFactorSecret";
 
 ## Auditoría de seguridad — migración 4 y ejecución
 
-### Migración 4: deduplicación sin cascadas destructivas
+### Migración 4: índices y restricciones para una base limpia
 
-La deduplicación usa el cliente con menor `id` como ficha canónica por
-(`organizationId`, `phone`). Antes de borrar fichas duplicadas, la migración
-respalda las filas duplicadas de `Client` y `ClientPreferences`, consolida
-campos vacíos de preferencias y reasigna a la ficha canónica las relaciones
-de historial, oportunidades, reservas, cotizaciones, transacciones, memoria,
-sugerencias, correcciones, embeddings y conversaciones. También actualiza
-los `clientId` de `TimelineEvent` y `AgentLeadEvent`.
+La migración 4 crea los índices de consulta y unicidad necesarios:
+- Hash único para el secreto de Telegram.
+- Índice de oportunidades por organización y etapa.
+- Unicidad de mensajes de WhatsApp por organización y `waMessageId`
+  (solo cuando el identificador no es nulo).
+- Unicidad de teléfono por organización para teléfonos no nulos.
 
-**Importante:** la modificación de una migración ya publicada solo es válida
-si se confirma que la migración 4 NO fue aplicada en ninguna base de datos
-compartida o productiva. Prisma valida checksums; si ya fue aplicada, no se
-debe editar ni volver a ejecutar esta versión. En ese caso hay que restaurar
-desde backup si hubo pérdida y preparar una migración correctiva nueva basada
-en el estado real de esa base. No ejecutar hasta verificar
-`_prisma_migrations` y el checksum en cada entorno.
-
-
-### Migración 5 — completar datos de clientes consolidados
-
-La migración 4 conserva las fichas absorbidas en
-`Client_dedup_backup_20261111`, pero no fusionaba todos sus campos en la ficha
-canónica. La migración 5 corrige ese faltante sin editar la migración 4 ni
-alterar sus checksums: completa únicamente campos vacíos de la ficha canónica
-con valores no vacíos de los duplicados (correo, cédula, dirección, notas,
-fuente, asignación y creador). Si hay varios valores, elige el primero por
-orden de id. Si el cliente canónico está en estado `prospect`, promueve su
-estado al primer estado no prospect de los duplicados. Conserva la fecha de
-creación más antigua y las fechas de último contacto/actualización más
-recientes. No elimina ni modifica la tabla de respaldo.
-
-**Límite conocido:** esta migración recupera datos de duplicados que la
-migración 4 ya respaldó; no vuelve a deduplicar teléfonos con formatos
-alternativos ni altera números de teléfono. La normalización de teléfonos
-requiere una regla de negocio y una migración separada, porque una
-normalización agresiva podría fusionar personas distintas.
-
-**Compatibilidad:** la migración 5 presupone que la migración 4 se ejecutó y
-creó `Client_dedup_backup_20261111`. Antes de desplegarla en cualquier base,
-verificar `_prisma_migrations`, el estado de la migración 4 y la existencia y
-estructura de esa tabla. Si la migración 4 no se aplicó o la tabla de respaldo
-no existe, detenerse: no marcar migraciones como aplicadas ni crear una tabla
-vacía para saltar el paso.
+No deduplica, fusiona ni elimina clientes. La base de datos de pruebas se
+reconstruye desde cero cuando se necesite limpiar datos ficticios; no se
+incluye lógica destructiva de datos de negocio en una migración de esquema.
 
 ### Migración 1 y baseline en bases existentes
 
@@ -234,14 +201,9 @@ como sustituto de backups, revisión del SQL o aprobación operativa.
 
 1. Ejecutar la secuencia completa en SQLite temporal y en una copia saneada de
    cada esquema real soportado.
-2. Sembrar dos clientes de la misma organización y teléfono, cada uno con
-   historial, preferencias, oportunidad, reserva, cotización, transacción,
-   memoria y conversación; comprobar que todos los registros quedan asociados
-   al cliente canónico y que no hay filas hijas perdidas.
-3. Probar preferencias en los dos escenarios: solo el duplicado tiene
-   preferencias y ambos tienen preferencias.
-4. Verificar unicidad de teléfono por organización y de
-   `(organizationId, waMessageId)` sin alterar mensajes preexistentes.
+2. Verificar los índices de unicidad de teléfono por organización y de
+   `(organizationId, waMessageId)` en una base recién creada.
+3. Confirmar que los índices de Telegram y oportunidades se crean correctamente.
 5. Para migración 1, probar baseline coincidente, baseline divergente,
    cotizaciones duplicadas y restauración efectiva del backup.
 6. Repetir las pruebas de las migraciones 2 y 3 y verificar que la conexión
