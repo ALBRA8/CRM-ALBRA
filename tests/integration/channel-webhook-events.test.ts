@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { db } from '@/lib/db'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
 import { FIX } from '../setup/seed-data'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -53,6 +53,33 @@ describe('Channel webhook event ledger', () => {
     const stored = await db.channelWebhookEvent.findUnique({ where: { id: claim.id } })
     expect(stored?.status).toBe('processed')
     expect(stored?.attemptCount).toBe(1)
+  })
+
+  it('distinguishes an event currently processing from a completed duplicate', async () => {
+    const connection = await createConnection()
+    const input = {
+      organizationId: FIX.orgA.id,
+      connectionId: connection.id,
+      eventKey: 'message:wamid_busy_123',
+      eventType: 'whatsapp.message',
+    }
+    const first = await claimChannelWebhookEvent(input)
+    expect(first).not.toBeNull()
+    expect(await claimChannelWebhookEvent(input)).toBeNull()
+    expect(await getChannelWebhookEventStatus(connection.id, input.eventKey)).toBe('processing')
+    await completeChannelWebhookEvent(first!.id)
+    expect(await getChannelWebhookEventStatus(connection.id, input.eventKey)).toBe('processed')
+  })
+
+  it('rejects a tenant that does not own the connection', async () => {
+    const connection = await createConnection()
+    await expect(claimChannelWebhookEvent({
+      organizationId: FIX.orgB.id,
+      connectionId: connection.id,
+      eventKey: 'message:wamid_wrong_tenant',
+      eventType: 'whatsapp.message',
+    })).rejects.toThrow('Channel webhook event connection not found')
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: connection.id } })).toBe(0)
   })
 
   it('reclaims failed events with an incremented attempt count', async () => {
