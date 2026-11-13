@@ -38,6 +38,9 @@ function makeMetaAdapter(
           to: input.recipientKey,
           type: 'text',
           text: { preview_url: false, body: input.body },
+          // Meta devuelve este identificador opaco en el webhook de estado,
+          // permitiendo correlacionar incluso si el callback llega antes del ACK.
+          biz_opaque_callback_data: input.outboundId,
         }
       : {
           recipient: { id: input.recipientKey },
