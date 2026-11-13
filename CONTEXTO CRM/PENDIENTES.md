@@ -208,3 +208,17 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Confirmar CI del commit de pruebas `98fee6991df657ad564530e2dd1e0643d639f269` (run `43466211765`, en ejecución al registrar esta nota). Solo marcar aprobado después de revisar conclusión y jobs.
 - [ ] Si CI falla, inspeccionar logs y corregir la causa sin retirar las aserciones de seguridad.
 - [ ] Mantener worker deshabilitado; no configurar secreto ni habilitar despacho sin aprobación expresa.
+
+
+## Fencing de leases y cierre operativo — 2026-11-13
+
+- [x] Añadir `claimToken` por reclamación de `ChannelWebhookEvent`; cada recuperación genera token nuevo.
+- [x] Completar/fallar el evento con condición atómica `id + status=processing + claimToken`; un propietario vencido no puede cerrar el claim actual.
+- [x] Integrar el token en handlers de WhatsApp e Instagram.
+- [x] Añadir prueba de regresión: el claim antiguo no puede completar ni fallar después de la recuperación.
+- [x] Añadir migración aditiva 10 para `claimToken`.
+- [x] Documentar umbrales de alertas y límites del endpoint de salud en `RUNBOOK_CANALES.md`.
+- [ ] Confirmar CI del HEAD que contiene fencing, migración y documentación.
+- [ ] Añadir idempotencia/outbox propia para workflows y autorespuestas; fencing no evita repetir un efecto externo ya iniciado por un proceso antiguo.
+- [ ] Incorporar antigüedad de la cola queued y series temporales para que el monitor pueda medir backlog y crecimiento sin inferencias.
+- [ ] Revisar el diff completo de PR #3 por módulos y ejecutar pruebas manuales de navegador en staging; PR continúa draft.
