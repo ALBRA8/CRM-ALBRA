@@ -215,10 +215,11 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Añadir `claimToken` por reclamación de `ChannelWebhookEvent`; cada recuperación genera token nuevo.
 - [x] Completar/fallar el evento con condición atómica `id + status=processing + claimToken`; un propietario vencido no puede cerrar el claim actual.
 - [x] Integrar el token en handlers de WhatsApp e Instagram.
-- [x] Añadir prueba de regresión: el claim antiguo no puede completar ni fallar después de la recuperación.
+- [x] Añadir pruebas de regresión: el claim antiguo no puede completar ni fallar después de la recuperación; solo un reclaimer concurrente gana el lease.
 - [x] Añadir migración aditiva 10 para `claimToken`.
 - [x] Documentar umbrales de alertas y límites del endpoint de salud en `RUNBOOK_CANALES.md`.
-- [ ] Confirmar CI del HEAD que contiene fencing, migración y documentación.
+- [x] Exponer `oldestQueuedAgeSeconds` en la salud agregada sin revelar IDs, cuerpos ni tenants; probar el contrato.
+- [x] CI completo del HEAD `04db615ea35192aa8998e5ec04ddf88d2e8d0661`: push run `43497893649` y pull_request run `43497905739`, ambos success (secret scan, Prisma migrate clean install, TypeScript, lint ratchet, suite completa y build).
 - [ ] Añadir idempotencia/outbox propia para workflows y autorespuestas; fencing no evita repetir un efecto externo ya iniciado por un proceso antiguo.
 - [ ] Incorporar antigüedad de la cola queued y series temporales para que el monitor pueda medir backlog y crecimiento sin inferencias.
 - [ ] Revisar el diff completo de PR #3 por módulos y ejecutar pruebas manuales de navegador en staging; PR continúa draft.
