@@ -138,9 +138,10 @@ export function InboxPage() {
     }
     setMessages((prev) => [...prev, optimistic])
     const text = draft.trim()
+    const canonical = selected.key.startsWith('cc:')
+    let acceptedCanonical = false
     setDraft('')
     try {
-      const canonical = selected.key.startsWith('cc:')
       const requestId = canonical
         ? (canonicalRequestRef.current?.key === selected.key && canonicalRequestRef.current.text === text
             ? canonicalRequestRef.current.id
@@ -154,7 +155,10 @@ export function InboxPage() {
         text,
         ...(requestId ? { clientRequestId: requestId } : {}),
       })
-      if (canonical) canonicalRequestRef.current = null
+      if (canonical) {
+        acceptedCanonical = true
+        canonicalRequestRef.current = null
+      }
       // Refresca el hilo real; en canonical muestra estado de outbox, no simula entrega.
       const res = (await api.getInboxMessages(selected.key)) as { messages?: InboxMessage[] }
       setMessages(res.messages || [])
@@ -166,9 +170,13 @@ export function InboxPage() {
         )
       }
     } catch (err) {
-      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id))
-      setDraft(text)
-      toast.error(err instanceof Error ? err.message : 'No se pudo enviar el mensaje')
+      if (canonical && acceptedCanonical) {
+        toast.info('El mensaje quedó en cola; no se pudo actualizar el hilo. Actualiza para consultar su estado.')
+      } else {
+        setMessages((prev) => prev.filter((m) => m.id !== optimistic.id))
+        setDraft(text)
+        toast.error(err instanceof Error ? err.message : 'No se pudo enviar el mensaje')
+      }
     } finally {
       setSending(false)
     }
