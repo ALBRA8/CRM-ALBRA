@@ -60,6 +60,7 @@ model Organization {
   whatsappConnections   WhatsAppConnection[]
   channelConnections    ChannelConnection[]
   channelConnectionEvents ChannelConnectionEvent[]
+  channelConversations ChannelConversation[]
 }
 
 model User {
@@ -784,6 +785,7 @@ model ChannelConnection {
   updatedAt         DateTime @updatedAt
 
   events            ChannelConnectionEvent[]
+  conversations     ChannelConversation[]
 
   @@index([organizationId, channel, status])
   @@index([organizationId, createdAt])
@@ -802,6 +804,31 @@ model ChannelConnectionEvent {
 
   @@index([organizationId, createdAt])
   @@index([connectionId, createdAt])
+}
+
+
+// Conversación canónica aislada por conexión. Se introduce en paralelo a
+// WhatsAppConversation para permitir migración expand/contract sin reasignar
+// históricos ambiguos ni cambiar de golpe las consultas legacy.
+model ChannelConversation {
+  id                  String   @id @default(cuid())
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectionId        String
+  connection          ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  channel             String
+  externalContactKey  String
+  contactName         String?
+  lastMessage         String?
+  lastMessageAt       DateTime?
+  unreadCount         Int      @default(0)
+  status              String   @default("active")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([connectionId, externalContactKey])
+  @@index([organizationId, channel, lastMessageAt])
+  @@index([connectionId, lastMessageAt])
 }
 
 // ---------- AGENTE-LEADS (webhook de eventos de prospección) ----------
