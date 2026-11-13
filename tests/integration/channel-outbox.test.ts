@@ -102,6 +102,8 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     expect(stored?.status).toBe('sent')
     expect(updatedConversation?.lastMessage).toBe('Respuesta confirmada')
     expect(await db.channelMessage.count({ where: { outboundId: intent.id } })).toBe(1)
+    const persistedMessage = await db.channelMessage.findUnique({ where: { outboundId: intent.id } })
+    expect(JSON.parse(persistedMessage?.metadata || '{}').deliveryStatus).toBe('sent')
     expect((await markChannelOutboundSent({ id: intent.id })).id).toBe(sent.id)
   })
 
