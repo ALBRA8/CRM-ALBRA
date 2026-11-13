@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
   const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(Number(body.limit), 5)) : 1
   const quarantined = await quarantineStaleWorkflowOutboundMessages()
   const queued = await db.workflowOutboundMessage.findMany({ where: { status: 'queued' }, orderBy: { createdAt: 'asc' }, take: limit, select: { id: true } })
-  const results = []
+  const results: Array<{ status: string }> = []
   for (const item of queued) results.push({ ...(await dispatchWorkflowOutboundMessage(item.id)) })
   return json({ processed: results.length, quarantinedStale: quarantined.count, results, note: 'Los estados unknown requieren conciliación humana y nunca se reintentan automáticamente.' })
 }
