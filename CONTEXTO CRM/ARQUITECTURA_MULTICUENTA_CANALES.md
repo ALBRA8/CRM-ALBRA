@@ -427,3 +427,8 @@ La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento m
 - La conversación canónica debe pertenecer a la misma organización que su conexión. La creación normal toma `organizationId` directamente de la conexión resuelta.
 - Las lecturas/listado y el marcado como leído filtran además por `connection.organizationId = organizationId`; esto protege también frente a filas inconsistentes creadas fuera del servicio canónico.
 - Se añadió una prueba negativa que crea deliberadamente una conversación con organización A y conexión de B y comprueba que A no puede listar, leer mensajes ni alterar el contador de no leídos.
+
+
+## Bloqueo preventivo de acciones externas workflow — 2026-11-13
+
+Las acciones `send_whatsapp`, `send_telegram` y `send_email` del motor de workflows ya no hacen llamadas directas al proveedor, incluso si `WORKFLOW_EXTERNAL_SENDS_ENABLED=true`. Se registran como pendientes con `WORKFLOW_OUTBOX_NOT_CONFIGURED`; el resultado indica `pending: true` y `queued: false` para no confundir una notificación de revisión con una intención persistida. El endpoint de salud informa `workflowExternalSendsEnabled: false` y separa `workflowExternalSendsFlagRequested`. No habilitar hasta integrar una outbox/dispatcher durable para esos canales.
