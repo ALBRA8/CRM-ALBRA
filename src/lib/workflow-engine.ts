@@ -111,8 +111,10 @@ async function buildActionContext(orgId: string, payload: Record<string, unknown
   const clientId = payload.clientId as string | undefined
   if (!clientId) return { ...payload }
   try {
-    const client = await db.client.findUnique({
-      where: { id: clientId },
+    // Nunca enriquecer un workflow con datos de un cliente de otro tenant,
+    // incluso si un trigger interno recibe un clientId ajeno o manipulado.
+    const client = await db.client.findFirst({
+      where: { id: clientId, organizationId: orgId },
       select: { name: true, phone: true, email: true },
     })
     if (!client) return { ...payload }
