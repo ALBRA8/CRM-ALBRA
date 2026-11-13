@@ -165,7 +165,7 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 
 **Actualización 2026-11-13:** Fase 0 y parte de la fase 1 están implementadas en la rama. Se añadieron `ChannelConnection`, `ChannelConnectionEvent`, `ChannelConversation` y `ChannelMessage`, con migraciones SQLite aditivas 5, 6 y 7. Instagram dispone de selector multicuenta; los webhooks de Instagram y WhatsApp Cloud resuelven cuentas por identificador externo exacto y escriben mensajes entrantes en la estructura canónica, manteniendo las escrituras legacy durante la transición. El webhook WhatsApp procesa múltiples números por POST y aísla fallos de configuración por destino para no abortar otros destinos válidos.
 
-La CI `43395332553` validó correctamente schema, migraciones, TypeScript, lint, suite y build para el modelo `ChannelMessage` antes de la última incorporación de escrituras canónicas en los webhooks. La CI `43395622374` está validando el HEAD actual `402c585d`; todavía no se debe declarar validado hasta que termine.
+La CI `43395332553` validó correctamente schema, migraciones, TypeScript, lint, suite y build para el modelo `ChannelMessage` antes de la última incorporación de escrituras canónicas en los webhooks. La CI `43395622374` terminó con éxito para el commit `402c585d` (migraciones SQLite, TypeScript, lint, suite y build). La CI documental `43395971244` también terminó con éxito para `4b1ba773`.
 
 Esto todavía **no es una funcionalidad de multicuenta operativa de extremo a extremo**. No hay backfill ni dual-read; la bandeja, el historial, la lectura y los envíos siguen consumiendo principalmente las estructuras legacy. La persistencia canónica de mensajes salientes y una deduplicación recuperable de eventos siguen pendientes. No hacer merge, despliegue ni activar mensajería real sin autorización expresa.
 
@@ -238,3 +238,26 @@ A fecha 2026-11-13, inspección de `src/lib/inbox.ts`, `src/app/api/inbox/route.
 - Run `43395622374` (commit de código `402c585d`): job CI completado con éxito; incluye instalación, escáner de secretos, Prisma, migraciones SQLite limpias, TypeScript, lint, tests y build.
 - Run `43395971244` (HEAD documental `4b1ba773`): job CI completado con éxito en los mismos pasos.
 - Estas ejecuciones validan sus respectivos commits; cualquier cambio posterior requiere CI nuevo sobre el HEAD actualizado.
+
+
+## Avance posterior: bandeja canónica (2026-11-13)
+
+**Código añadido en la rama; validación del HEAD final pendiente:**
+
+- [x] La key canónica de inbox usa el prefijo `cc:<ChannelConversation.id>`; no se confunde con las keys legacy `wa:`, `ig:`, `tg:`, `fb:` ni `wa-new:`.
+- [x] `listInbox` incorpora `ChannelConversation` con filtro por `organizationId`, solo conexiones activas/compatibles y etiqueta de cuenta (`displayName`). Las fuentes legacy siguen disponibles durante expand; no se fusionan por handle ni por nombre.
+- [x] `getInboxMessages` consulta `ChannelMessage` solo tras resolver conversación por `id + organizationId` y validar conexión activa y canal coincidente.
+- [x] `markInboxRead` valida tenant, conexión activa y canal antes de poner `unreadCount=0`.
+- [x] La UI muestra el nombre de la cuenta conectada en lista e hilo para distinguir dos cuentas del mismo canal.
+- [x] Envío de keys `cc:` bloqueado explícitamente en servidor y UI. Nunca hace fallback a Baileys ni a `Integration`; no se ha activado mensajería real.
+- [x] Pruebas `tests/integration/channel-inbox.test.ts`: separación de dos cuentas del mismo contacto, aislamiento entre tenants, lectura de mensajes y marca de leído.
+- [ ] Envío canónico saliente pendiente: requiere contrato de adaptadores por provider, persistencia/outbox y recuperación de resultado incierto antes de habilitar llamadas reales. No implementar un simple "enviar y luego insertar" que pueda duplicar mensajes tras timeout.
+- [ ] Revisar `listClientChannels` y los flujos de IA de cierre para exponer conversaciones canónicas sin ofrecer handles legacy ambiguos.
+
+**Commits de código relevantes:** `940bcb7e` (lectura/listado canónico), `058adb42` (pruebas), `266574a3` (bloqueo de envío canónico y UI), `3ea0ea16` (dirección del último mensaje), `22a74fb7` (validación de canal en lectura), `0833e679` (nombre de cuenta en lista), `ae7d4cea` (validación de canal al marcar leído). HEAD de código al momento de esta nota: `ae7d4cea5e0313777c5a896ade7ce78bc3b38622`.
+
+**CI observado:**
+- Run `43396997198`, commit `266574a3`: escáner, Prisma, migraciones SQLite, TypeScript, lint, suite y build completados con éxito; job en cierre de pasos post-run.
+- Run `43397181657`, commit `0833e679`: migraciones y TypeScript completados; lint en curso en la última consulta.
+- Run `43397305922`, commit `ae7d4cea`: CI en curso; aún no se declara validado el HEAD.
+- Los runs se disparan tanto por push como por sincronización del PR. La aceptación debe basarse en el run del HEAD exacto, no en un commit padre.
