@@ -104,6 +104,8 @@ openssl rand -base64 32   # → APP_ENCRYPTION_KEY  (cifrado de credenciales por
 openssl rand -base64 32   # → INTERNAL_API_SECRET (auth mutua app ↔ daemon; mínimo 24 caracteres)
 ```
 
+En Docker, el contenedor opera con `NODE_ENV=production`: antes de levantarlo, configura `ALLOW_DESTRUCTIVE_DB_OPERATION=true` en `.env` **solo después de verificar que `DATABASE_URL` apunta a la BD correcta y tener un backup**. Esta variable autoriza el paso protegido de `migrate deploy`; no autoriza `db push` ni `migrate reset`.
+
 Opcionales: `SMTP_*` (correos transaccionales y automatizaciones) y `WHATSAPP_VERIFY_TOKEN` (webhook de WhatsApp Cloud API).
 
 > En Docker **no** edites `DATABASE_URL` ni `WHATSAPP_DAEMON_URL` del `.env`: Compose los fija (`file:/app/db/custom.db` y `http://wa-daemon:3002`) para que apunten al volumen y a la red interna.
