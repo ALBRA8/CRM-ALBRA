@@ -826,6 +826,7 @@ model ChannelConversation {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   messages            ChannelMessage[]
+  outboundMessages     ChannelOutboundMessage[]
 
   @@unique([connectionId, externalContactKey])
   @@index([organizationId, channel, lastMessageAt])
@@ -845,9 +846,38 @@ model ChannelMessage {
   body              String
   messageType       String   @default("text")
   metadata          String?  // JSON no secreto, allowlisted
+  outboundId        String?  @unique
+  outbound          ChannelOutboundMessage? @relation(fields: [outboundId], references: [id], onDelete: SetNull)
   createdAt         DateTime @default(now())
 
   @@unique([conversationId, externalMessageId])
+  @@index([conversationId, createdAt])
+}
+
+
+ 
+// Intención/outbox de mensajes salientes. Un intento incierto NUNCA se reenvía
+// automáticamente: sin idempotencia garantizada por el proveedor podría duplicar.
+model ChannelOutboundMessage {
+  id                String   @id @default(cuid())
+  conversationId    String
+  conversation      ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  clientRequestId   String
+  body              String
+  status            String   @default("queued") // queued | sending | sent | failed | unknown
+  attemptCount      Int      @default(0)
+  requestedByUserId String?
+  providerMessageId String?
+  providerErrorCode String?  // código sanitizado, nunca cuerpo/token de respuesta
+  startedAt         DateTime?
+  sentAt            DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  message           ChannelMessage?
+
+  @@unique([conversationId, clientRequestId])
+  @@index([status, createdAt])
   @@index([conversationId, createdAt])
 }
 
