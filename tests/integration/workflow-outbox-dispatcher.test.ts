@@ -17,7 +17,7 @@ async function createRun(label: string) {
     data: { organizationId: FIX.orgA.id, automationId: automation.id, status: 'running' },
   })
   pairs.push({ automationId: automation.id, runId: run.id })
-  return { automationId: automation.id, runId: run.id }
+  return { automationId: automation.id, automationRunId: run.id }
 }
 
 afterEach(async () => {
