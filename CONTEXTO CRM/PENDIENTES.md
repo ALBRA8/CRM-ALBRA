@@ -249,3 +249,12 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Acotar el contexto de clientes y etapas de pipeline de workflows al tenant del run.
 - [ ] Confirmar CI completo en el HEAD actual, incluyendo build de producción.
 - [ ] Añadir integración de acciones externas workflow a outbox antes de habilitar cualquier envío.
+
+
+## Hallazgos de auditoría cerrados — 2026-11-13
+
+- [x] Evitar TOCTOU en callback OAuth Instagram: nunca actualizar credenciales de una cuenta globalmente única si la conexión no pertenece al tenant autenticado; conflicto concurrente falla cerrado.
+- [x] No aceptar `phone/email/clientName` arbitrarios en payloads de workflows sin un cliente válido del tenant.
+- [x] Impedir que un callback de entrega `failed` retrasado degrade estados `sent/delivered/read` en la outbox.
+- [x] Añadir pruebas de regresión para los tres casos.
+- [ ] Confirmar CI completo (secret scan, migraciones, TypeScript, lint, suite y build) sobre el HEAD posterior a estos cambios.
