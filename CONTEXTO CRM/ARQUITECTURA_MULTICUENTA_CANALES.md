@@ -298,3 +298,12 @@ Antes de conectar proveedores se implementará un dispatcher aislado con adaptad
 - Los errores lanzados/ambiguos quedan `unknown`; los rechazos definitivos y las configuraciones inválidas quedan `failed`; una aceptación confirmada persiste el mensaje y estado en la transacción de outbox.
 - Se añadieron pruebas con adaptadores simulados para éxito, timeout sin reintento y ausencia de adaptador. Pendiente validar TypeScript, lint, suite y build sobre el HEAD final.
 - No se habilitó endpoint/worker ni envío real; el inbox canónico sigue bloqueado para enviar hasta implementar y revisar los adaptadores oficiales de WhatsApp Cloud e Instagram.
+
+### Adaptadores Meta de texto (sin activar)
+
+- Se añadió `src/lib/meta-channel-adapters.ts` con adaptadores separados `meta_cloud:whatsapp` y `meta_graph:instagram`, seleccionados por la pareja exacta provider/canal.
+- WhatsApp usa el phone-number ID de la conexión en `/{phone-number-id}/messages`; Instagram usa el ID de cuenta profesional de la conexión y el IGSID del contacto. Los tokens viajan solo en Authorization, nunca en query strings ni logs.
+- Los 4xx inequívocos se clasifican como rechazo definitivo; 429/5xx se consideran ambiguos y quedan en cuarentena. Las excepciones de red también se convierten en `unknown` en el dispatcher.
+- La versión Graph se toma de `GRAPH_VERSION` existente del proyecto; no se cambia aquí la configuración global de versión.
+- Pruebas unitarias mockean fetch para comprobar endpoint/cuerpo, ID externo, token en header y clasificación 4xx/5xx. No se hace ninguna petición real.
+- Referencias oficiales: [WhatsApp Business Platform](https://developers.facebook.com/documentation/business-messaging/whatsapp/overview) y [Instagram Messaging](https://developers.facebook.com/documentation/business-messaging/instagram-messaging). Revisar permisos/App Review y ventanas de respuesta antes de activar en producción.
