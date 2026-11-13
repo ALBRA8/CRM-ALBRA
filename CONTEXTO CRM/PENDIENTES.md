@@ -58,6 +58,18 @@
 - [ ] Revisar y probar carrera equivalente para WhatsApp Cloud; agregar fixtures de webhook batch firmados para Instagram y WhatsApp.
 - [ ] Persistencia/deduplicación durable de eventos webhook antes de ejecutar workflows y auto-respuestas; evitar afirmar exactly-once mientras exista check-then-act.
 
+## Continuación multicanal — estado técnico 2026-11-13
+
+- [x] Correlación WhatsApp Cloud outbox ↔ webhook mediante `biz_opaque_callback_data`, comprobando tenant/conexión/provider antes de conciliar.
+- [x] Callback de estado puede confirmar `sending/unknown → sent` sin reintento ciego.
+- [x] Persistencia de recibos `sent/delivered/read/failed` en mensaje canónico y presentación en el hilo.
+- [x] Orden monotónico de recibos y deduplicación de timeline por `messageId + status`.
+- [x] Tabla `ChannelWebhookEvent`, migración 9, claim concurrente por conexión, recuperación de eventos fallidos/leases vencidos y tests de integración del ledger.
+- [x] Integración del ledger en los handlers canónicos de WhatsApp e Instagram; los handlers responden 500 ante fallo procesando un evento reclamado para permitir retry del proveedor.
+- [ ] Garantía de no duplicar workflows/autorespuestas tras crash entre efecto externo y confirmación del ledger; requiere idempotencia/outbox por automatización.
+- [ ] Fixtures firmados de POST batch reales para ambos webhooks y pruebas de ruta completas.
+- [ ] CI completa del HEAD actual; no declarar validado hasta conclusión exitosa.
+
 ## Trabajo de tests Windows/.env — RESUELTO 2026-11-06
 - [x] 658740b localizado y verificado en ALBRA8/YOUTUBE-AUTOMATION (cuarto repositorio del ecosistema, confirmado por el propietario).
 - [x] Las correcciones están en main de ese repositorio (posteriores a 658740b); no corresponden a CRM-ALBRA.
