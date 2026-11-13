@@ -8,9 +8,7 @@ import { FIX } from '../setup/seed-data'
 
 const APP_SECRET = 'test'.repeat(10)
 const connectionIds: string[] = []
-let previousIntegration: { instagramAccountId: string | null; instagramTokenEnc: string | null } | null = null
-let integrationExisted = false
-let integrationSnapshotTaken = false
+let legacyOrganizationId: string | null = null
 
 afterEach(async () => {
   if (connectionIds.length) {
@@ -21,17 +19,11 @@ afterEach(async () => {
     await db.channelConnection.deleteMany({ where: { id: { in: connectionIds } } })
     connectionIds.length = 0
   }
-  if (integrationSnapshotTaken && integrationExisted && previousIntegration) {
-    await db.integration.update({
-      where: { organizationId: FIX.orgB.id },
-      data: previousIntegration,
-    })
-  } else if (integrationSnapshotTaken) {
-    await db.integration.deleteMany({ where: { organizationId: FIX.orgB.id } })
+  if (legacyOrganizationId) {
+    await db.integration.deleteMany({ where: { organizationId: legacyOrganizationId } })
+    await db.organization.deleteMany({ where: { id: legacyOrganizationId } })
+    legacyOrganizationId = null
   }
-  previousIntegration = null
-  integrationExisted = false
-  integrationSnapshotTaken = false
 })
 
 async function createInstagramConnection(accountId: string, status: 'connected' | 'disconnected' = 'connected') {
@@ -69,21 +61,17 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
   it('does not fall back to legacy Integration when the same canonical account is disconnected', async () => {
     const accountId = '17840000000000999'
     await createInstagramConnection(accountId, 'disconnected')
-    const previous = await db.integration.findUnique({
-      where: { organizationId: FIX.orgB.id },
-      select: { instagramAccountId: true, instagramTokenEnc: true },
-    })
-    integrationExisted = !!previous
-    previousIntegration = previous
-    integrationSnapshotTaken = true
-    await db.integration.upsert({
-      where: { organizationId: FIX.orgB.id },
-      create: {
-        organizationId: FIX.orgB.id,
-        instagramAccountId: accountId,
-        instagramTokenEnc: encryptSecret(JSON.stringify({ token: 'legacy-token-fixture', webhookSecret: APP_SECRET })),
+    const legacyOrg = await db.organization.create({
+      data: {
+        id: `instagram-legacy-org-${Date.now()}`,
+        name: 'Instagram legacy fallback test',
+        slug: `instagram-legacy-${Date.now()}`,
       },
-      update: {
+    })
+    legacyOrganizationId = legacyOrg.id
+    await db.integration.create({
+      data: {
+        organizationId: legacyOrg.id,
         instagramAccountId: accountId,
         instagramTokenEnc: encryptSecret(JSON.stringify({ token: 'legacy-token-fixture', webhookSecret: APP_SECRET })),
       },
