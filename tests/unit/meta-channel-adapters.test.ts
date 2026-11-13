@@ -24,7 +24,7 @@ describe('Meta canonical channel adapters (mock fetch only)', () => {
     expect(result).toEqual({ ok: true, providerMessageId: 'wamid.mock' })
     const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
     expect(url).toContain('/123456789012345/messages')
-    expect(init.headers).toMatchObject({ Authorization: 'Bearer mock-secret-token' })
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${base.credentials.accessToken}` })
     expect(init.body).toBe(JSON.stringify({
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -32,7 +32,7 @@ describe('Meta canonical channel adapters (mock fetch only)', () => {
       type: 'text',
       text: { preview_url: false, body: 'Hola desde pruebas' },
     }))
-    expect(url).not.toContain('mock-secret-token')
+    expect(url).not.toContain(base.credentials.accessToken)
   })
 
   it('sends Instagram text using the exact Instagram account and IGSID', async () => {
