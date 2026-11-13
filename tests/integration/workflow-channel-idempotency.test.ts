@@ -118,6 +118,14 @@ describe('workflow trigger idempotency for channel messages', () => {
       payload: { to: FIX.clientA1.phone || '', text: 'No enviar en pruebas' },
     })
     expect(duplicate.id).toBe(outbound?.id)
+    await expect(enqueueWorkflowOutboundMessage({
+      organizationId: FIX.orgA.id,
+      automationId: automation.id,
+      automationRunId: run!.id,
+      stepIndex: 0,
+      channel: 'whatsapp',
+      payload: { to: FIX.clientA1.phone || '', text: 'contenido diferente' },
+    })).rejects.toThrow('WORKFLOW_OUTBOX_IDEMPOTENCY_CONFLICT')
     expect(await db.workflowOutboundMessage.count({ where: { automationId: automation.id } })).toBe(1)
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
