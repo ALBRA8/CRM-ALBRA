@@ -14,7 +14,10 @@ function makeMetaAdapter(
   fetchImpl: typeof fetch
 ): ChannelProviderAdapter {
   return async (input) => {
-    if (!input.credentials.accessToken || !/^\d{5,30}$/.test(input.externalAccountId) || !input.recipientKey) {
+    const validRecipient = channel === 'whatsapp'
+      ? /^\d{7,15}$/.test(input.recipientKey)
+      : /^\d{5,30}$/.test(input.recipientKey)
+    if (!input.credentials.accessToken || !/^\d{5,30}$/.test(input.externalAccountId) || !validRecipient) {
       return { ok: false, definitive: true, errorCode: 'INVALID_PROVIDER_INPUT' }
     }
 
@@ -61,8 +64,11 @@ function makeMetaAdapter(
 }
 
 /**
- * Official Meta Graph text adapters (WhatsApp Cloud / Instagram Messaging).\n * API references: developers.facebook.com/documentation/business-messaging/whatsapp/overview\n * and developers.facebook.com/documentation/business-messaging/instagram-messaging.\n * They are intentionally only a factory:
- * no route/worker registers or invokes them until outbound sending is approved.
+ * Official Meta Graph text adapters (WhatsApp Cloud / Instagram Messaging).
+ * API references: developers.facebook.com/documentation/business-messaging/whatsapp/overview
+ * and developers.facebook.com/documentation/business-messaging/instagram-messaging.
+ * They are intentionally only a factory; no route/worker registers or invokes
+ * them until outbound sending is approved.
  */
 export function createMetaChannelAdapters(fetchImpl: typeof fetch = fetch): ChannelProviderAdapters {
   return {
