@@ -155,8 +155,8 @@ export async function markChannelOutboundSent(input: {
 
     const existingMessage = await tx.channelMessage.findUnique({ where: { outboundId: outbound.id } })
     if (outbound.status === 'sent' && existingMessage) return existingMessage
-    if (outbound.status !== 'sending') {
-      throw new ChannelOutboundError('La intención no está en estado sending', 'INVALID_STATE')
+    if (outbound.status !== 'sending' && outbound.status !== 'unknown') {
+      throw new ChannelOutboundError('La intención no está pendiente de confirmación', 'INVALID_STATE')
     }
 
     const now = new Date()
@@ -209,6 +209,48 @@ export async function markChannelOutboundSent(input: {
       },
     })
     return message
+  })
+}
+
+
+/**
+ * Aplica el estado de entrega comunicado por Meta a la fila canónica.
+ * El rango evita que un webhook retrasado haga retroceder read → delivered.
+ */
+export async function updateChannelMessageDeliveryStatus(input: {
+  conversationId: string
+  providerMessageId: string
+  status: 'sent' | 'delivered' | 'read' | 'failed'
+  timestamp?: string
+}) {
+  const rank: Record<typeof input.status, number> = { sent: 1, delivered: 2, read: 3, failed: 4 }
+  return db.$transaction(async (tx) => {
+    const message = await tx.channelMessage.findUnique({
+      where: {
+        conversationId_externalMessageId: {
+          conversationId: input.conversationId,
+          externalMessageId: input.providerMessageId,
+        },
+      },
+    })
+    if (!message || message.direction !== 'out') return null
+    let metadata: Record<string, unknown> = {}
+    try {
+      const parsed = message.metadata ? JSON.parse(message.metadata) : {}
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) metadata = parsed
+    } catch {
+      metadata = {}
+    }
+    const current = metadata.deliveryStatus
+    if (current === 'failed' || (typeof current === 'string' && current in rank && rank[current as keyof typeof rank] >= rank[input.status])) {
+      return message
+    }
+    metadata.deliveryStatus = input.status
+    if (input.timestamp && /^\\d{1,12}$/.test(input.timestamp)) metadata.deliveryStatusAt = input.timestamp
+    return tx.channelMessage.update({
+      where: { id: message.id },
+      data: { metadata: JSON.stringify(metadata) },
+    })
   })
 }
 
