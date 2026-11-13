@@ -22,7 +22,12 @@ export async function GET(req: NextRequest) {
         lastVerifiedAt: true,
       },
     })
+    const integration = await db.integration.findUnique({
+      where: { organizationId: auth.orgId },
+      select: { instagramAccountId: true },
+    })
     return NextResponse.json({
+      selectedConnectionId: connections.find((connection) => connection.externalAccountId === integration?.instagramAccountId)?.id || null,
       connections: connections.map((connection) => {
         let metadata: { username?: string | null; pageName?: string | null } = {}
         try { metadata = JSON.parse(connection.metadata || '{}') } catch { /* metadata no confiable: omitir */ }
