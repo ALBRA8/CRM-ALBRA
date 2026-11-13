@@ -466,6 +466,11 @@ export async function markInboxRead(orgId: string, key: string): Promise<void> {
   if (!parsed) return
   try {
     if (key.startsWith('cc:')) {
+      const conversation = await db.channelConversation.findFirst({
+        where: { id: parsed.id, organizationId: orgId },
+        select: { channel: true, connection: { select: { channel: true, status: true } } },
+      })
+      if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return
       await db.channelConversation.updateMany({
         where: {
           id: parsed.id,
