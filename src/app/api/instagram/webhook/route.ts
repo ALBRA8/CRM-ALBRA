@@ -159,34 +159,28 @@ export async function POST(req: NextRequest) {
         externalContactKey: senderId,
       })
       if (conversation) {
+        try {
+          await db.channelMessage.create({
+            data: {
+              conversationId: conversation.id,
+              externalMessageId: msg.mid || null,
+              direction: 'in',
+              senderType: 'contact',
+              body: text,
+              messageType: 'text',
+              metadata: JSON.stringify({ senderId }),
+            },
+          })
+        } catch (err) {
+          // La unicidad por conversación + ID externo hace idempotente la
+          // entrega repetida de Meta antes de actualizar unread/timeline/IA.
+          if ((err as { code?: string })?.code === 'P2002' && msg.mid) continue
+          throw err
+        }
         await db.channelConversation.update({
           where: { id: conversation.id },
           data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
         })
-      }
-      if (conversation) {
-        const messageData = {
-          conversationId: conversation.id,
-          direction: 'in',
-          senderType: 'contact',
-          body: text,
-          messageType: 'text',
-          metadata: JSON.stringify({ senderId }),
-        }
-        if (msg.mid) {
-          await db.channelMessage.upsert({
-            where: {
-              conversationId_externalMessageId: {
-                conversationId: conversation.id,
-                externalMessageId: msg.mid,
-              },
-            },
-            create: { ...messageData, externalMessageId: msg.mid },
-            update: {},
-          })
-        } else {
-          await db.channelMessage.create({ data: messageData })
-        }
       }
 
       // find-or-create Client (phone = "ig:<senderId>" para deduplicar por canal)
