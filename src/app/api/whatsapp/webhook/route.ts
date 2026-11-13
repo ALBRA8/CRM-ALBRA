@@ -114,322 +114,294 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Body inválido' }, { status: 400 })
     }
 
-    // Localiza la org validando la firma contra cada app secret configurado.
-    // OPTIMIZACIÓN (auditoría Antigravity, importante #4): si el webhook trae
-    // phone_number_id, pre-filtramos por él ANTES del bucle criptográfico —
-    // típicamente 1 candidato en vez de desencriptar + HMAC para TODAS las orgs.
-    const phoneNumberId = body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id || null
+    // Meta puede agrupar varios phone_number_id en un único POST. Resolver
+    // cada número independientemente y nunca inferir la organización desde otro
+    // evento del mismo payload.
+    const allValues = (body.entry ?? [])
+      .flatMap((entry) => entry.changes ?? [])
+      .map((change) => change.value)
+      .filter((value): value is WaValue => !!value)
+    const phoneNumberIds = [...new Set(allValues.map((value) => value.metadata?.phone_number_id).filter((id): id is string => !!id))]
+    const matchedTargets: Array<{ orgId: string; phoneId: string; cloudToken: string | null; fallbackValue: WaValue }> = []
 
-    // ---------- FASE 1 (OLEADA 2): atribución por WhatsAppConnection ----------
-    // Decisión 2026-11-11 (punto 4): cada número/mensaje/evento se atribuye
-    // AUTOMÁTICAMENTE a su organización por phoneNumberId (UNIQUE global:
-    // un número pertenece a UNA org). La firma X-Hub-Signature-256 se valida
-    // contra el secreto de la app dueña de la conexión (propia de la org o
-    // la global de plataforma con Embedded Signup). NUNCA se acepta la org
-    // que el body "dice" ser: solo la que resuelve la tabla de conexiones.
-    let matchedOrgId: string | null = null
-    let matchedValue: WaValue | null = null
-    let matchedCloudToken: string | null = null
-    let matchedPhoneId: string | null = null
-
-    if (phoneNumberId) {
+    for (const phoneId of phoneNumberIds) {
       const connection = await db.whatsAppConnection.findUnique({
-        where: { phoneNumberId },
-        select: { id: true, organizationId: true, status: true, accessTokenEnc: true, metaAppSecretEnc: true },
+        where: { phoneNumberId: phoneId },
+        select: { organizationId: true, status: true, accessTokenEnc: true, metaAppSecretEnc: true },
       })
-      if (connection && connection.status === 'connected') {
-        const secrets: string[] = []
-        const connSecret = decryptSecret(connection.metaAppSecretEnc)
-        if (connSecret) secrets.push(connSecret)
-        const platformSecret = process.env.META_APP_SECRET
-        if (platformSecret) secrets.push(platformSecret)
-        for (const secret of secrets) {
-          if (verifyMetaSignature(rawBody, secret, signature)) {
-            // (A1-09, auditoría 2026-11-11) Iterar TODAS las entry/changes:
-            // Meta agrupa varios cambios por app en un solo webhook; procesar
-            // solo entry[0].changes[0] perdía mensajes silenciosamente.
-            for (const change of (body.entry || []).flatMap((e) => e.changes || [])) {
-              const value = change.value
-              if (!value) continue
-              if (value.metadata?.phone_number_id && value.metadata.phone_number_id !== phoneNumberId) continue
-              matchedOrgId = connection.organizationId
-              matchedValue = value
-              matchedCloudToken = decryptSecret(connection.accessTokenEnc)
-              matchedPhoneId = phoneNumberId
-              break
-            }
-            if (matchedOrgId) break
+      if (connection?.status === 'connected') {
+        const secrets = [decryptSecret(connection.metaAppSecretEnc), process.env.META_APP_SECRET].filter((secret): secret is string => !!secret)
+        const validSignature = secrets.some((secret) => verifyMetaSignature(rawBody, secret, signature))
+        if (validSignature) {
+          const matchingValue = allValues.find((value) => value.metadata?.phone_number_id === phoneId)
+          if (matchingValue) {
+            matchedTargets.push({
+              orgId: connection.organizationId,
+              phoneId,
+              cloudToken: decryptSecret(connection.accessTokenEnc),
+              fallbackValue: matchingValue,
+            })
+            continue
           }
         }
       }
-    }
 
-    // ---------- FASE 2 (legado Integration, un número por org) ----------
-    // Se mantiene operativo para organizaciones migradas aún no recreadas
-    // en WhatsAppConnection (compatibilidad: nada se rompe).
-    const candidates = matchedOrgId
-      ? []
-      : await db.integration.findMany({
-          where: {
-            metaAppSecretEnc: { not: null },
-            ...(phoneNumberId ? { whatsappPhoneId: phoneNumberId } : {}),
-          },
-          select: { organizationId: true, metaAppSecretEnc: true, whatsappPhoneId: true, whatsappCloudTokenEnc: true },
+      // Compatibilidad con organizaciones aún no migradas a WhatsAppConnection.
+      const legacyCandidates = await db.integration.findMany({
+        where: { metaAppSecretEnc: { not: null }, whatsappPhoneId: phoneId },
+        select: { organizationId: true, metaAppSecretEnc: true, whatsappCloudTokenEnc: true, whatsappPhoneId: true },
+      })
+      for (const candidate of legacyCandidates) {
+        const secret = decryptSecret(candidate.metaAppSecretEnc)
+        if (!secret || !verifyMetaSignature(rawBody, secret, signature)) continue
+        const matchingValue = allValues.find((value) => value.metadata?.phone_number_id === phoneId)
+        if (!matchingValue) continue
+        matchedTargets.push({
+          orgId: candidate.organizationId,
+          phoneId,
+          cloudToken: decryptSecret(candidate.whatsappCloudTokenEnc),
+          fallbackValue: matchingValue,
         })
-
-    for (const candidate of candidates) {
-      const secret = decryptSecret(candidate.metaAppSecretEnc)
-      if (!secret) continue
-      if (!verifyMetaSignature(rawBody, secret, signature)) continue
-      for (const change of (body.entry || []).flatMap((e) => e.changes || [])) {
-        const value = change.value
-        if (!value) continue
-        // Aislamiento multi-tenant: el phone_number_id debe ser el de esta org (si está definido)
-        if (candidate.whatsappPhoneId && value.metadata?.phone_number_id && value.metadata.phone_number_id !== candidate.whatsappPhoneId) continue
-        matchedOrgId = candidate.organizationId
-        matchedValue = value
-        matchedCloudToken = decryptSecret(candidate.whatsappCloudTokenEnc)
-        matchedPhoneId = candidate.whatsappPhoneId
         break
       }
-      if (matchedOrgId) break
     }
 
-    if (!matchedOrgId) {
+    if (matchedTargets.length === 0) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
-    // La conexión canónica es la lectura primaria de credenciales cuando
-    // existe. WhatsAppConnection se conserva como autoridad de atribución y
-    // fallback durante la migración gradual.
-    if (matchedPhoneId) {
-      const providerAccountKey = `meta:whatsapp:${matchedPhoneId}`
-      const canonical = await db.channelConnection.findUnique({
-        where: { providerAccountKey },
-        select: { organizationId: true, channel: true, status: true, credentialsEnc: true },
-      })
-      if (canonical) {
-        if (canonical.organizationId !== matchedOrgId || canonical.channel !== 'whatsapp' || canonical.status !== 'connected') {
-          return json({ error: 'Conexión WhatsApp no disponible' }, { status: 401 })
-        }
-        const plaintext = decryptSecret(canonical.credentialsEnc)
-        if (!plaintext) return json({ error: 'Credenciales WhatsApp no disponibles' }, { status: 401 })
-        try {
-          const credentials = JSON.parse(plaintext) as { accessToken?: string }
-          if (!credentials.accessToken) return json({ error: 'Token WhatsApp no disponible' }, { status: 401 })
-          matchedCloudToken = credentials.accessToken
-        } catch {
-          return json({ error: 'Credenciales WhatsApp inválidas' }, { status: 401 })
-        }
-      }
-    }
-
-    // (A1-09, auditoría 2026-11-11) Meta puede agrupar VARIAS entry/changes
-    // en un solo POST: se procesan TODAS las ocurrencias del número de la org
-    // autenticada. Antes solo se leía entry[0].changes[0] y el resto se
-    // descartaba en silencio → mensajes perdidos sin traza.
-    const allValues = (body.entry ?? [])
-      .flatMap((e) => e.changes ?? [])
-      .map((c) => c.value)
-      .filter((v): v is WaValue => !!v)
-    const processableValues = allValues.filter(
-      (v) => !matchedPhoneId || !v.metadata?.phone_number_id || v.metadata.phone_number_id === matchedPhoneId
-    )
-
-    for (const value of processableValues.length ? processableValues : [matchedValue as WaValue]) {
-    // Estados de entrega (sent/delivered/read) — dedup por messageId también
-    // aquí (reauditoría ciclo 2): los reintentos de Meta duplicaban el timeline
-    // de estados aunque los mensajes ya se filtraran.
-    for (const status of value.statuses || []) {
-      if (status.id) {
-        const seenStatus = await db.timelineEvent.findFirst({
-          where: {
-            organizationId: matchedOrgId,
-            type: 'whatsapp',
-            metadata: { contains: `"messageId":"${status.id}"` },
-          },
-          select: { id: true },
+    // Cada número tiene su propio tenant, token y partición de conversaciones.
+    for (const target of matchedTargets) {
+      const matchedOrgId = target.orgId
+      const matchedPhoneId = target.phoneId
+      const fallbackValue = target.fallbackValue
+      let matchedCloudToken = target.cloudToken
+      // La conexión canónica es la lectura primaria de credenciales cuando
+      // existe. WhatsAppConnection se conserva como autoridad de atribución y
+      // fallback durante la migración gradual.
+      if (matchedPhoneId) {
+        const providerAccountKey = `meta:whatsapp:${matchedPhoneId}`
+        const canonical = await db.channelConnection.findUnique({
+          where: { providerAccountKey },
+          select: { organizationId: true, channel: true, status: true, credentialsEnc: true },
         })
-        if (seenStatus) continue
-      }
-      await recordTimelineEvent({
-        orgId: matchedOrgId,
-        type: 'whatsapp',
-        title: `Estado del mensaje: ${status.status}`,
-        metadata: { messageId: status.id, status: status.status, direction: 'out' },
-        source: 'integration',
-      })
-    }
-
-    for (const message of value.messages || []) {
-      // ================================================================
-      // (A4-02, auditoría 2026-11-11) DEDUP por waMessageId: Meta re-entrega
-      // webhooks ante timeout; sin dedup, la auto-respuesta IA salía DOS
-      // veces al cliente. El índice único (organizationId, waMessageId) —
-      // migración 4 — respalda el lookup; si ya existe, se omite (200 temprano
-      // ya fue respondido por Meta en la primera entrega).
-      // ================================================================
-      if (message.id) {
-        const seen = await db.whatsAppMessage.findFirst({
-          where: { organizationId: matchedOrgId, waMessageId: message.id },
-          select: { id: true },
-        })
-        if (seen) continue
-      }
-      let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
-      let isVoice = false
-
-      // Notas de voz (Cloud API type 'audio'): antes se descartaban ("if (!text) continue").
-      // Se descargan del Graph API con el token Cloud de la org y se transcriben (ASR).
-      if (!text && message.audio && matchedCloudToken) {
-        try {
-          const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.audio.id })
-          text = await transcribeAudioBase64(buf.toString('base64'))
-          isVoice = true
-        } catch (err) {
-          // Fail-open a humano: la nota queda registrada en timeline + push al equipo
-          console.error('[whatsapp webhook] nota de voz no transcrita', err)
-          const phoneFall = normalizePhone(message.from)
-          if (phoneFall) {
-            const fbClient = await findOrCreateChannelClient({ orgId: matchedOrgId, platformKey: phoneFall, name: null, source: 'whatsapp' })
-            await recordTimelineEvent({
-              orgId: matchedOrgId,
-              clientId: fbClient?.id || null,
-              type: 'whatsapp',
-              title: `Nota de voz recibida de ${phoneFall} (no transcrita)`,
-              description: 'No se pudo transcribir la nota de voz automáticamente. Escucha el audio desde WhatsApp.',
-              metadata: { from: phoneFall, direction: 'in', voice: true, reason: err instanceof Error ? err.message : 'desconocido' },
-              source: 'integration',
-            })
-            await notifyOrganization(matchedOrgId, {
-              type: 'integration',
-              title: 'WhatsApp: nota de voz sin transcribir',
-              body: `${phoneFall} envió una nota de voz que no se pudo transcribir. Escucha el audio en WhatsApp.`,
-              data: JSON.stringify({ clientId: fbClient?.id, channel: 'whatsapp' }),
-            })
+        if (canonical) {
+          if (canonical.organizationId !== matchedOrgId || canonical.channel !== 'whatsapp' || canonical.status !== 'connected') {
+            return json({ error: 'Conexión WhatsApp no disponible' }, { status: 401 })
+          }
+          const plaintext = decryptSecret(canonical.credentialsEnc)
+          if (!plaintext) return json({ error: 'Credenciales WhatsApp no disponibles' }, { status: 401 })
+          try {
+            const credentials = JSON.parse(plaintext) as { accessToken?: string }
+            if (!credentials.accessToken) return json({ error: 'Token WhatsApp no disponible' }, { status: 401 })
+            matchedCloudToken = credentials.accessToken
+          } catch {
+            return json({ error: 'Credenciales WhatsApp inválidas' }, { status: 401 })
           }
         }
       }
-      // (A4-02, auditoría 2026-11-11) Dedup DURABLE por waMessageId: Meta
-      // reintenta el webhook ante timeouts y una doble ejecución duplicaría
-      // timeline + respuestas IA + reenvío al puente. Lookup previo del mensaje
-      // ya registrado en TimelineEvent. Nota honesta (reauditoría ciclo 2): el
-      // índice único parcial (organizationId, waMessageId) de la migración
-      // 4_audit_indexes cierra la vía de escritura del DAEMON (tabla
-      // WhatsAppMessage); este lookup check-then-act conserva una ventana
-      // TOCTOU residual ante POSTs verdaderamente simultáneos.
-      if (message.id) {
-        const seen = await db.timelineEvent.findFirst({
-          where: {
-            organizationId: matchedOrgId,
-            type: 'whatsapp',
-            metadata: { contains: `"messageId":"${message.id}"` },
-          },
-          select: { id: true },
-        })
-        if (seen) continue
-      }
-      if (!text) continue
-      const phone = normalizePhone(message.from)
-      if (!phone) continue
-      const profileName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name || null
-
-      // Conversación canónica: particionada por el phone_number_id exacto
-      // (conexión) y el teléfono externo del contacto.
-      const channelConversation = matchedPhoneId
-        ? await getOrCreateChannelConversation({
-            providerAccountKey: `meta:whatsapp:${matchedPhoneId}`,
-            channel: 'whatsapp',
-            externalContactKey: phone,
-            contactName: profileName,
+  
+        // (A1-09, auditoría 2026-11-11) Meta puede agrupar VARIAS entry/changes
+      // en un solo POST: se procesan TODAS las ocurrencias del número de la org
+      // autenticada. Antes solo se leía entry[0].changes[0] y el resto se
+      // descartaba en silencio → mensajes perdidos sin traza.
+      const processableValues = allValues.filter((value) => value.metadata?.phone_number_id === matchedPhoneId)
+      for (const value of processableValues.length ? processableValues : [fallbackValue]) {
+      // Estados de entrega (sent/delivered/read) — dedup por messageId también
+      // aquí (reauditoría ciclo 2): los reintentos de Meta duplicaban el timeline
+      // de estados aunque los mensajes ya se filtraran.
+      for (const status of value.statuses || []) {
+        if (status.id) {
+          const seenStatus = await db.timelineEvent.findFirst({
+            where: {
+              organizationId: matchedOrgId,
+              type: 'whatsapp',
+              metadata: { contains: `"messageId":"${status.id}"` },
+            },
+            select: { id: true },
           })
-        : null
-      if (channelConversation) {
-        await db.channelConversation.update({
-          where: { id: channelConversation.id },
-          data: {
-            lastMessage: text.slice(0, 500),
-            lastMessageAt: new Date(),
-            unreadCount: { increment: 1 },
-          },
+          if (seenStatus) continue
+        }
+        await recordTimelineEvent({
+          orgId: matchedOrgId,
+          type: 'whatsapp',
+          title: `Estado del mensaje: ${status.status}`,
+          metadata: { messageId: status.id, status: status.status, direction: 'out' },
+          source: 'integration',
         })
       }
-
-      // find-or-create Client por teléfono (aislado por org)
-      const client = await findOrCreateChannelClient({ orgId: matchedOrgId, platformKey: phone, name: profileName, source: 'whatsapp' })
-
-      await recordTimelineEvent({
-        orgId: matchedOrgId,
-        clientId: client?.id || null,
-        type: 'whatsapp',
-        title: isVoice ? `Nota de voz de ${profileName || phone} (transcrita)` : `Mensaje recibido de ${profileName || phone}`,
-        description: text.slice(0, 500),
-        metadata: { from: phone, direction: 'in', messageId: message.id, ...(isVoice ? { voice: true } : {}) },
-        source: 'integration',
-      })
-
-      try {
-        await runWorkflowsForTrigger({
-          orgId: matchedOrgId,
-          type: 'message_received',
-          payload: { channel: 'whatsapp', from: phone, text, conversationId: phone, clientId: client?.id },
-        })
-      } catch (err) {
-        console.error('[whatsapp webhook] workflows', err)
-      }
-
-      // Inbound Bridge CRM→WHATSPOWER (Nivel 2): reenvía el mensaje entrante
-      // firmado (HMAC-SHA256 + timestamp) al motor conversacional. Fire-and-forget:
-      // si WHATSPOWER está caído o deshabilitado el CRM sigue operativo (modo
-      // Nivel 1 autónomo, ver README de WHATSPOWER).
-      forwardInboundToWhatspower({
-        orgId: matchedOrgId,
-        phone,
-        name: profileName,
-        text,
-        messageId: message.id,
-      }).catch((err) => console.error('[whatsapp webhook] whatspower bridge', err))
-
-      // Auto-respuesta IA
-      const nicho = await db.nichoConfig.findUnique({ where: { organizationId: matchedOrgId }, select: { autoReplyEnabled: true } })
-      if (nicho?.autoReplyEnabled ?? true) {
-        await llmReplyOrNotification({
-          orgId: matchedOrgId,
-          clientId: client?.id || null,
-          channelLabel: 'WhatsApp',
-          incomingText: text,
-          handoffKeywords: await getHandoffKeywords(matchedOrgId),
-          nichoContext: await buildNichoContext(matchedOrgId),
-          send: async (reply) => {
-            if (matchedCloudToken && matchedPhoneId) {
-              const sent = await sendWhatsAppCloud({ token: matchedCloudToken, phoneId: matchedPhoneId, to: phone, text: reply })
+  
+      for (const message of value.messages || []) {
+        // ================================================================
+        // (A4-02, auditoría 2026-11-11) DEDUP por waMessageId: Meta re-entrega
+        // webhooks ante timeout; sin dedup, la auto-respuesta IA salía DOS
+        // veces al cliente. El índice único (organizationId, waMessageId) —
+        // migración 4 — respalda el lookup; si ya existe, se omite (200 temprano
+        // ya fue respondido por Meta en la primera entrega).
+        // ================================================================
+        if (message.id) {
+          const seen = await db.whatsAppMessage.findFirst({
+            where: { organizationId: matchedOrgId, waMessageId: message.id },
+            select: { id: true },
+          })
+          if (seen) continue
+        }
+        let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
+        let isVoice = false
+  
+        // Notas de voz (Cloud API type 'audio'): antes se descartaban ("if (!text) continue").
+        // Se descargan del Graph API con el token Cloud de la org y se transcriben (ASR).
+        if (!text && message.audio && matchedCloudToken) {
+          try {
+            const buf = await downloadWaCloudMedia({ token: matchedCloudToken, mediaId: message.audio.id })
+            text = await transcribeAudioBase64(buf.toString('base64'))
+            isVoice = true
+          } catch (err) {
+            // Fail-open a humano: la nota queda registrada en timeline + push al equipo
+            console.error('[whatsapp webhook] nota de voz no transcrita', err)
+            const phoneFall = normalizePhone(message.from)
+            if (phoneFall) {
+              const fbClient = await findOrCreateChannelClient({ orgId: matchedOrgId, platformKey: phoneFall, name: null, source: 'whatsapp' })
               await recordTimelineEvent({
                 orgId: matchedOrgId,
-                clientId: client?.id || null,
+                clientId: fbClient?.id || null,
                 type: 'whatsapp',
-                title: 'Respuesta automática del agente IA',
-                description: reply.slice(0, 500),
-                metadata: { to: phone, direction: 'out', delivered: sent.ok, via: 'cloud-api' },
-                source: 'agent',
+                title: `Nota de voz recibida de ${phoneFall} (no transcrita)`,
+                description: 'No se pudo transcribir la nota de voz automáticamente. Escucha el audio desde WhatsApp.',
+                metadata: { from: phoneFall, direction: 'in', voice: true, reason: err instanceof Error ? err.message : 'desconocido' },
+                source: 'integration',
               })
-            } else {
-              // Sin Cloud token: la respuesta queda registrada en el timeline para envío manual
-              await recordTimelineEvent({
-                orgId: matchedOrgId,
-                clientId: client?.id || null,
-                type: 'whatsapp',
-                title: 'Respuesta sugerida por el agente IA (sin envío automático)',
-                description: reply.slice(0, 500),
-                metadata: { to: phone, direction: 'out', delivered: false, via: 'timeline' },
-                source: 'agent',
+              await notifyOrganization(matchedOrgId, {
+                type: 'integration',
+                title: 'WhatsApp: nota de voz sin transcribir',
+                body: `${phoneFall} envió una nota de voz que no se pudo transcribir. Escucha el audio en WhatsApp.`,
+                data: JSON.stringify({ clientId: fbClient?.id, channel: 'whatsapp' }),
               })
             }
-          },
+          }
+        }
+        // (A4-02, auditoría 2026-11-11) Dedup DURABLE por waMessageId: Meta
+        // reintenta el webhook ante timeouts y una doble ejecución duplicaría
+        // timeline + respuestas IA + reenvío al puente. Lookup previo del mensaje
+        // ya registrado en TimelineEvent. Nota honesta (reauditoría ciclo 2): el
+        // índice único parcial (organizationId, waMessageId) de la migración
+        // 4_audit_indexes cierra la vía de escritura del DAEMON (tabla
+        // WhatsAppMessage); este lookup check-then-act conserva una ventana
+        // TOCTOU residual ante POSTs verdaderamente simultáneos.
+        if (message.id) {
+          const seen = await db.timelineEvent.findFirst({
+            where: {
+              organizationId: matchedOrgId,
+              type: 'whatsapp',
+              metadata: { contains: `"messageId":"${message.id}"` },
+            },
+            select: { id: true },
+          })
+          if (seen) continue
+        }
+        if (!text) continue
+        const phone = normalizePhone(message.from)
+        if (!phone) continue
+        const profileName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name || null
+  
+        // Conversación canónica: particionada por el phone_number_id exacto
+        // (conexión) y el teléfono externo del contacto.
+        const channelConversation = matchedPhoneId
+          ? await getOrCreateChannelConversation({
+              providerAccountKey: `meta:whatsapp:${matchedPhoneId}`,
+              channel: 'whatsapp',
+              externalContactKey: phone,
+              contactName: profileName,
+            })
+          : null
+        if (channelConversation) {
+          await db.channelConversation.update({
+            where: { id: channelConversation.id },
+            data: {
+              lastMessage: text.slice(0, 500),
+              lastMessageAt: new Date(),
+              unreadCount: { increment: 1 },
+            },
+          })
+        }
+  
+        // find-or-create Client por teléfono (aislado por org)
+        const client = await findOrCreateChannelClient({ orgId: matchedOrgId, platformKey: phone, name: profileName, source: 'whatsapp' })
+  
+        await recordTimelineEvent({
+          orgId: matchedOrgId,
+          clientId: client?.id || null,
+          type: 'whatsapp',
+          title: isVoice ? `Nota de voz de ${profileName || phone} (transcrita)` : `Mensaje recibido de ${profileName || phone}`,
+          description: text.slice(0, 500),
+          metadata: { from: phone, direction: 'in', messageId: message.id, ...(isVoice ? { voice: true } : {}) },
+          source: 'integration',
         })
+  
+        try {
+          await runWorkflowsForTrigger({
+            orgId: matchedOrgId,
+            type: 'message_received',
+            payload: { channel: 'whatsapp', from: phone, text, conversationId: phone, clientId: client?.id },
+          })
+        } catch (err) {
+          console.error('[whatsapp webhook] workflows', err)
+        }
+  
+        // Inbound Bridge CRM→WHATSPOWER (Nivel 2): reenvía el mensaje entrante
+        // firmado (HMAC-SHA256 + timestamp) al motor conversacional. Fire-and-forget:
+        // si WHATSPOWER está caído o deshabilitado el CRM sigue operativo (modo
+        // Nivel 1 autónomo, ver README de WHATSPOWER).
+        forwardInboundToWhatspower({
+          orgId: matchedOrgId,
+          phone,
+          name: profileName,
+          text,
+          messageId: message.id,
+        }).catch((err) => console.error('[whatsapp webhook] whatspower bridge', err))
+  
+        // Auto-respuesta IA
+        const nicho = await db.nichoConfig.findUnique({ where: { organizationId: matchedOrgId }, select: { autoReplyEnabled: true } })
+        if (nicho?.autoReplyEnabled ?? true) {
+          await llmReplyOrNotification({
+            orgId: matchedOrgId,
+            clientId: client?.id || null,
+            channelLabel: 'WhatsApp',
+            incomingText: text,
+            handoffKeywords: await getHandoffKeywords(matchedOrgId),
+            nichoContext: await buildNichoContext(matchedOrgId),
+            send: async (reply) => {
+              if (matchedCloudToken && matchedPhoneId) {
+                const sent = await sendWhatsAppCloud({ token: matchedCloudToken, phoneId: matchedPhoneId, to: phone, text: reply })
+                await recordTimelineEvent({
+                  orgId: matchedOrgId,
+                  clientId: client?.id || null,
+                  type: 'whatsapp',
+                  title: 'Respuesta automática del agente IA',
+                  description: reply.slice(0, 500),
+                  metadata: { to: phone, direction: 'out', delivered: sent.ok, via: 'cloud-api' },
+                  source: 'agent',
+                })
+              } else {
+                // Sin Cloud token: la respuesta queda registrada en el timeline para envío manual
+                await recordTimelineEvent({
+                  orgId: matchedOrgId,
+                  clientId: client?.id || null,
+                  type: 'whatsapp',
+                  title: 'Respuesta sugerida por el agente IA (sin envío automático)',
+                  description: reply.slice(0, 500),
+                  metadata: { to: phone, direction: 'out', delivered: false, via: 'timeline' },
+                  source: 'agent',
+                })
+              }
+            },
+          })
+        }
       }
-    }
-
-    }
+  
+      }
+  
+      }
 
     // Meta exige 200 rápido
     return json({ ok: true })
