@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/lib/db'
-import { enqueueWorkflowOutboundMessage, dispatchWorkflowOutboundMessage } from '@/lib/workflow-outbox'
+import { enqueueWorkflowOutboundMessage, dispatchWorkflowOutboundMessage, quarantineStaleWorkflowOutboundMessages } from '@/lib/workflow-outbox'
 import { FIX } from '../setup/seed-data'
 
 const pairs: Array<{ automationId: string; runId: string }> = []
@@ -71,6 +71,28 @@ describe('workflow outbound outbox dispatcher', () => {
     const stored = await db.workflowOutboundMessage.findUnique({ where: { id: intent.id } })
     expect(stored?.status).toBe('unknown')
     expect(stored?.providerErrorCode).toBe('PROVIDER_RESULT_UNCERTAIN')
+  })
+
+  it('does not report sent when a stale lease was quarantined before provider acknowledgement', async () => {
+    process.env.WHATSAPP_DAEMON_URL = 'http://daemon.test'
+    process.env.INTERNAL_API_SECRET = testDaemonSecret
+    const run = await createRun('Workflow outbox stale lease')
+    const intent = await enqueueWorkflowOutboundMessage({
+      organizationId: FIX.orgA.id, ...run, stepIndex: 0, channel: 'whatsapp',
+      payload: { to: '573001234567', text: 'lease de prueba' },
+    })
+    outboundIds.push(intent.id)
+    let resolveFetch!: (response: Response) => void
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(() => new Promise<Response>((resolve) => { resolveFetch = resolve }))
+    const dispatch = dispatchWorkflowOutboundMessage(intent.id)
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+    await db.workflowOutboundMessage.update({ where: { id: intent.id }, data: { startedAt: new Date(Date.now() - 6 * 60_000) } })
+    await quarantineStaleWorkflowOutboundMessages()
+    resolveFetch(new Response(JSON.stringify({ success: true, messageId: 'late-provider-ack' }), { status: 200 }))
+    expect(await dispatch).toEqual({ status: 'unknown' })
+    const stored = await db.workflowOutboundMessage.findUnique({ where: { id: intent.id } })
+    expect(stored?.status).toBe('unknown')
+    expect(stored?.providerMessageId).toBeNull()
   })
 
   it('rejects an outbox intent that references another organization run', async () => {
