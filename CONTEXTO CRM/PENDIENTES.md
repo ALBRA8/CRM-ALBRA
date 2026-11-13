@@ -169,3 +169,11 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Endpoint de conciliación manual `unknown → sent|failed`, requiere confirmación de consulta al proveedor y registra evento de auditoría.
 - [ ] Pendiente: aprobar permisos Meta, ventanas de mensajería, observabilidad/runbook, prueba controlada y autorización expresa antes de configurar el secreto/activar el worker.
 - [ ] Pendiente: añadir Messenger, Telegram y TikTok al outbox con adaptadores y contratos verificados; actualmente solo WhatsApp Cloud e Instagram son encolables.
+
+
+## Pruebas de ruta canónica inbox/outbox — 2026-11-13
+
+- [x] Añadir integración de `POST /api/inbox/send`: 202 HTTP queued, ausencia de llamada de red, requestId obligatorio, aislamiento cross-tenant, provider/canal incompatible sin fallback legacy e idempotencia HTTP.
+- [ ] Confirmar CI del commit de pruebas `98fee6991df657ad564530e2dd1e0643d639f269` (run `43466211765`, en ejecución al registrar esta nota). Solo marcar aprobado después de revisar conclusión y jobs.
+- [ ] Si CI falla, inspeccionar logs y corregir la causa sin retirar las aserciones de seguridad.
+- [ ] Mantener worker deshabilitado; no configurar secreto ni habilitar despacho sin aprobación expresa.
