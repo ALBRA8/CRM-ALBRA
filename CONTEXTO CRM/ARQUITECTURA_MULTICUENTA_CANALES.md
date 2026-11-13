@@ -161,6 +161,15 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - Rollback de lectura legacy mantiene operativas las integraciones previas.
 - Ninguna respuesta API/log/trace incluye credenciales o secretos.
 
+## Outbox y echoes de proveedor (actualización 2026-11-13)
+
+- El endpoint canónico `POST /api/inbox/send` encola intenciones; el worker permanece deshabilitado por feature flag y no tiene scheduler registrado.
+- La confirmación de envío ahora busca primero un `ChannelMessage` saliente existente con el mismo `conversationId + externalMessageId`. Si coincide en dirección y cuerpo y aún no está ligado a otro outbox, lo vincula mediante `outboundId` en la misma transacción en lugar de insertar una segunda fila.
+- La conciliación manual de `unknown → sent` aplica la misma vinculación segura.
+- El webhook de Instagram ya no descarta silenciosamente los eventos `is_echo`: los persiste como mensajes salientes usando el destinatario como contacto y el `mid` de Meta. Así, si el echo llega antes del ACK del worker, la confirmación posterior enlaza la fila existente.
+- Se añadió una prueba de integración que simula el orden echo-antes-de-ACK y comprueba que queda una sola fila y se enlaza al outbox.
+- Límite conocido: esto cierra la carrera para echoes de Instagram con `mid` coincidente; no demuestra deduplicación exactly-once de todos los webhooks ni cubre todavía echoes/estados equivalentes de WhatsApp. La CI para el HEAD `4c47c9bd08b6e55dc7090c7755ba190da38701ad` está en ejecución al redactar esta nota.
+
 ## Estado de implementación
 
 **Actualización 2026-11-13:** Fase 0 y parte de la fase 1 están implementadas en la rama. Se añadieron `ChannelConnection`, `ChannelConnectionEvent`, `ChannelConversation` y `ChannelMessage`, con migraciones SQLite aditivas 5, 6 y 7. Instagram dispone de selector multicuenta; los webhooks de Instagram y WhatsApp Cloud resuelven cuentas por identificador externo exacto y escriben mensajes entrantes en la estructura canónica, manteniendo las escrituras legacy durante la transición. El webhook WhatsApp procesa múltiples números por POST y aísla fallos de configuración por destino para no abortar otros destinos válidos.
