@@ -224,9 +224,9 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
           if (!cfg) {
             sendError = 'SMTP no configurado (Configuración → Email)'
           } else {
-            const subject = String(config.subject || \`Mensaje de \${cfg.from}\`).replace(/[\r\n]+/g, ' ').slice(0, 200)
+            const subject = String(config.subject || `Mensaje de ${cfg.from}`).replace(/[\r\n]+/g, ' ').slice(0, 200)
             const safeHtmlBody = escapeWorkflowEmailHtml(rendered).replace(/\r?\n/g, '<br>')
-            const html = \`<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">\${safeHtmlBody}</div>\`
+            const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${safeHtmlBody}</div>`
             const result = await trySendSmtp(cfg, String(ctx.email), subject, html, rendered)
             sent = result.ok
             if (!result.ok) sendError = (result.error || 'fallo SMTP').slice(0, 120)
