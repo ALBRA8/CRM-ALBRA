@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHmac } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { GET, POST } from '@/app/api/instagram/webhook/route'
 import { db } from '@/lib/db'
 import { encryptSecret } from '@/lib/crypto'
 import { FIX } from '../setup/seed-data'
+import * as autoResponder from '@/lib/channel-autoresponder'
 
 const APP_SECRET = 'test'.repeat(10)
 const connectionIds: string[] = []
@@ -197,6 +198,47 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
     } finally {
       if (previous === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
       else process.env.CHANNEL_AUTOREPLY_ENABLED = previous
+    }
+  })
+
+  it('persists an AI reply in the durable outbox and never sends from the webhook', async () => {
+    const previousFlag = process.env.CHANNEL_AUTOREPLY_ENABLED
+    process.env.CHANNEL_AUTOREPLY_ENABLED = 'true'
+    const accountId = '17840000000000992'
+    const connection = await createInstagramConnection(accountId)
+    const sendSpy = vi.spyOn(autoResponder, 'llmReplyOrNotification').mockImplementation(async (opts) => {
+      await opts.send('Respuesta automática en cola')
+      return { replied: true, handoff: false, reply: 'Respuesta automática en cola' }
+    })
+    try {
+      const payload = {
+        object: 'instagram',
+        entry: [{
+          id: accountId,
+          messaging: [{
+            sender: { id: 'contact-outbox-autoreply' },
+            recipient: { id: accountId },
+            message: { mid: 'm_provider_mid_with_underscore', text: 'Hola, quiero información' },
+          }],
+        }],
+      }
+      const response = await POST(signedRequest(JSON.stringify(payload)))
+      expect(response.status).toBe(200)
+      const conversation = await db.channelConversation.findFirst({
+        where: { connectionId: connection.id, externalContactKey: 'contact-outbox-autoreply' },
+      })
+      expect(conversation).not.toBeNull()
+      const intents = await db.channelOutboundMessage.findMany({
+        where: { conversationId: conversation!.id },
+      })
+      expect(intents).toHaveLength(1)
+      expect(intents[0].status).toBe('queued')
+      expect(intents[0].body).toBe('Respuesta automática en cola')
+      expect(intents[0].clientRequestId).toMatch(/^autoreply:[a-f0-9]{64}$/)
+    } finally {
+      sendSpy.mockRestore()
+      if (previousFlag === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
+      else process.env.CHANNEL_AUTOREPLY_ENABLED = previousFlag
     }
   })
 
