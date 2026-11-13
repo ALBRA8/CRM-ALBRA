@@ -51,8 +51,6 @@ describe('ChannelMessage — aislamiento e idempotencia por conversación', () =
     for (const [index, conversation] of conversations.entries()) {
       await db.channelMessage.create({
         data: {
-          organizationId: FIX.orgA.id,
-          connectionId: connections[index].id,
           conversationId: conversation.id,
           externalMessageId: messageId,
           direction: 'in',
@@ -64,8 +62,6 @@ describe('ChannelMessage — aislamiento e idempotencia por conversación', () =
 
     await expect(db.channelMessage.create({
       data: {
-        organizationId: FIX.orgA.id,
-        connectionId: connections[0].id,
         conversationId: conversations[0].id,
         externalMessageId: messageId,
         direction: 'in',
