@@ -8,7 +8,7 @@ Estado: guía de staging; **no autoriza activar envíos ni desplegar**.
 
 - `CHANNEL_OUTBOUND_DISPATCH_ENABLED` debe permanecer ausente o distinto de `true`.
 - `CHANNEL_AUTOREPLY_ENABLED` debe permanecer ausente o distinto de `true`; los webhooks no deben responder automáticamente por defecto.
-- `WORKFLOW_EXTERNAL_SENDS_ENABLED` debe permanecer ausente o distinto de `true`; las acciones de workflow que envían WhatsApp/Telegram/email quedan en estado pendiente auditable sin llamar al proveedor.
+- Las acciones externas de workflows están **hard-disabled** hasta que exista una outbox durable común para Baileys, Telegram y SMTP. `WORKFLOW_EXTERNAL_SENDS_ENABLED` es un flag legacy ignorado por el motor; aunque esté en `true`, no habilita envíos. Mantenerlo ausente/false para evitar confusión.
 - `WHATSPOWER_ENABLED` debe permanecer ausente o distinto de `true`; el bridge inbound puede activar automatizaciones remotas, por lo que también se mantiene apagado durante pruebas de recepción.
 - `CHANNEL_OUTBOX_WORKER_SECRET` no debe configurarse en entornos que no vayan a ejecutar el worker.
 - No hay cron/scheduler registrado por el repositorio; el endpoint POST no se ejecuta solo.
@@ -46,7 +46,8 @@ Campos:
 - `webhookEvents.processing`, `failed`, `staleProcessing`: eventos en proceso, fallidos o con lease vencido.
 - `workerEnabled`: valor efectivo del feature flag de outbox.
 - `autoReplyEnabled`: estado efectivo de `CHANNEL_AUTOREPLY_ENABLED`.
-- `workflowExternalSendsEnabled`: estado efectivo de `WORKFLOW_EXTERNAL_SENDS_ENABLED`.
+- `workflowExternalSendsEnabled`: estado efectivo (actualmente siempre `false`, por bloqueo de código).
+- `workflowExternalSendsFlagRequested`: indica si quedó solicitado el flag legacy; no significa que se puedan enviar mensajes.
 - `whatspowerBridgeEnabled`: estado efectivo de `WHATSPOWER_ENABLED`.
 - `connectedMetaConnections`: conexiones WhatsApp/Instagram canónicas conectadas.
 
@@ -124,7 +125,7 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 
 ### Reversión segura de esta fase
 
-1. Deshabilitar `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_EXTERNAL_SENDS_ENABLED` y `WHATSPOWER_ENABLED`; detener cualquier scheduler externo.
+1. Deshabilitar `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_EXTERNAL_SENDS_ENABLED` (legacy, no habilita envíos) y `WHATSPOWER_ENABLED`; detener cualquier scheduler externo.
 2. No borrar ni reencolar registros `unknown`, `sending` o `queued`; exportar únicamente IDs/códigos sanitizados para conciliación.
 3. Si se revierte el código, mantener las migraciones aditivas aplicadas: no existe una migración down automática y las tablas/columnas nuevas no deben eliminarse mientras la versión anterior siga operando.
 4. Restaurar backup solo si se verificó el punto de recuperación y se evaluó la pérdida de escrituras posteriores. Nunca usar `migrate reset` en un entorno con datos.
