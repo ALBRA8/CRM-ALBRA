@@ -305,7 +305,7 @@ export async function POST(req: NextRequest) {
         await runWorkflowsForTrigger({
           orgId,
           type: 'message_received',
-          payload: { channel: 'instagram', from: `ig:${senderId}`, text, conversationId: `ig:${senderId}`, clientId: client?.id },
+          payload: { channel: 'instagram', from: `ig:${senderId}`, text, conversationId: `ig:${senderId}`, clientId: client?.id, ...(msg.mid ? { messageId: msg.mid } : {}) },
         })
       } catch (err) {
         console.error('[instagram webhook] workflows', err)
