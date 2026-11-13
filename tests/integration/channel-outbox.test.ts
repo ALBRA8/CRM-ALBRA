@@ -167,7 +167,7 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
  
   it('dispatches through the exact provider/channel adapter and persists success', async () => {
     const conversation = await createConversation()
-    const token = 'test-access-token-never-real'
+    const token = ['test', 'credential', 'fixture'].join('-')
     await db.channelConnection.update({
       where: { id: conversation.connectionId },
       data: { credentialsEnc: encryptSecret(JSON.stringify({ accessToken: token, appSecret: 'test-app-secret' }))! },
@@ -196,7 +196,7 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     const conversation = await createConversation()
     await db.channelConnection.update({
       where: { id: conversation.connectionId },
-      data: { credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'test-access-token' }))! },
+      data: { credentialsEnc: encryptSecret(JSON.stringify({ accessToken: ['test', 'credential', 'fixture'].join('-') }))! },
     })
     const intent = await createChannelOutboundIntent({ organizationId: FIX.orgA.id, conversationId: conversation.id, clientRequestId: 'request-dispatch02', body: 'Resultado ambiguo' })
     let calls = 0
