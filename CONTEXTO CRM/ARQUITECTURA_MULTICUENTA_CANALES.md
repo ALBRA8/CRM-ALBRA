@@ -290,3 +290,11 @@ Antes de conectar proveedores se implementará un dispatcher aislado con adaptad
 - Excepciones/timeout se consideran resultado incierto y pasan a `unknown`; solo un rechazo inequívoco se marca `failed`; una respuesta aceptada se confirma con `markChannelOutboundSent`.
 - No habrá endpoint público/cron ni adaptador real habilitado hasta que cada proveedor tenga revisión específica y pruebas. El dispatcher inicial no hace llamadas de red por sí mismo.
 - No se promete exactly-once: sin idempotencia del proveedor, el estado `unknown` requiere conciliación manual.
+
+### Implementación del dispatcher (en validación)
+
+- Se añadió `src/lib/channel-outbound-dispatcher.ts`: reclama una intención existente, vuelve a leer conversación/conexión y comprueba tenant, estado, canal y provider antes de descifrar el blob de credenciales.
+- El adaptador se inyecta por clave exacta `<provider>:<channel>`; el módulo no incluye cliente HTTP ni adaptadores reales. El destinatario sale de `ChannelConversation.externalContactKey`, no del body del navegador.
+- Los errores lanzados/ambiguos quedan `unknown`; los rechazos definitivos y las configuraciones inválidas quedan `failed`; una aceptación confirmada persiste el mensaje y estado en la transacción de outbox.
+- Se añadieron pruebas con adaptadores simulados para éxito, timeout sin reintento y ausencia de adaptador. Pendiente validar TypeScript, lint, suite y build sobre el HEAD final.
+- No se habilitó endpoint/worker ni envío real; el inbox canónico sigue bloqueado para enviar hasta implementar y revisar los adaptadores oficiales de WhatsApp Cloud e Instagram.
