@@ -122,12 +122,20 @@ async function buildActionContext(orgId: string, payload: Record<string, unknown
       // El ID foráneo tampoco debe llegar a acciones que creen timeline,
       // oportunidades o notificaciones dentro de la organización actual.
       delete safePayload.clientId
+      delete safePayload.clientName
+      delete safePayload.name
+      delete safePayload.phone
+      delete safePayload.email
       return safePayload
     }
     return { ...safePayload, clientName: client.name, name: client.name, phone: client.phone, email: client.email }
   } catch {
     // Ante fallo de lectura, fallar cerrado respecto al vínculo con el cliente.
     delete safePayload.clientId
+    delete safePayload.clientName
+    delete safePayload.name
+    delete safePayload.phone
+    delete safePayload.email
     return safePayload
   }
 }
