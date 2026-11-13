@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent } from '@/lib/channel-webhook-events'
 import { markChannelOutboundSent, updateChannelMessageDeliveryStatus } from '@/lib/channel-outbox'
 import { json } from '@/lib/api-helpers'
 import { decryptSecret } from '@/lib/crypto'
@@ -104,6 +105,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
+  let activeWebhookEventId: string | null = null
   try {
     const signature = req.headers.get('x-hub-signature-256')
     if (!signature) return json({ error: 'Firma X-Hub-Signature-256 requerida' }, { status: 401 })
@@ -180,6 +182,7 @@ export async function POST(req: NextRequest) {
       const matchedPhoneId = target.phoneId
       const fallbackValue = target.fallbackValue
       let matchedCloudToken = target.cloudToken
+      let matchedCanonicalConnectionId: string | null = null
       // La conexión canónica es la lectura primaria de credenciales cuando
       // existe. WhatsAppConnection se conserva como autoridad de atribución y
       // fallback durante la migración gradual.
@@ -187,9 +190,10 @@ export async function POST(req: NextRequest) {
         const providerAccountKey = `meta:whatsapp:${matchedPhoneId}`
         const canonical = await db.channelConnection.findUnique({
           where: { providerAccountKey },
-          select: { organizationId: true, channel: true, status: true, credentialsEnc: true },
+          select: { id: true, organizationId: true, channel: true, status: true, credentialsEnc: true },
         })
         if (canonical) {
+          matchedCanonicalConnectionId = canonical.id
           if (canonical.organizationId !== matchedOrgId || canonical.channel !== 'whatsapp' || canonical.status !== 'connected') {
             continue
           }
@@ -269,6 +273,16 @@ export async function POST(req: NextRequest) {
           })
           if (seenStatus) continue
         }
+        if (status.id && matchedCanonicalConnectionId) {
+          const claim = await claimChannelWebhookEvent({
+            organizationId: matchedOrgId,
+            connectionId: matchedCanonicalConnectionId,
+            eventKey: `status:${status.id}:${status.status}`,
+            eventType: 'whatsapp.status',
+          })
+          if (!claim) continue
+          activeWebhookEventId = claim.id
+        }
         await recordTimelineEvent({
           orgId: matchedOrgId,
           type: 'whatsapp',
@@ -276,6 +290,10 @@ export async function POST(req: NextRequest) {
           metadata: { messageId: status.id, status: status.status, direction: 'out' },
           source: 'integration',
         })
+        if (activeWebhookEventId) {
+          await completeChannelWebhookEvent(activeWebhookEventId)
+          activeWebhookEventId = null
+        }
       }
   
       for (const message of value.messages || []) {
@@ -350,6 +368,16 @@ export async function POST(req: NextRequest) {
         const phone = normalizePhone(message.from)
         if (!phone) continue
         const profileName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name || null
+        if (message.id && matchedCanonicalConnectionId) {
+          const claim = await claimChannelWebhookEvent({
+            organizationId: matchedOrgId,
+            connectionId: matchedCanonicalConnectionId,
+            eventKey: `message:${message.id}`,
+            eventType: 'whatsapp.message',
+          })
+          if (!claim) continue
+          activeWebhookEventId = claim.id
+        }
   
         // Conversación canónica: particionada por el phone_number_id exacto
         // (conexión) y el teléfono externo del contacto.
@@ -464,6 +492,10 @@ export async function POST(req: NextRequest) {
             },
           })
         }
+        if (activeWebhookEventId) {
+          await completeChannelWebhookEvent(activeWebhookEventId)
+          activeWebhookEventId = null
+        }
       }
   
       }
@@ -473,8 +505,11 @@ export async function POST(req: NextRequest) {
     // Meta exige 200 rápido
     return json({ ok: true })
   } catch (err) {
+    if (activeWebhookEventId) {
+      await failChannelWebhookEvent(activeWebhookEventId, 'PROCESSING_FAILED').catch(() => undefined)
+    }
     console.error('[whatsapp webhook]', err)
-    return json({ ok: true, processed: false })
+    return json({ ok: false, processed: false }, { status: 500 })
   }
 }
 
