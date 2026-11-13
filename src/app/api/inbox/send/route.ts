@@ -4,6 +4,7 @@ import { requireAuth } from '@/lib/auth'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { sendInboxMessage, parseInboxKey, parseWaNewKey } from '@/lib/inbox'
 import { rememberMessage, maybeConsolidate } from '@/lib/memory'
+import { ChannelOutboundError, createChannelOutboundIntent } from '@/lib/channel-outbox'
 
 /**
  * POST /api/inbox/send — envía un mensaje por el canal de la conversación.
@@ -23,11 +24,44 @@ export async function POST(req: NextRequest) {
       contactHandle?: string
       clientId?: string | null
       text?: string
+      clientRequestId?: string
     }
     requireFields(body as unknown as Record<string, unknown>, ['key', 'text'])
     const key = String(body.key)
     if (!parseInboxKey(key) && !parseWaNewKey(key)) {
       return json({ error: 'Conversación inválida' }, { status: 400 })
+    }
+
+    const parsedKey = parseInboxKey(key)
+    if (key.startsWith('cc:') && parsedKey) {
+      try {
+        if (!body.clientRequestId) {
+          return json({ error: 'clientRequestId requerido para conversaciones canónicas' }, { status: 400 })
+        }
+        const intent = await createChannelOutboundIntent({
+          organizationId: auth.orgId,
+          conversationId: parsedKey.id,
+          clientRequestId: String(body.clientRequestId),
+          body: String(body.text || ''),
+          requestedByUserId: auth.userId,
+        })
+        return json({
+          success: true,
+          queued: true,
+          sent: false,
+          outboundId: intent.id,
+          status: intent.status,
+          clientRequestId: intent.clientRequestId,
+        }, { status: 202 })
+      } catch (error) {
+        if (error instanceof ChannelOutboundError) {
+          const status = error.code === 'NOT_FOUND' ? 404
+            : error.code === 'NOT_SENDABLE' || error.code === 'IDEMPOTENCY_CONFLICT' ? 409
+            : 400
+          return json({ error: error.message, code: error.code }, { status })
+        }
+        throw error
+      }
     }
 
     const result = await sendInboxMessage({
