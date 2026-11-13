@@ -13,8 +13,8 @@ import { FIX, jsonBody, req, tokenA } from '../helpers'
  *
  * Usa el CAMINO REAL de la app:
  *  1. POST /api/clients (API autenticada) dispara client_created en el motor.
- *  2. El motor crea la oportunidad (BD real), registra WhatsApp como pendiente
- *     (envíos externos bloqueados hasta outbox durable) y llega al 'wait' 1 día.
+ *  2. El motor crea la oportunidad (BD real), persiste WhatsApp en la outbox durable cifrada
+ *     (el worker permanece apagado por defecto) y llega al 'wait' 1 día.
  *  3. Se simula que pasó el día (resumeAt al pasado) y resumeWaitingRuns()
  *     (el mismo barrido del scheduler) reanuda: ai_followup redacta (LLM
  *     mockeado) y el run termina 'success'.
@@ -103,7 +103,7 @@ describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día 
     expect(states[0].type).toBe('create_opportunity')
     expect(states[0].status).toBe('success')
     expect(states[1].type).toBe('send_whatsapp')
-    expect(states[1].status).toBe('skipped')
+    expect(states[1].status).toBe('success')
     expect(states[2].type).toBe('wait')
     expect(states[2].status).toBe('waiting')
     expect(run!.currentStep).toBe(3)
@@ -116,12 +116,14 @@ describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día 
     // WhatsApp no debe llamar al daemon, incluso con el flag legacy en true.
     expect(daemonFetch).not.toHaveBeenCalled()
     const pending = await db.notification.findFirst({
-      where: { organizationId: FIX.orgA.id, type: 'automation', title: 'Mensaje whatsapp PENDIENTE (outbox workflow no configurada)' },
+      where: { organizationId: FIX.orgA.id, type: 'automation', title: 'Mensaje whatsapp en cola durable' },
       orderBy: { createdAt: 'desc' },
     })
     expect(pending).not.toBeNull()
-    expect(pending?.data).toContain('WORKFLOW_OUTBOX_NOT_CONFIGURED')
-    expect(pending?.data).toContain('"sent":false')
+    expect(pending?.data).toContain('"status":"queued"')
+    const outbound = await db.workflowOutboundMessage.findFirst({ where: { organizationId: FIX.orgA.id, automationRunId: runId } })
+    expect(outbound).toMatchObject({ channel: 'whatsapp', status: 'queued' })
+    expect(outbound?.payloadEnc).toMatch(/^v1:/)
   })
 
   it('paso 3: al vencer el día, el scheduler reanuda el run y el seguimiento IA se ejecuta → success', async () => {
@@ -154,21 +156,21 @@ describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día 
     expect(String(sysCall[1][1].content)).toContain(NEW_CLIENT_NAME)
   })
 
-  it('auditoría: el motor dejó timeline y notificación del WhatsApp pendiente', async () => {
+  it('auditoría: el motor dejó timeline y notificación del WhatsApp encolado', async () => {
     const tl = await db.timelineEvent.findFirst({
       where: { organizationId: FIX.orgA.id, clientId: newClientId, source: 'automation', type: 'whatsapp' },
       orderBy: { createdAt: 'desc' },
     })
     expect(tl).toBeTruthy()
     expect(tl!.title).toContain('automatización')
-    expect(tl!.title).toContain('pendiente de outbox')
+    expect(tl!.title).toContain('en cola')
 
     const notif = await db.notification.findFirst({
       where: { organizationId: FIX.orgA.id, type: 'automation', title: { contains: 'whatsapp' } },
       orderBy: { createdAt: 'desc' },
     })
     expect(notif).toBeTruthy()
-    expect(notif!.title).toContain('PENDIENTE')
-    expect(notif!.data).toContain('WORKFLOW_OUTBOX_NOT_CONFIGURED')
+    expect(notif!.title).toContain('en cola durable')
+    expect(notif!.data).toContain('"status":"queued"')
   })
 })
