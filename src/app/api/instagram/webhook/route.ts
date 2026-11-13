@@ -137,6 +137,7 @@ export async function POST(req: NextRequest) {
     if (!matchedOrgId || !matchedEntry || !matchedAccountId || !matchedAccessToken) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
+    const orgId = matchedOrgId
 
     for (const messaging of matchedEntry.messaging || []) {
       const msg = messaging.message
