@@ -9,6 +9,7 @@ Estado: guía de staging; **no autoriza activar envíos ni desplegar**.
 - `CHANNEL_OUTBOUND_DISPATCH_ENABLED` debe permanecer ausente o distinto de `true`.
 - `CHANNEL_AUTOREPLY_ENABLED` debe permanecer ausente o distinto de `true`; los webhooks no deben responder automáticamente por defecto.
 - `WORKFLOW_EXTERNAL_SENDS_ENABLED` debe permanecer ausente o distinto de `true`; las acciones de workflow que envían WhatsApp/Telegram/email quedan en estado pendiente auditable sin llamar al proveedor.
+- `WHATSPOWER_ENABLED` debe permanecer ausente o distinto de `true`; el bridge inbound puede activar automatizaciones remotas, por lo que también se mantiene apagado durante pruebas de recepción.
 - `CHANNEL_OUTBOX_WORKER_SECRET` no debe configurarse en entornos que no vayan a ejecutar el worker.
 - No hay cron/scheduler registrado por el repositorio; el endpoint POST no se ejecuta solo.
 - `POST /api/inbox/send` en conversaciones canónicas crea una intención `queued`; HTTP 202 no significa que Meta haya recibido el mensaje.
@@ -46,6 +47,7 @@ Campos:
 - `workerEnabled`: valor efectivo del feature flag de outbox.
 - `autoReplyEnabled`: estado efectivo de `CHANNEL_AUTOREPLY_ENABLED`.
 - `workflowExternalSendsEnabled`: estado efectivo de `WORKFLOW_EXTERNAL_SENDS_ENABLED`.
+- `whatspowerBridgeEnabled`: estado efectivo de `WHATSPOWER_ENABLED`.
 - `connectedMetaConnections`: conexiones WhatsApp/Instagram canónicas conectadas.
 
 No se ha configurado un sistema de alertas en este repositorio; los umbrales siguientes son criterios operativos para el monitor externo, no alertas ya desplegadas.
