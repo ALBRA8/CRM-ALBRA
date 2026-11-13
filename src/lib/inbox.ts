@@ -412,7 +412,7 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
       where: { id: parsed.id, organizationId: orgId },
       select: { id: true, channel: true, connection: { select: { status: true, channel: true } } },
     })
-    if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return []
+    if (!conversation || conversation.connection.status !== 'connected') return []
     const rows = await db.channelMessage.findMany({
       where: { conversationId: conversation.id },
       orderBy: { createdAt: 'desc' },
@@ -466,7 +466,7 @@ export async function markInboxRead(orgId: string, key: string): Promise<void> {
         where: {
           id: parsed.id,
           organizationId: orgId,
-          connection: { status: 'connected', channel: parsed.channel },
+          connection: { status: 'connected' },
         },
         data: { unreadCount: 0 },
       })
@@ -606,6 +606,7 @@ export async function sendInboxMessage(opts: {
     })
   }
 
+  if (opts.key.startsWith('cc:')) return { ok: false, error: 'El envío desde conversaciones canónicas aún está deshabilitado; no se usará una cuenta legacy por fallback.' }
   const parsed = parseInboxKey(opts.key)
   if (!parsed) return { ok: false, error: 'Conversación inválida' }
   const text = opts.text.trim().slice(0, 4000)
