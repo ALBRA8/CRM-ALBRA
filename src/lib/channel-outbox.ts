@@ -5,11 +5,10 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/
 
 export type ChannelOutboundStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'unknown'
 
-const DELIVERY_STATUS_RANK: Record<'sent' | 'delivered' | 'read' | 'failed', number> = {
+const DELIVERY_STATUS_RANK: Record<'sent' | 'delivered' | 'read', number> = {
   sent: 1,
   delivered: 2,
   read: 3,
-  failed: 4,
 }
 
 function withDeliveryStatus(metadataValue: string | null, status: 'sent' | 'delivered' | 'read' | 'failed') {
@@ -21,10 +20,14 @@ function withDeliveryStatus(metadataValue: string | null, status: 'sent' | 'deli
     metadata = {}
   }
   const current = metadata.deliveryStatus
+  // Delivery is monotonic: a late failure callback must not regress an
+  // already confirmed sent/delivered/read message, and failure itself is terminal.
   if (
     current === 'failed' ||
+    (status === 'failed' && typeof current === 'string' && Object.prototype.hasOwnProperty.call(DELIVERY_STATUS_RANK, current)) ||
     (typeof current === 'string' &&
       Object.prototype.hasOwnProperty.call(DELIVERY_STATUS_RANK, current) &&
+      status !== 'failed' &&
       DELIVERY_STATUS_RANK[current as keyof typeof DELIVERY_STATUS_RANK] >= DELIVERY_STATUS_RANK[status])
   ) return metadataValue || JSON.stringify(metadata)
   metadata.deliveryStatus = status
@@ -250,7 +253,7 @@ export async function updateChannelMessageDeliveryStatus(input: {
   status: 'sent' | 'delivered' | 'read' | 'failed'
   timestamp?: string
 }) {
-  const rank: Record<typeof input.status, number> = { sent: 1, delivered: 2, read: 3, failed: 4 }
+  const rank: Record<'sent' | 'delivered' | 'read', number> = { sent: 1, delivered: 2, read: 3 }
   return db.$transaction(async (tx) => {
     const message = await tx.channelMessage.findUnique({
       where: {
@@ -269,7 +272,11 @@ export async function updateChannelMessageDeliveryStatus(input: {
       metadata = {}
     }
     const current = metadata.deliveryStatus
-    if (current === 'failed' || (typeof current === 'string' && current in rank && rank[current as keyof typeof rank] >= rank[input.status])) {
+    if (
+      current === 'failed' ||
+      (input.status === 'failed' && typeof current === 'string' && current in rank) ||
+      (input.status !== 'failed' && typeof current === 'string' && current in rank && rank[current as keyof typeof rank] >= rank[input.status])
+    ) {
       return message
     }
     metadata.deliveryStatus = input.status
