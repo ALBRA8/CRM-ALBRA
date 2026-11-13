@@ -455,6 +455,10 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
   it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
     const connA = await seedConnection('org-a', '121000201')
     const connB = await seedConnection('org-b', '121000202')
+    const canonicalA = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000201' }, select: { id: true } })
+    const canonicalB = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000202' }, select: { id: true } })
+    expect(canonicalA).not.toBeNull()
+    expect(canonicalB).not.toBeNull()
     const conversationA = await getOrCreateChannelConversation({
       providerAccountKey: 'meta:whatsapp:121000201',
       channel: 'whatsapp',
@@ -541,7 +545,7 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     ])
     expect(JSON.parse(messageA?.metadata || '{}').deliveryStatus).toBe('delivered')
     expect(JSON.parse(messageB?.metadata || '{}').deliveryStatus).toBe('read')
-    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [connA!.id, connB!.id] }, status: 'processed' } })).toBe(2)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [canonicalA!.id, canonicalB!.id] }, status: 'processed' } })).toBe(2)
 
     // Repetir exactamente el mismo batch no duplica los eventos ni mensajes.
     const duplicate = await webhookPost(new NextRequest('http://localhost:3000/api/whatsapp/webhook', {
@@ -551,7 +555,7 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     }))
     expect(duplicate.status).toBe(200)
     expect(await db.channelMessage.count({ where: { conversationId: { in: [conversationA!.id, conversationB!.id] } } })).toBe(2)
-    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [connA!.id, connB!.id] } } })).toBe(2)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [canonicalA!.id, canonicalB!.id] } } })).toBe(2)
   })
 
   it('un phoneNumberId sin conexión conectada → 401 (ni fallback a org "dicha" por el body)', async () => {
