@@ -12,6 +12,8 @@ CREATE TABLE "ChannelWebhookEvent" (
   "processedAt" DATETIME,
   "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" DATETIME NOT NULL,
+  CONSTRAINT "ChannelWebhookEvent_organizationId_fkey"
+    FOREIGN KEY ("organizationId") REFERENCES "Organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT "ChannelWebhookEvent_connectionId_fkey"
     FOREIGN KEY ("connectionId") REFERENCES "ChannelConnection" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
