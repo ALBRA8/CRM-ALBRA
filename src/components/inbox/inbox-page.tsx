@@ -235,6 +235,7 @@ export function InboxPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <span className="text-[13px] font-medium text-slate-900 truncate">{conv.contactName}</span>
+                          {conv.connectionName && <span className="text-[9px] text-slate-400 truncate max-w-[90px] ml-1">{conv.connectionName}</span>}
                           <span className="text-[10px] text-slate-400 flex-shrink-0 ml-1">{timeAgo(conv.lastMessageAt)}</span>
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
