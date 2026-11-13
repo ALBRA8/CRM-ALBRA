@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 
-const EVENT_KEY_PATTERN = /^[A-Za-z0-9:._-]{1,180}$/
+const EVENT_KEY_PATTERN = /^[A-Za-z0-9:._+/=-]{1,255}$/
 const EVENT_TYPE_PATTERN = /^[a-z0-9:._-]{1,80}$/
 const PROCESSING_LEASE_MS = 5 * 60 * 1000
 
