@@ -821,6 +821,7 @@ model ChannelWebhookEvent {
   eventKey       String
   eventType      String
   status         String   @default("processing") // processing | processed | failed
+  claimToken     String?  // fencing token del propietario vigente del lease
   attemptCount   Int      @default(1)
   lastErrorCode  String?
   receivedAt     DateTime @default(now())
