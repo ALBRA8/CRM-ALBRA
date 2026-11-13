@@ -255,9 +255,9 @@ async function listTimelineConversations(
 async function listCanonicalChannelConversations(orgId: string, limit: number): Promise<InboxConversation[]> {
   try {
     const rows = await db.channelConversation.findMany({
-      where: { organizationId: orgId, status: 'active' },
+      where: { organizationId: orgId, status: 'active', connection: { is: { organizationId: orgId } } },
       include: {
-        connection: { select: { displayName: true, status: true, channel: true } },
+        connection: { select: { organizationId: true, displayName: true, status: true, channel: true } },
         messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { direction: true } },
       },
       orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
@@ -414,8 +414,8 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
 
   if (key.startsWith('cc:')) {
     const conversation = await db.channelConversation.findFirst({
-      where: { id: parsed.id, organizationId: orgId },
-      select: { id: true, channel: true, connection: { select: { status: true, channel: true } } },
+      where: { id: parsed.id, organizationId: orgId, connection: { is: { organizationId: orgId } } },
+      select: { id: true, channel: true, connection: { select: { organizationId: true, status: true, channel: true } } },
     })
     if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return []
     const [rows, pending] = await Promise.all([
@@ -499,15 +499,15 @@ export async function markInboxRead(orgId: string, key: string): Promise<void> {
   try {
     if (key.startsWith('cc:')) {
       const conversation = await db.channelConversation.findFirst({
-        where: { id: parsed.id, organizationId: orgId },
-        select: { channel: true, connection: { select: { channel: true, status: true } } },
+        where: { id: parsed.id, organizationId: orgId, connection: { is: { organizationId: orgId } } },
+        select: { channel: true, connection: { select: { organizationId: true, channel: true, status: true } } },
       })
       if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return
       await db.channelConversation.updateMany({
         where: {
           id: parsed.id,
           organizationId: orgId,
-          connection: { status: 'connected' },
+          connection: { is: { organizationId: orgId, status: 'connected' } },
         },
         data: { unreadCount: 0 },
       })
