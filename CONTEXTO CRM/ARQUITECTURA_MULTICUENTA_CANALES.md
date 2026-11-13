@@ -170,7 +170,7 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - La conciliación manual de `unknown → sent` aplica la misma vinculación segura.
 - El webhook de Instagram ya no descarta silenciosamente los eventos `is_echo`: los persiste como mensajes salientes usando el destinatario como contacto y el `mid` de Meta. Así, si el echo llega antes del ACK del worker, la confirmación posterior enlaza la fila existente.
 - Se añadió una prueba de integración que simula el orden echo-antes-de-ACK y comprueba que queda una sola fila y se enlaza al outbox.
-- Límite conocido: esto cierra la carrera para echoes de Instagram con `mid` coincidente; no demuestra deduplicación exactly-once de todos los webhooks ni cubre todavía echoes/estados equivalentes de WhatsApp. La CI para el HEAD `4c47c9bd08b6e55dc7090c7755ba190da38701ad` está en ejecución al redactar esta nota.
+- Límite conocido: esto cierra la carrera para echoes de Instagram con `mid` coincidente; no demuestra deduplicación exactly-once de todos los webhooks ni cubre todavía echoes/estados equivalentes de WhatsApp. La CI del HEAD `61c35988a54ee3182169122de0681c6724454940` terminó correctamente (push y pull_request, incluidos tests y build).
 
 ## Estado de implementación
 
