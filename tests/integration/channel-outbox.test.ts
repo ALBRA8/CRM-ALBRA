@@ -117,6 +117,24 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     expect(stored?.providerErrorCode).toBe('NETWORK_TIMEOUT')
   })
 
+  it('no reclama una intención si la conexión se desconectó después de encolarla', async () => {
+    const conversation = await createConversation()
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: `request-${'disconn1'}`,
+      body: 'No enviar por una cuenta desconectada',
+    })
+    await db.channelConnection.update({
+      where: { id: conversation.connectionId },
+      data: { status: 'disconnected' },
+    })
+    expect(await claimChannelOutboundMessage(intent.id)).toBeNull()
+    const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
+    expect(stored?.status).toBe('queued')
+    expect(stored?.attemptCount).toBe(0)
+  })
+
   it('no crea intenciones para conversaciones de otro tenant', async () => {
     const foreign = await createConversation(FIX.orgB.id)
     await expect(createChannelOutboundIntent({
