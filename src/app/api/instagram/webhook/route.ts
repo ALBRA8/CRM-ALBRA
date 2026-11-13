@@ -148,7 +148,45 @@ export async function POST(req: NextRequest) {
       const { orgId, entry, accountId, accessToken } = target
       for (const messaging of entry.messaging || []) {
       const msg = messaging.message
-      if (!msg?.text || msg.is_echo) continue
+
+      // Meta emite echoes para mensajes enviados por la cuenta profesional.
+      // Persistirlos como salientes: si el worker confirma después el mismo mid,
+      // markChannelOutboundSent enlazará esa fila y no creará un duplicado.
+      if (msg?.is_echo && msg.text && messaging.recipient?.id) {
+        const echoText = msg.text.slice(0, 3000)
+        const echoConversation = await getOrCreateChannelConversation({
+          providerAccountKey: `meta:instagram:${accountId}`,
+          channel: 'instagram',
+          externalContactKey: messaging.recipient.id,
+        })
+        if (echoConversation && msg.mid) {
+          await db.channelMessage.upsert({
+            where: {
+              conversationId_externalMessageId: {
+                conversationId: echoConversation.id,
+                externalMessageId: msg.mid,
+              },
+            },
+            create: {
+              conversationId: echoConversation.id,
+              externalMessageId: msg.mid,
+              direction: 'out',
+              senderType: 'agent',
+              body: echoText,
+              messageType: 'text',
+              metadata: JSON.stringify({ echo: true, recipientId: messaging.recipient.id }),
+            },
+            update: {},
+          })
+          await db.channelConversation.update({
+            where: { id: echoConversation.id },
+            data: { lastMessage: echoText.slice(0, 500), lastMessageAt: new Date() },
+          })
+        }
+        continue
+      }
+
+      if (!msg?.text) continue
       const senderId = messaging.sender?.id
       if (!senderId) continue
       const text = msg.text.slice(0, 3000)
