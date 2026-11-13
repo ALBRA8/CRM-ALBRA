@@ -3,7 +3,7 @@
 Fecha: 2026-11-13  
 Repositorio: `ALBRA8/CRM-ALBRA`  
 Rama: `fix/migration-safety-audit`  
-Estado: diseño técnico previo a migraciones; **no implementado**.
+Estado: Fase 0 implementada y validada por CI; Fase 1 iniciada con escritura sombra de Instagram OAuth. La lectura y el enrutamiento siguen en legacy.
 
 ## Objetivo y alcance
 
@@ -102,11 +102,21 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - [x] Modelo canónico `ChannelConnection` y auditoría `ChannelConnectionEvent` añadidos al esquema Prisma.
 - [x] Migración SQLite aditiva `5_channel_connections`; conserva intactas `Integration` y `WhatsAppConnection`.
 - [x] Pruebas de esquema añadidas para dos cuentas del mismo canal, unicidad de identidad externa, separación por tenant y registro de auditoría.
-- [ ] Confirmar CI completo sobre el HEAD que incluye también las nuevas pruebas.
+- [x] CI completo sobre el HEAD que incluye las pruebas de esquema (TypeScript, lint, suite, migración SQLite y build).
 - [ ] Completar backfill repetible e idempotente con reporte de conflictos.
 - [ ] Política explícita para conexiones legacy ambiguas.
 
 ### Fase 1 — WhatsApp e Instagram
+
+**Avance parcial (2026-11-13):**
+- [x] El callback OAuth de Instagram registra la cuenta elegida también en `ChannelConnection` (provider `meta_graph`, canal `instagram`) mediante escritura sombra.
+- [x] Credenciales del registro canónico cifradas con AES-256-GCM; metadata limitada a IDs/nombres no secretos.
+- [x] La escritura canónica, su evento de auditoría y la actualización legacy `Integration` ocurren en una transacción.
+- [x] Se rechaza vincular a otro tenant una cuenta Instagram ya reclamada en el inventario canónico.
+- [ ] El callback aún selecciona la primera página con Instagram vinculado; todavía no permite elegir ni conectar varias cuentas en una misma autorización.
+- [ ] Los webhooks, envíos y lecturas de Instagram siguen usando `Integration`; aún no existe dual-read ni enrutamiento por `connectionId`.
+- [ ] Esta escritura sombra requiere CI propio sobre el nuevo commit antes de considerarse validada.
+
 - Varias conexiones del mismo canal por organización.
 - Crear, listar, verificar, reconectar, desconectar y revocar por connectionId.
 - Dos organizaciones aisladas y al menos dos cuentas del mismo canal en una organización.
