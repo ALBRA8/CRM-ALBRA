@@ -108,6 +108,7 @@ async function main() {
     createdOrWouldCreate: 0,
     alreadyPresent: 0,
     conflicts: 0,
+    duplicateSources: 0,
     skipped: 0,
     byChannel: {} as Record<string, { createdOrWouldCreate: number; alreadyPresent: number; conflicts: number; skipped: number }>,
   }
@@ -287,7 +288,7 @@ async function main() {
             providerAccountKey: `tiktok:business:${state.openId}`,
             externalAccountId: state.openId,
             displayName: state.displayName || null,
-            status: state.sendEndpoint ? 'pending' : 'pending',
+            status: 'pending',
             credentialsEnc,
             metadata: JSON.stringify({ legacyBackfill: true, source: 'Integration' }),
             source: 'Integration.tiktok',
@@ -297,8 +298,31 @@ async function main() {
     }
   }
 
-  totals.planned = plans.length
+  // Evita contar dos veces la misma cuenta si aparece tanto en la tabla
+  // específica como en Integration legacy. La fuente específica tiene prioridad.
+  const uniquePlans: ConnectionPlan[] = []
+  const seenPlanKeys = new Map<string, ConnectionPlan>()
   for (const plan of plans) {
+    const previous = seenPlanKeys.get(plan.providerAccountKey)
+    if (!previous) {
+      seenPlanKeys.set(plan.providerAccountKey, plan)
+      uniquePlans.push(plan)
+      continue
+    }
+    if (
+      previous.organizationId !== plan.organizationId ||
+      previous.channel !== plan.channel ||
+      previous.provider !== plan.provider ||
+      previous.externalAccountId !== plan.externalAccountId
+    ) {
+      count(plan.channel, 'conflict')
+    } else {
+      totals.duplicateSources += 1
+    }
+  }
+
+  totals.planned = uniquePlans.length
+  for (const plan of uniquePlans) {
     const result = await persistPlan(plan)
     count(plan.channel, result)
   }
