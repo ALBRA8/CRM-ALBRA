@@ -4,12 +4,21 @@ import { GET, POST } from '@/app/api/internal/channel-outbox/route'
 
 const originalSecret = process.env.CHANNEL_OUTBOX_WORKER_SECRET
 const originalFlag = process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED
+const originalAutoReplyFlag = process.env.CHANNEL_AUTOREPLY_ENABLED
+const originalWorkflowSendFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+const originalWhatspowerFlag = process.env.WHATSPOWER_ENABLED
 
 afterEach(() => {
   if (originalSecret === undefined) delete process.env.CHANNEL_OUTBOX_WORKER_SECRET
   else process.env.CHANNEL_OUTBOX_WORKER_SECRET = originalSecret
   if (originalFlag === undefined) delete process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED
   else process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED = originalFlag
+  if (originalAutoReplyFlag === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
+  else process.env.CHANNEL_AUTOREPLY_ENABLED = originalAutoReplyFlag
+  if (originalWorkflowSendFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+  else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = originalWorkflowSendFlag
+  if (originalWhatspowerFlag === undefined) delete process.env.WHATSPOWER_ENABLED
+  else process.env.WHATSPOWER_ENABLED = originalWhatspowerFlag
 })
 
 function request(secret?: string, method = 'GET') {
@@ -38,6 +47,9 @@ describe('GET /api/internal/channel-outbox — aggregate health', () => {
     const secret = 'x'.repeat(40)
     process.env.CHANNEL_OUTBOX_WORKER_SECRET = secret
     process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED = 'false'
+    delete process.env.CHANNEL_AUTOREPLY_ENABLED
+    delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+    delete process.env.WHATSPOWER_ENABLED
     const response = await GET(request(secret))
     const body = await response.json() as Record<string, unknown>
     expect(response.status).toBe(200)
