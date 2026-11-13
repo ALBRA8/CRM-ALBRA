@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { decryptSecret } from '@/lib/crypto'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
 import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
+import { createChannelOutboundIntent } from '@/lib/channel-outbox'
 import { json } from '@/lib/api-helpers'
 import { verifyMetaSignature, parseInstagramState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
@@ -324,17 +325,35 @@ export async function POST(req: NextRequest) {
           handoffKeywords: await getHandoffKeywords(orgId),
           nichoContext: await buildNichoContext(orgId),
           send: async (reply) => {
-            const { sendInstagramGraphMessage } = await import('@/lib/integrations')
-            const sent = await sendInstagramGraphMessage({ token: accessToken, accountId, recipientId: senderId, text: reply })
-            await recordTimelineEvent({
-              orgId,
-              clientId: client?.id || null,
-              type: 'instagram',
-              title: 'Respuesta automática del agente IA',
-              description: reply.slice(0, 500),
-              metadata: { senderId, direction: 'out', delivered: sent.ok },
-              source: 'agent',
-            })
+            // Persistir primero en outbox con clave derivada del MID del proveedor.
+            // No ejecutar una llamada de red desde el proceso de recepción.
+            if (conversation && msg.mid) {
+              const intent = await createChannelOutboundIntent({
+                organizationId: orgId,
+                conversationId: conversation.id,
+                clientRequestId: `autoreply:${msg.mid}`,
+                body: reply,
+              })
+              await recordTimelineEvent({
+                orgId,
+                clientId: client?.id || null,
+                type: 'instagram',
+                title: 'Respuesta automática en cola (outbox)',
+                description: reply.slice(0, 500),
+                metadata: { senderId, direction: 'out', delivered: false, queued: intent.status === 'queued', outboundId: intent.id, via: 'outbox' },
+                source: 'agent',
+              })
+            } else {
+              await recordTimelineEvent({
+                orgId,
+                clientId: client?.id || null,
+                type: 'instagram',
+                title: 'Respuesta sugerida por el agente IA (requiere revisión manual)',
+                description: reply.slice(0, 500),
+                metadata: { senderId, direction: 'out', delivered: false, queued: false, via: 'timeline' },
+                source: 'agent',
+              })
+            }
           },
         })
       }
