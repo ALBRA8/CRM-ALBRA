@@ -368,3 +368,13 @@ Este bloque no cambia el alcance operativo: el worker sigue deshabilitado, no ha
 - `ChannelWebhookEvent` registra eventos por conexión y eventKey; el claim único evita que dos POST simultáneos ejecuten el mismo evento canónico a la vez. Eventos fallidos y leases abandonados pueden recuperarse; no se guardan payloads crudos.
 - Límite: si un proceso cae después de producir un efecto externo y antes de marcar el evento procesado, una recuperación posterior puede repetir ese efecto. Workflows/autorespuestas necesitan outbox/idempotency keys propias para garantía más fuerte. No declarar exactly-once.
 - La persistencia de status callback está implementada para WhatsApp Cloud; los callbacks de Instagram de tipo echo se registran como mensajes salientes. El worker sigue deshabilitado y sin scheduler.
+
+
+## Backfill legacy seguro (script disponible; ejecución pendiente)
+
+- Script: `scripts/backfill-channel-connections.ts`.
+- Por defecto solo diagnostica; no escribe. Resume conteos por canal sin imprimir tokens, IDs ni nombres de cuenta.
+- Para escribir requiere explícitamente `--apply` y `BACKFILL_CHANNEL_CONNECTIONS_CONFIRM=1` a la vez. No actualiza ni borra filas legacy; solo crea conexiones faltantes y su evento de auditoría.
+- Deduplica fuentes superpuestas (por ejemplo WhatsAppConnection + Integration), no sobrescribe conexiones canónicas existentes y reporta como conflicto una clave de proveedor ya asociada a otro tenant.
+- Messenger, Telegram y TikTok se crean en estado `pending` porque sus adaptadores/outbox no están habilitados en el contrato canónico actual.
+- No ejecutar hasta probar el dry-run y la restauración de backup en staging; no se ejecutó durante esta tarea.
