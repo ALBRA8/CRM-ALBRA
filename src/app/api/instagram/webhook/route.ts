@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
       const text = msg.text.slice(0, 3000)
 
       const conversation = await getOrCreateChannelConversation({
-        providerAccountKey: `meta:instagram:${matchedAccountId}`,
+        providerAccountKey: `meta:instagram:${accountId}`,
         channel: 'instagram',
         externalContactKey: senderId,
       })
