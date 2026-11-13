@@ -14,7 +14,6 @@ import {
   findOrCreateChannelClient,
   buildNichoContext,
   getHandoffKeywords,
-  sendWhatsAppCloud,
   safeEquals,
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
