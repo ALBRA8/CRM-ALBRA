@@ -18,6 +18,7 @@ export interface ChannelProviderSendInput {
   externalAccountId: string
   recipientKey: string
   body: string
+  outboundId: string
   credentials: ChannelProviderCredentials
 }
 
@@ -126,6 +127,7 @@ export async function dispatchChannelOutboundMessage(
       externalAccountId: connection.externalAccountId,
       recipientKey: conversation.externalContactKey,
       body: outbound.body,
+      outboundId: outbound.id,
       credentials,
     })
     if (result.ok) {
