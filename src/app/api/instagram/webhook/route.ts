@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { decryptSecret } from '@/lib/crypto'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
 import { json } from '@/lib/api-helpers'
 import { verifyMetaSignature, parseInstagramState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
@@ -163,7 +163,11 @@ export async function POST(req: NextRequest) {
             eventKey: `message:${msg.mid}`,
             eventType: 'instagram.echo',
           })
-          if (!claim) continue
+          if (!claim) {
+            const state = await getChannelWebhookEventStatus(connectionId, `message:${msg.mid}`)
+            if (state === 'processed') continue
+            throw new Error('WEBHOOK_EVENT_BUSY')
+          }
           activeWebhookEventId = claim.id
         }
         const echoText = msg.text.slice(0, 3000)
@@ -214,7 +218,11 @@ export async function POST(req: NextRequest) {
           eventKey: `message:${msg.mid}`,
           eventType: 'instagram.message',
         })
-        if (!claim) continue
+        if (!claim) {
+          const state = await getChannelWebhookEventStatus(connectionId, `message:${msg.mid}`)
+          if (state === 'processed') continue
+          throw new Error('WEBHOOK_EVENT_BUSY')
+        }
         activeWebhookEventId = claim.id
       }
 
