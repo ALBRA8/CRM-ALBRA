@@ -18,6 +18,12 @@ const AUTOMATION_BASE = {
   isActive: true,
 }
 
+describe('seguridad del formato de correo workflow', () => {
+  it('escapa HTML no confiable y conserva saltos de línea para el renderizador', () => {
+    expect(real.escapeWorkflowEmailHtml('<img src=x onerror="alert(1)">&\'')).toBe('&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;')
+  })
+})
+
 describe('idempotencia de runs (webhook re-entregado ≠ doble ejecución)', () => {
   it('el mismo evento dos veces → el segundo es deduplicated (1 solo run)', async () => {
     const auto = await db.automation.create({ data: { ...AUTOMATION_BASE, name: 'Idem', triggerType: 'client_created' } })
