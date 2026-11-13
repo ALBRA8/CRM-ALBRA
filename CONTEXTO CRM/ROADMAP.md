@@ -21,3 +21,23 @@ Auditar el aislamiento multi-tenant de extremo a extremo y cerrar el inventario 
 ## Regla de avance
 
 Cambiar un estado solo con evidencia: commit/PR, pruebas, informe de auditoría o despliegue verificado. Registrar fecha, alcance y enlace de la evidencia.
+
+
+## Plan de cierre actualizado — 2026-11-12
+
+Este bloque complementa el roadmap histórico y aterriza el plan de evolución acordado. No implica que las tareas estén ejecutadas.
+
+| Orden | Bloque | Resultado/criterio de salida | Estado |
+|---:|---|---|---|
+| 0 | Línea base de los tres repositorios | SHA, ramas, CI y pruebas reproducibles; separar main, repair/fix y stable-production | Por ejecutar |
+| 1 | Integración entre los tres motores | Contratos CRM↔WHATSPOWER↔ULTRA verificados con procesos reales; identidad org, webhooks, bajas e idempotencia | Pendiente; B2 WhatsApp bloqueante hasta resolver crash-window |
+| 2 | Seguridad y operación | Política de contraseñas/permisos unificada, secretos rotados, lint baseline reducido, migraciones y backups/restauración ensayados | Pendiente |
+| 3 | Multicuenta por canal | Varias conexiones por organización/canal, OAuth/sesión y webhooks aislados, selección inequívoca inbound/outbound | Pendiente; WhatsApp multi-sesión no acredita todos los canales |
+| 4 | Identidades virtuales | Perfil/persona/marca con cuentas, clientes, conversaciones, preferencias y memoria separadas dentro de la organización | Diseño e implementación pendientes |
+| 5 | Preparación SaaS/producción | Motor de BD, staging, escalabilidad, observabilidad, onboarding/cuotas, SLO/RPO/RTO, carga y recuperación | Pendiente de decisión y validación |
+
+### Principio de preservación
+
+La base multiusuario y multiempresa existente se conserva; no se reconstruye sin evidencia de un defecto. Los estados solo avanzan con commit/PR, pruebas reproducibles y alcance identificado. CI verde, código en una rama no integrada o pruebas con mocks no equivalen a integración real ni a despliegue en producción. No desplegar, activar envíos reales ni reescribir historial Git sin autorización expresa.
+
+El detalle de tareas y criterios de aceptación está en `PENDIENTES.md`, sección "Plan de cierre y evolución — 2026-11-12".
