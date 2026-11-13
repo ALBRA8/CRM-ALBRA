@@ -144,6 +144,17 @@ describe('Channel webhook event ledger', () => {
     expect((await completeChannelWebhookEvent(newClaim!)).count).toBe(1)
   })
 
+  it('allows only one concurrent reclaimer of an expired lease', async () => {
+    const connection = await createConnection()
+    const input = { organizationId: FIX.orgA.id, connectionId: connection.id, eventKey: 'message:wamid_concurrent_reclaim', eventType: 'whatsapp.message' }
+    const original = await claimChannelWebhookEvent(input)
+    await db.channelWebhookEvent.update({ where: { id: original!.id }, data: { updatedAt: new Date(Date.now() - 10 * 60 * 1000) } })
+    const reclaimers = await Promise.all([claimChannelWebhookEvent(input), claimChannelWebhookEvent(input)])
+    expect(reclaimers.filter(Boolean)).toHaveLength(1)
+    expect(reclaimers.filter(Boolean)[0]?.claimToken).not.toBe(original?.claimToken)
+    expect((await completeChannelWebhookEvent(original!)).count).toBe(0)
+  })
+
   it('rejects malformed event keys and never stores raw payloads', async () => {
     const connection = await createConnection()
     await expect(claimChannelWebhookEvent({
