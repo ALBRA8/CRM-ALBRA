@@ -23,7 +23,11 @@ import { FIX, jsonBody, req, routeParams, tokenA, tokenB, tokenFor } from '../he
  * 10. Embedded Signup oficial (code→token server-side), sin contraseñas.
  */
 
-const ownerB = (): string => tokenFor({ ...FIX.userB, role: 'owner' })
+async function ownerB(): Promise<string> {
+  // La sesión de prueba debe reflejar el rol real de la BD, no solo el JWT.
+  await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'owner' } })
+  return tokenFor({ ...FIX.userB, role: 'owner' })
+}
 
 /**
  * Stub de Graph API para las rutas que validan el token contra Meta (regla 9:
@@ -65,7 +69,8 @@ beforeEach(async () => {
   await db.whatsAppConnection.deleteMany()
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'member' } })
   delete process.env.INTERNAL_API_KEYS
   delete process.env.META_APP_ID
   delete process.env.META_APP_SECRET
@@ -226,7 +231,7 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
 describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {
   it('la conexión de org-a es invisible para org-b (404, sin detalles)', async () => {
     const conn = await seedConnection('org-a', '888000888')
-    const res = await connectionGet(req(`/api/whatsapp/connections/${conn!.id}`, { token: ownerB() }), routeParams(conn!.id))
+    const res = await connectionGet(req(`/api/whatsapp/connections/${conn!.id}`, { token: await ownerB() }), routeParams(conn!.id))
     expect(res.status).toBe(404)
     const text = JSON.stringify(await jsonBody(res))
     expect(text).not.toContain('org-a')
@@ -236,7 +241,7 @@ describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {
   it('org-b no puede desconectar la conexión de org-a (la conexión sobrevive intacta)', async () => {
     const conn = await seedConnection('org-a', '888000889')
     const res = await connectionDelete(
-      req(`/api/whatsapp/connections/${conn!.id}`, { token: ownerB(), method: 'DELETE' }),
+      req(`/api/whatsapp/connections/${conn!.id}`, { token: await ownerB(), method: 'DELETE' }),
       routeParams(conn!.id),
     )
     expect(res.status).toBe(404)
@@ -247,7 +252,7 @@ describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {
 
   it('el listado de org-b nunca incluye conexiones de org-a', async () => {
     await seedConnection('org-a', '888000890')
-    const res = await connectionsGet(req('/api/whatsapp/connections', { token: ownerB() }))
+    const res = await connectionsGet(req('/api/whatsapp/connections', { token: await ownerB() }))
     const body = await jsonBody(res)
     expect(body.connections).toHaveLength(0)
   })
@@ -524,7 +529,7 @@ describe('OLEADA 2 — Embedded Signup oficial (punto 10, sin contraseñas)', ()
     const { state } = await jsonBody(configRes)
     // userB (org-b) reutiliza el estado firmado para org-a.
     const res = await signupPost(req('/api/whatsapp/embedded-signup', {
-      token: ownerB(),
+      token: await ownerB(),
       method: 'POST',
       body: { code: 'AQC-x', state, phoneNumberId: '131000132' },
     }))
