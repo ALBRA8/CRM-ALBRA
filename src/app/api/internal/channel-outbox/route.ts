@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { json } from '@/lib/api-helpers'
 import { safeEqual } from '@/lib/internal-org-auth'
-import { dispatchChannelOutboundMessage } from '@/lib/channel-outbound-dispatcher'
+import { dispatchChannelOutboundMessage, type DispatchResult } from '@/lib/channel-outbound-dispatcher'
 import { createMetaChannelAdapters } from '@/lib/meta-channel-adapters'
 
 export const runtime = 'nodejs'
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   })
 
   const adapters = createMetaChannelAdapters()
-  const results = []
+  const results: Array<{ id: string } & DispatchResult> = []
   for (const item of queued) {
     results.push({
       id: item.id,
