@@ -1,6 +1,8 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { decryptSecret } from '@/lib/crypto'
+import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
 import { json } from '@/lib/api-helpers'
 import { verifyMetaSignature, parseInstagramState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
@@ -45,7 +47,22 @@ export async function GET(req: NextRequest) {
   if (!mode || !token || !challenge) {
     return NextResponse.json({ error: 'Faltan parámetros de verificación (hub.mode, hub.verify_token, hub.challenge)' }, { status: 400 })
   }
-  // El verify token lo define cada organización al configurar Instagram
+  const connections = await db.channelConnection.findMany({
+    where: { channel: 'instagram', provider: 'meta_graph', status: 'connected' },
+    select: { credentialsEnc: true },
+  })
+  for (const connection of connections) {
+    const plaintext = decryptSecret(connection.credentialsEnc)
+    if (!plaintext) continue
+    try {
+      const credentials = JSON.parse(plaintext) as { webhookVerifyToken?: string | null }
+      if (credentials.webhookVerifyToken && credentials.webhookVerifyToken === token) {
+        return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
+      }
+    } catch { /* no autorizar credenciales corruptas */ }
+  }
+
+  // Compatibilidad temporal para conexiones legacy sin ChannelConnection.
   const integrations = await db.integration.findMany({
     where: { instagramTokenEnc: { not: null } },
     select: { instagramTokenEnc: true },
@@ -65,13 +82,10 @@ export async function POST(req: NextRequest) {
     const signature = req.headers.get('x-hub-signature-256')
     if (!signature) return json({ error: 'Firma X-Hub-Signature-256 requerida' }, { status: 401 })
 
-    // Localiza la org validando la firma contra cada app secret configurado
-    const candidates = await db.integration.findMany({
-      where: { instagramTokenEnc: { not: null } },
-      select: { organizationId: true, instagramTokenEnc: true, instagramAccountId: true },
-    })
     let matchedOrgId: string | null = null
     let matchedEntry: IgEntry | null = null
+    let matchedAccountId: string | null = null
+    let matchedAccessToken: string | null = null
     let body: IgWebhookBody
     try {
       body = JSON.parse(rawBody) as IgWebhookBody
@@ -79,31 +93,69 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Body inválido' }, { status: 400 })
     }
 
-    for (const candidate of candidates) {
-      const state = parseInstagramState(candidate.instagramTokenEnc)
-      if (!state.webhookSecret) continue
-      if (verifyMetaSignature(rawBody, state.webhookSecret, signature)) {
-        // Aislamiento multi-tenant: la entrada debe dirigirse al accountId de esta org
-        const entry = (body.entry || []).find((e) => !candidate.instagramAccountId || e.id === candidate.instagramAccountId)
-        if (entry) {
-          matchedOrgId = candidate.organizationId
-          matchedEntry = entry
-          break
-        }
+    // Resolver por ID de cuenta exacto y credenciales de esa conexión.
+    const connectionCandidates = await db.channelConnection.findMany({
+      where: { channel: 'instagram', provider: 'meta_graph', status: 'connected' },
+      select: { organizationId: true, externalAccountId: true, credentialsEnc: true },
+    })
+    for (const candidate of connectionCandidates) {
+      const plaintext = decryptSecret(candidate.credentialsEnc)
+      if (!plaintext) continue
+      let credentials: { accessToken?: string; appSecret?: string }
+      try { credentials = JSON.parse(plaintext) as typeof credentials } catch { continue }
+      if (!credentials.appSecret || !credentials.accessToken) continue
+      if (!verifyMetaSignature(rawBody, credentials.appSecret, signature)) continue
+      const entry = (body.entry || []).find((item) => item.id === candidate.externalAccountId)
+      if (!entry) continue
+      matchedOrgId = candidate.organizationId
+      matchedEntry = entry
+      matchedAccountId = candidate.externalAccountId
+      matchedAccessToken = credentials.accessToken
+      break
+    }
+
+    // Fallback de compatibilidad: solo cuentas no migradas al modelo canónico.
+    if (!matchedOrgId) {
+      const legacyCandidates = await db.integration.findMany({
+        where: { instagramTokenEnc: { not: null } },
+        select: { organizationId: true, instagramTokenEnc: true, instagramAccountId: true },
+      })
+      for (const candidate of legacyCandidates) {
+        const state = parseInstagramState(candidate.instagramTokenEnc)
+        if (!state.webhookSecret || !candidate.instagramAccountId) continue
+        if (!verifyMetaSignature(rawBody, state.webhookSecret, signature)) continue
+        const entry = (body.entry || []).find((item) => item.id === candidate.instagramAccountId)
+        if (!entry) continue
+        matchedOrgId = candidate.organizationId
+        matchedEntry = entry
+        matchedAccountId = candidate.instagramAccountId
+        matchedAccessToken = state.token || null
+        break
       }
     }
 
-    if (!matchedOrgId || !matchedEntry) {
+    if (!matchedOrgId || !matchedEntry || !matchedAccountId || !matchedAccessToken) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
-    const orgId = matchedOrgId
     for (const messaging of matchedEntry.messaging || []) {
       const msg = messaging.message
       if (!msg?.text || msg.is_echo) continue
       const senderId = messaging.sender?.id
       if (!senderId) continue
       const text = msg.text.slice(0, 3000)
+
+      const conversation = await getOrCreateChannelConversation({
+        providerAccountKey: `meta:instagram:${matchedAccountId}`,
+        channel: 'instagram',
+        externalContactKey: senderId,
+      })
+      if (conversation) {
+        await db.channelConversation.update({
+          where: { id: conversation.id },
+          data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
+        })
+      }
 
       // find-or-create Client (phone = "ig:<senderId>" para deduplicar por canal)
       const client = await findOrCreateChannelClient({ orgId, platformKey: `ig:${senderId}`, name: null, source: 'instagram' })
@@ -129,10 +181,8 @@ export async function POST(req: NextRequest) {
       }
 
       // Auto-respuesta IA
-      const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-      const state = parseInstagramState(integration?.instagramTokenEnc)
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      if (state.token && (nicho?.autoReplyEnabled ?? true)) {
+      if (matchedAccessToken && (nicho?.autoReplyEnabled ?? true)) {
         await llmReplyOrNotification({
           orgId,
           clientId: client?.id || null,
@@ -142,7 +192,7 @@ export async function POST(req: NextRequest) {
           nichoContext: await buildNichoContext(orgId),
           send: async (reply) => {
             const { sendInstagramGraphMessage } = await import('@/lib/integrations')
-            const sent = await sendInstagramGraphMessage({ token: state.token!, accountId: integration?.instagramAccountId || '', recipientId: senderId, text: reply })
+            const sent = await sendInstagramGraphMessage({ token: matchedAccessToken!, accountId: matchedAccountId!, recipientId: senderId, text: reply })
             await recordTimelineEvent({
               orgId,
               clientId: client?.id || null,
