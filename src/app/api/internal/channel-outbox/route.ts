@@ -29,8 +29,9 @@ export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) return json({ error: 'No autorizado' }, { status: 401 })
 
   const staleBefore = new Date(Date.now() - 5 * 60 * 1000)
-  const [queued, sending, sent, failed, unknown, staleSending, webhookProcessing, webhookFailed, staleWebhookEvents, connectedMeta] = await Promise.all([
+  const [queued, oldestQueued, sending, sent, failed, unknown, staleSending, webhookProcessing, webhookFailed, staleWebhookEvents, connectedMeta] = await Promise.all([
     db.channelOutboundMessage.count({ where: { status: 'queued' } }),
+    db.channelOutboundMessage.findFirst({ where: { status: 'queued' }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } }),
     db.channelOutboundMessage.count({ where: { status: 'sending' } }),
     db.channelOutboundMessage.count({ where: { status: 'sent' } }),
     db.channelOutboundMessage.count({ where: { status: 'failed' } }),
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
 
   return json({
     workerEnabled: process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED === 'true',
-    outbox: { queued, sending, sent, failed, unknown, staleSending },
+    outbox: { queued, oldestQueuedAgeSeconds: oldestQueued ? Math.max(0, Math.floor((Date.now() - oldestQueued.createdAt.getTime()) / 1000)) : 0, sending, sent, failed, unknown, staleSending },
     webhookEvents: { processing: webhookProcessing, failed: webhookFailed, staleProcessing: staleWebhookEvents },
     connectedMetaConnections: connectedMeta,
     sampledAt: new Date().toISOString(),
