@@ -124,9 +124,11 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - [x] Se añadió `ChannelMessage` y la migración aditiva `7_channel_messages`; los mensajes pertenecen a una conversación concreta y su unicidad por `[conversationId, externalMessageId]` permite IDs externos iguales en cuentas distintas.
 - [x] Webhooks de Instagram y WhatsApp Cloud escriben mensajes entrantes en `ChannelMessage` y actualizan `ChannelConversation`, sin eliminar las escrituras legacy de timeline/mensajes.
 - [x] Webhook de WhatsApp Cloud prefiere credenciales de `ChannelConnection` tras atribuir la cuenta exacta por `phone_number_id` en `WhatsAppConnection`; mantiene fallback legacy cuando no existe el registro canónico.
-- [ ] Adaptar listados de bandeja, historial, lecturas y rutas de envío para que consuman `ChannelConversation`/`ChannelMessage` de extremo a extremo.
-- [ ] Añadir persistencia canónica de mensajes salientes y deduplicación transaccional/recuperable de eventos de webhook.
-- [ ] La integración de webhooks/selector y el nuevo modelo de mensajes requieren CI completo sobre el HEAD más reciente.
+- [x] Adaptar listado de bandeja, historial, lectura y envío canónico a `ChannelConversation`/`ChannelMessage` + outbox; las rutas legacy continúan durante expand.
+- [x] Añadir persistencia canónica de mensajes salientes mediante outbox y conciliación manual conservadora.
+- [x] Añadir `ChannelWebhookEvent` con unicidad por conexión/evento, claim concurrente, leases recuperables y estados processing/processed/failed; payloads crudos no se almacenan.
+- [ ] Cerrar exactamente-once de efectos externos (workflows/autorespuestas) y completar pruebas de carrera/crash; el ledger reduce duplicados concurrentes pero no sustituye una outbox de automatizaciones.
+- [ ] Confirmar CI completo de los últimos cambios de outbox, recibos de WhatsApp y ledger de webhooks sobre el HEAD actual.
 
 - Varias conexiones del mismo canal por organización.
 - Crear, listar, verificar, reconectar, desconectar y revocar por connectionId.
@@ -355,3 +357,14 @@ Sobre el estado descrito en las secciones anteriores, se amplió `tests/integrat
 **Validación pendiente al registrar este cambio:** commit `98fee6991df657ad564530e2dd1e0643d639f269`; CI run `43466211765` está en ejecución. No marcar estos nuevos escenarios como aprobados hasta que ese run termine exitosamente. Las validaciones CI de commits anteriores que aparecen arriba son evidencia histórica, no sustituyen la ejecución del HEAD actual.
 
 Este bloque no cambia el alcance operativo: el worker sigue deshabilitado, no hay scheduler y no se ha autorizado envío real, merge ni despliegue.
+
+
+## Confirmaciones de entrega WhatsApp y ledger de webhooks (actualización 2026-11-13)
+
+- El adaptador WhatsApp Cloud envía `biz_opaque_callback_data` con el ID de la intención outbox. Los status callbacks de Meta pueden correlacionarse con la intención incluso si llegan antes del ACK HTTP del worker.
+- El webhook verifica organización, canal, provider y `externalAccountId` de la conexión exacta antes de aplicar el callback. Un callback confirmado permite pasar `sending/unknown → sent`; no reencola.
+- Los estados `sent/delivered/read/failed` se guardan en metadata del `ChannelMessage` y se muestran en el hilo. La actualización es monotónica para evitar que un callback retrasado degrade un estado más avanzado.
+- Los estados de entrega se deduplican por ID de mensaje + estado, no solo por ID, para conservar la progresión sent → delivered → read.
+- `ChannelWebhookEvent` registra eventos por conexión y eventKey; el claim único evita que dos POST simultáneos ejecuten el mismo evento canónico a la vez. Eventos fallidos y leases abandonados pueden recuperarse; no se guardan payloads crudos.
+- Límite: si un proceso cae después de producir un efecto externo y antes de marcar el evento procesado, una recuperación posterior puede repetir ese efecto. Workflows/autorespuestas necesitan outbox/idempotency keys propias para garantía más fuerte. No declarar exactly-once.
+- La persistencia de status callback está implementada para WhatsApp Cloud; los callbacks de Instagram de tipo echo se registran como mensajes salientes. El worker sigue deshabilitado y sin scheduler.
