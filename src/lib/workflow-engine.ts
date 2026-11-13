@@ -147,7 +147,7 @@ async function buildActionContext(orgId: string, payload: Record<string, unknown
   }
 }
 
-async function executeAction(orgId: string, userId: string | null, action: WorkflowAction, ctx: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<string, unknown>): Promise<Record<string, unknown>> {
   const config = action.config || {}
   switch (action.type) {
     case 'create_task_like_notification': {
@@ -317,7 +317,6 @@ function renderTemplate(body: string, ctx: Record<string, unknown>): string {
  */
 async function runActionSteps(
   orgId: string,
-  userId: string | null,
   actions: WorkflowAction[],
   ctx: Record<string, unknown>,
   startIndex: number,
@@ -340,7 +339,7 @@ async function runActionSteps(
     }
 
     try {
-      const out = await executeAction(orgId, userId, action, ctx)
+      const out = await executeAction(orgId, action, ctx)
       outputs.push(out)
       stepStates[i] = { type: action.type, status: 'success', ms: Date.now() - t0 }
     } catch (err) {
@@ -400,7 +399,7 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
       }
       const actions = safeParse<WorkflowAction[]>(automation.actions) || []
       const ctx = await buildActionContext(event.orgId, event.payload)
-      const res = await runActionSteps(event.orgId, automation.createdById, actions, ctx, 0, [], [])
+      const res = await runActionSteps(event.orgId, actions, ctx, 0, [], [])
 
       if (!res.done) {
         // PAUSA durable (patrón DELAY de Twenty): el run queda 'waiting' y el
@@ -493,7 +492,7 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
 
     try {
       const ctx = await buildActionContext(automation.organizationId, payload)
-      const res = await runActionSteps(automation.organizationId, automation.createdById, actions, ctx, run.currentStep, prevStates, prevOutputs)
+      const res = await runActionSteps(automation.organizationId, actions, ctx, run.currentStep, prevStates, prevOutputs)
       if (!res.done) {
         // Otra espera encadenada: vuelve a pausar (secuencias multi-touch)
         await db.automationRun.update({
