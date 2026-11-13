@@ -96,14 +96,14 @@ export function makeInboxKey(channel: InboxChannel, id: string): string {
 }
 
 /** Parseo estricto: devuelve null ante cualquier key malformada (fail-closed). */
-export function parseInboxKey(key: string): { channel: InboxChannel; id: string } | null {
+export function parseInboxKey(key: string): { channel: InboxChannel | null; id: string } | null {
   if (typeof key !== 'string' || key.length < 3 || key.length > 200) return null
   const idx = key.indexOf(':')
   if (idx < 1) return null
   const prefix = key.slice(0, idx)
   const id = key.slice(idx + 1)
   if (!id || /[\s]/.test(id)) return null
-  if (prefix === 'cc') return { channel: 'whatsapp', id }
+  if (prefix === 'cc') return { channel: null, id }
   if (prefix === 'wa') return { channel: 'whatsapp', id }
   if (prefix === 'tg') return { channel: 'telegram', id }
   if (prefix === 'ig') return { channel: 'instagram', id }
