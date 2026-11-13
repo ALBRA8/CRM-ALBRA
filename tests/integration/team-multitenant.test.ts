@@ -90,17 +90,23 @@ describe('multiusuario: límites de organización y ciclo de sesión', () => {
       body: { name: 'Miembro privado A', email, password: 'password-segura' },
     }))
     const member = await db.user.findUniqueOrThrow({ where: { email } })
+    const originalRole = (await db.user.findUniqueOrThrow({ where: { id: FIX.userB.id } })).role
+    await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'admin' } })
+    try {
+      const adminB = tokenFor({ ...FIX.userB, role: 'admin' })
+      const update = await teamPUT(req(`/api/team/${member.id}`, {
+        method: 'PUT', token: adminB, body: { name: 'Intrusión' },
+      }), routeParams(member.id))
+      expect(update.status).toBe(404)
 
-    const update = await teamPUT(req(`/api/team/${member.id}`, {
-      method: 'PUT', token: tokenB(), body: { name: 'Intrusión' },
-    }), routeParams(member.id))
-    expect(update.status).toBe(404)
-
-    const remove = await teamDELETE(req(`/api/team/${member.id}`, {
-      method: 'DELETE', token: tokenB(),
-    }), routeParams(member.id))
-    expect(remove.status).toBe(404)
-    expect((await db.user.findUniqueOrThrow({ where: { id: member.id } })).isActive).toBe(true)
+      const remove = await teamDELETE(req(`/api/team/${member.id}`, {
+        method: 'DELETE', token: adminB,
+      }), routeParams(member.id))
+      expect(remove.status).toBe(404)
+      expect((await db.user.findUniqueOrThrow({ where: { id: member.id } })).isActive).toBe(true)
+    } finally {
+      await db.user.update({ where: { id: FIX.userB.id }, data: { role: originalRole } })
+    }
   })
 
   it('un cambio de rol invalida inmediatamente el JWT anterior', async () => {
