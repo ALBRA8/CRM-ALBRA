@@ -25,7 +25,7 @@ async function createInstagramConnection(key: string) {
       channel: 'instagram',
       provider: 'meta_graph',
       providerAccountKey: key,
-      externalAccountId: key.split(':').at(-1)!,
+      externalAccountId: key.split(':').pop()!,
       credentialsEnc: 'v1:test-ciphertext',
       status: 'connected',
     },
