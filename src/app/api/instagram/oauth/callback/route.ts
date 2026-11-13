@@ -142,30 +142,36 @@ export async function GET(req: NextRequest) {
     await db.$transaction(async (tx) => {
       for (const item of prepared) {
         const providerAccountKey = `meta:instagram:${item.account.id}`
-        const connection = await tx.channelConnection.upsert({
-          where: { providerAccountKey },
-          create: {
-            organizationId: auth.orgId,
-            channel: 'instagram',
-            provider: 'meta_graph',
-            providerAccountKey,
-            externalAccountId: item.account.id,
-            displayName: item.account.username || item.page.name || null,
-            status: 'connected',
-            credentialsEnc: item.credentialsEnc!,
-            metadata: JSON.stringify({ pageId: item.page.id, pageName: item.page.name || null, username: item.account.username || null }),
-            lastVerifiedAt: new Date(),
-          },
-          update: {
-            displayName: item.account.username || item.page.name || null,
-            status: 'connected',
-            credentialsEnc: item.credentialsEnc!,
-            metadata: JSON.stringify({ pageId: item.page.id, pageName: item.page.name || null, username: item.account.username || null }),
-            lastVerifiedAt: new Date(),
-            lastErrorAt: null,
-            lastErrorCode: null,
-          },
+        // No usar upsert global por providerAccountKey: el chequeo previo de
+        // ownership puede quedar obsoleto antes de esta transacción. Un upsert
+        // podría actualizar credenciales de una cuenta que otro tenant acaba
+        // de reclamar. Actualizar solo una fila ya scoped; si la clave global
+        // aparece en otro tenant, el create colisiona y aborta la transacción.
+        const existingForTenant = await tx.channelConnection.findFirst({
+          where: { providerAccountKey, organizationId: auth.orgId, channel: 'instagram', provider: 'meta_graph' },
+          select: { id: true },
         })
+        const connectionData = {
+          displayName: item.account.username || item.page.name || null,
+          status: 'connected',
+          credentialsEnc: item.credentialsEnc!,
+          metadata: JSON.stringify({ pageId: item.page.id, pageName: item.page.name || null, username: item.account.username || null }),
+          lastVerifiedAt: new Date(),
+          lastErrorAt: null,
+          lastErrorCode: null,
+        }
+        const connection = existingForTenant
+          ? await tx.channelConnection.update({ where: { id: existingForTenant.id }, data: connectionData })
+          : await tx.channelConnection.create({
+              data: {
+                organizationId: auth.orgId,
+                channel: 'instagram',
+                provider: 'meta_graph',
+                providerAccountKey,
+                externalAccountId: item.account.id,
+                ...connectionData,
+              },
+            })
         await tx.channelConnectionEvent.create({
           data: {
             organizationId: auth.orgId,
