@@ -195,3 +195,79 @@ export async function quarantineStaleChannelOutboundMessages(olderThan: Date) {
     data: { status: 'unknown', providerErrorCode: 'WORKER_INTERRUPTED', finishedAt: new Date() },
   })
 }
+
+/**
+ * Resolución manual de unknown después de comprobar el estado en el proveedor.
+ * Nunca vuelve a poner la intención en queued ni realiza llamadas de red.
+ */
+export async function reconcileUnknownChannelOutboundMessage(input: {
+  id: string
+  resolution: 'sent' | 'failed'
+  providerMessageId?: string | null
+}) {
+  return db.$transaction(async (tx) => {
+    const outbound = await tx.channelOutboundMessage.findUnique({
+      where: { id: input.id },
+      include: { conversation: { select: { id: true, organizationId: true, connectionId: true } } },
+    })
+    if (!outbound) throw new ChannelOutboundError('Intención no encontrada', 'NOT_FOUND')
+    if (outbound.status !== 'unknown') {
+      throw new ChannelOutboundError('Solo se pueden conciliar intenciones unknown', 'INVALID_STATE')
+    }
+
+    const now = new Date()
+    if (input.resolution === 'sent') {
+      const message = await tx.channelMessage.create({
+        data: {
+          conversationId: outbound.conversationId,
+          outboundId: outbound.id,
+          externalMessageId: input.providerMessageId || null,
+          direction: 'out',
+          senderType: 'user',
+          body: outbound.body,
+        },
+      })
+      await tx.channelOutboundMessage.update({
+        where: { id: outbound.id },
+        data: {
+          status: 'sent',
+          providerMessageId: input.providerMessageId || null,
+          providerErrorCode: 'MANUALLY_CONFIRMED_SENT',
+          sentAt: now,
+          finishedAt: now,
+        },
+      })
+      await tx.channelConversation.update({
+        where: { id: outbound.conversationId },
+        data: { lastMessage: outbound.body.slice(0, 500), lastMessageAt: now },
+      })
+      await tx.channelConnectionEvent.create({
+        data: {
+          organizationId: outbound.conversation.organizationId,
+          connectionId: outbound.conversation.connectionId,
+          type: 'outbound_manually_reconciled_sent',
+          detail: `outboundId=${outbound.id}`,
+        },
+      })
+      return message
+    }
+
+    await tx.channelOutboundMessage.update({
+      where: { id: outbound.id },
+      data: {
+        status: 'failed',
+        providerErrorCode: 'MANUALLY_CONFIRMED_NOT_SENT',
+        finishedAt: now,
+      },
+    })
+    await tx.channelConnectionEvent.create({
+      data: {
+        organizationId: outbound.conversation.organizationId,
+        connectionId: outbound.conversation.connectionId,
+        type: 'outbound_manually_reconciled_failed',
+        detail: `outboundId=${outbound.id}`,
+      },
+    })
+    return null
+  })
+}
