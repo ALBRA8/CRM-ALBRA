@@ -48,6 +48,16 @@
 - [ ] Contratos versionados entre productos ALBRA.
 - [ ] Confirmar estado de ramas de evolución.
 
+## Continuación outbox y webhook echo — 2026-11-13
+
+- [x] Confirmación de outbox enlaza un echo de Instagram preexistente por `conversationId + externalMessageId`, con validación de dirección/cuerpo y sin crear duplicado.
+- [x] Conciliación manual `unknown → sent` reutiliza el mensaje echo preexistente si coincide.
+- [x] Webhook Instagram persiste `is_echo` como mensaje saliente en la conversación de la cuenta exacta.
+- [x] Prueba de integración para el orden echo-antes-de-ACK añadida.
+- [ ] CI completa para HEAD `4c47c9bd08b6e55dc7090c7755ba190da38701ad` (push y pull_request) — en ejecución; no marcar como validado hasta resultado final.
+- [ ] Revisar y probar carrera equivalente para WhatsApp Cloud; agregar fixtures de webhook batch firmados para Instagram y WhatsApp.
+- [ ] Persistencia/deduplicación durable de eventos webhook antes de ejecutar workflows y auto-respuestas; evitar afirmar exactly-once mientras exista check-then-act.
+
 ## Trabajo de tests Windows/.env — RESUELTO 2026-11-06
 - [x] 658740b localizado y verificado en ALBRA8/YOUTUBE-AUTOMATION (cuarto repositorio del ecosistema, confirmado por el propietario).
 - [x] Las correcciones están en main de ese repositorio (posteriores a 658740b); no corresponden a CRM-ALBRA.
