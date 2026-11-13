@@ -68,6 +68,48 @@ describe('idempotencia de runs (webhook re-entregado ≠ doble ejecución)', () 
 })
 
 describe('aislamiento de contexto en acciones workflow', () => {
+  it('no acepta destinatarios de email/teléfono inyectados en el payload sin clientId validado', async () => {
+    const marker = `workflow-unlinked-recipient-${Date.now()}`
+    const previousFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+    delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+    const auto = await db.automation.create({
+      data: {
+        ...AUTOMATION_BASE,
+        name: 'Workflow unlinked recipient',
+        triggerType: 'client_created',
+        actions: JSON.stringify([{ type: 'send_email', config: { body: marker } }]),
+      },
+    })
+    try {
+      const results = await real.runWorkflowsForTrigger({
+        orgId: 'org-a',
+        type: 'client_created',
+        payload: {
+          id: marker,
+          email: 'attacker@example.invalid',
+          phone: '+15550000000',
+          clientName: 'Contacto ajeno',
+        },
+      })
+      expect(results[0]?.status).toBe('success')
+      const notification = await db.notification.findFirst({
+        where: { organizationId: 'org-a', body: marker },
+        orderBy: { createdAt: 'desc' },
+      })
+      expect(notification).not.toBeNull()
+      const data = JSON.parse(notification!.data || '{}') as Record<string, unknown>
+      expect(data.email).toBeNull()
+      expect(data.phone).toBeNull()
+      expect(data.clientId).toBeNull()
+      await db.notification.deleteMany({ where: { organizationId: 'org-a', body: marker } })
+      await db.timelineEvent.deleteMany({ where: { organizationId: 'org-a', description: marker } })
+    } finally {
+      await db.automation.delete({ where: { id: auto.id } })
+      if (previousFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+      else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = previousFlag
+    }
+  })
+
   it('un clientId de otra organización no filtra teléfono, email ni vínculo al timeline', async () => {
     const auto = await db.automation.create({
       data: {
