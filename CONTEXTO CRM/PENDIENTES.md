@@ -232,7 +232,8 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Rechazar `hub.mode` distinto de `subscribe` en verificación GET de Instagram; comparación de verify tokens en tiempo constante en Instagram y en el fallback legacy de WhatsApp.
 - [x] Añadir opt-in explícito `CHANNEL_AUTOREPLY_ENABLED=true` para auto-respuestas WhatsApp/Instagram.
 - [x] Añadir opt-in explícito `WORKFLOW_EXTERNAL_SENDS_ENABLED=true` para acciones externas WhatsApp/Telegram/email de workflows; por defecto registran el intento como pendiente sin contactar al proveedor.
-- [~] La idempotencia de workflow impide runs duplicados, pero no reanuda automáticamente una ejecución que caiga a mitad de una acción. La auto-respuesta no tiene todavía outbox durable por mensaje; no certificar exactly-once ni habilitar respuestas automáticas en pruebas reales.
+- [x] Auto-respuestas WhatsApp/Instagram persistidas primero en `ChannelOutboundMessage` con clave estable derivada (SHA-256) de `message.id`/`msg.mid`; el webhook no llama directamente a Meta. El worker sigue apagado por defecto.
+- [~] La idempotencia de workflow impide runs duplicados, pero no reanuda automáticamente una ejecución que caiga a mitad de una acción. Las acciones externas de workflows aún no están integradas con la outbox canónica; no certificar exactly-once.
 - [ ] Validar las nuevas protecciones con CI del HEAD final.
 - [ ] Probar webhooks con sandbox/cuentas de prueba Meta; no se ha hecho desde este entorno.
 - [ ] Ejecutar dry-run de backfill y ensayo de reversión en staging con backup restaurable; no se ha hecho desde este entorno.
