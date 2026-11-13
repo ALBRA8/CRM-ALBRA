@@ -7,6 +7,7 @@ import {
   markChannelOutboundSent,
   markChannelOutboundUnknown,
   quarantineStaleChannelOutboundMessages,
+  reconcileUnknownChannelOutboundMessage,
 } from '@/lib/channel-outbox'
 import { FIX } from '../setup/seed-data'
 import { encryptSecret } from '@/lib/crypto'
@@ -213,6 +214,52 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     const intent = await createChannelOutboundIntent({ organizationId: FIX.orgA.id, conversationId: conversation.id, clientRequestId: 'request-dispatch03', body: 'No adapter' })
     const result = await dispatchChannelOutboundMessage(intent.id, {})
     expect(result).toMatchObject({ status: 'failed', errorCode: 'ADAPTER_UNAVAILABLE' })
+  })
+
+ 
+  it('reconciles unknown as sent only after explicit provider confirmation and audits it', async () => {
+    const conversation = await createConversation()
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'request-reconcile01',
+      body: 'Proveedor confirmó entrega',
+    })
+    await claimChannelOutboundMessage(intent.id)
+    await markChannelOutboundUnknown(intent.id, 'PROVIDER_RESULT_UNCERTAIN')
+
+    const message = await reconcileUnknownChannelOutboundMessage({
+      id: intent.id,
+      resolution: 'sent',
+      providerMessageId: 'provider-confirmed-123',
+    })
+    const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
+    const audit = await db.channelConnectionEvent.findFirst({
+      where: { connectionId: conversation.connectionId, type: 'outbound_manually_reconciled_sent' },
+    })
+    expect(message?.body).toBe('Proveedor confirmó entrega')
+    expect(stored?.status).toBe('sent')
+    expect(stored?.providerMessageId).toBe('provider-confirmed-123')
+    expect(audit?.detail).toBe(`outboundId=${intent.id}`)
+    await expect(reconcileUnknownChannelOutboundMessage({ id: intent.id, resolution: 'sent' }))
+      .rejects.toMatchObject({ code: 'INVALID_STATE' })
+  })
+
+  it('reconciles unknown as not sent without requeueing', async () => {
+    const conversation = await createConversation()
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'request-reconcile02',
+      body: 'Proveedor confirmó rechazo',
+    })
+    await claimChannelOutboundMessage(intent.id)
+    await markChannelOutboundUnknown(intent.id)
+    await reconcileUnknownChannelOutboundMessage({ id: intent.id, resolution: 'failed' })
+    const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
+    expect(stored?.status).toBe('failed')
+    expect(stored?.providerErrorCode).toBe('MANUALLY_CONFIRMED_NOT_SENT')
+    expect(await claimChannelOutboundMessage(intent.id)).toBeNull()
   })
 
 })
