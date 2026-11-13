@@ -48,7 +48,7 @@ describe('Channel webhook event ledger', () => {
     ])
     expect(claims.filter(Boolean)).toHaveLength(1)
     const claim = claims.find(Boolean)!
-    expect((await completeChannelWebhookEvent(claim.id)).count).toBe(1)
+    expect((await completeChannelWebhookEvent(claim)).count).toBe(1)
     expect(await claimChannelWebhookEvent(input)).toBeNull()
     const stored = await db.channelWebhookEvent.findUnique({ where: { id: claim.id } })
     expect(stored?.status).toBe('processed')
@@ -67,7 +67,7 @@ describe('Channel webhook event ledger', () => {
     expect(first).not.toBeNull()
     expect(await claimChannelWebhookEvent(input)).toBeNull()
     expect(await getChannelWebhookEventStatus(connection.id, input.eventKey)).toBe('processing')
-    await completeChannelWebhookEvent(first!.id)
+    await completeChannelWebhookEvent(first!)
     expect(await getChannelWebhookEventStatus(connection.id, input.eventKey)).toBe('processed')
   })
 
@@ -92,7 +92,7 @@ describe('Channel webhook event ledger', () => {
     }
     const first = await claimChannelWebhookEvent(input)
     expect(first).not.toBeNull()
-    await failChannelWebhookEvent(first!.id, 'TEMPORARY_PROVIDER_ERROR')
+    await failChannelWebhookEvent(first!, 'TEMPORARY_PROVIDER_ERROR')
     const retry = await claimChannelWebhookEvent(input)
     expect(retry?.id).toBe(first?.id)
     const stored = await db.channelWebhookEvent.findUnique({ where: { id: first!.id } })
@@ -115,6 +115,19 @@ describe('Channel webhook event ledger', () => {
     const retry = await claimChannelWebhookEvent(input)
     expect(retry?.id).toBe(first?.id)
     expect((await db.channelWebhookEvent.findUnique({ where: { id: first!.id } }))?.attemptCount).toBe(2)
+  })
+
+  it('fences an expired owner after a new claim takes over the lease', async () => {
+    const connection = await createConnection()
+    const input = { organizationId: FIX.orgA.id, connectionId: connection.id, eventKey: 'message:wamid_fenced_123', eventType: 'whatsapp.message' }
+    const oldClaim = await claimChannelWebhookEvent(input)
+    await db.channelWebhookEvent.update({ where: { id: oldClaim!.id }, data: { updatedAt: new Date(Date.now() - 10 * 60 * 1000) } })
+    const newClaim = await claimChannelWebhookEvent(input)
+    expect(newClaim?.claimToken).not.toBe(oldClaim?.claimToken)
+    expect((await completeChannelWebhookEvent(oldClaim!)).count).toBe(0)
+    expect((await failChannelWebhookEvent(oldClaim!, 'STALE_OWNER')).count).toBe(0)
+    expect((await db.channelWebhookEvent.findUnique({ where: { id: oldClaim!.id } }))?.status).toBe('processing')
+    expect((await completeChannelWebhookEvent(newClaim!)).count).toBe(1)
   })
 
   it('rejects malformed event keys and never stores raw payloads', async () => {
