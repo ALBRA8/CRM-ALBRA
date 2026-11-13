@@ -472,8 +472,13 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     try {
       const response = await webhookPost(request)
       expect(response.status).toBe(200)
+      const canonicalConnection = await db.channelConnection.findUnique({
+        where: { providerAccountKey: 'meta:whatsapp:121000121' },
+        select: { id: true },
+      })
+      expect(canonicalConnection).not.toBeNull()
       const conversation = await db.channelConversation.findFirst({
-        where: { channel: 'whatsapp', externalContactKey: '5215512345678' },
+        where: { connectionId: canonicalConnection!.id },
       })
       expect(conversation).not.toBeNull()
       const intents = await db.channelOutboundMessage.findMany({
