@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
-  let activeWebhookEventId: string | null = null
+  let activeWebhookEventClaim: { id: string; claimToken: string } | null = null
   try {
     const signature = req.headers.get('x-hub-signature-256')
     if (!signature) return json({ error: 'Firma X-Hub-Signature-256 requerida' }, { status: 401 })
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
             if (state === 'processed') continue
             throw new Error('WEBHOOK_EVENT_BUSY')
           }
-          activeWebhookEventId = claim.id
+          activeWebhookEventClaim = claim
         }
         const echoText = msg.text.slice(0, 3000)
         const echoConversation = await getOrCreateChannelConversation({
@@ -213,9 +213,9 @@ export async function POST(req: NextRequest) {
             data: { lastMessage: echoText.slice(0, 500), lastMessageAt: new Date() },
           })
         }
-        if (activeWebhookEventId) {
-          await completeChannelWebhookEvent(activeWebhookEventId)
-          activeWebhookEventId = null
+        if (activeWebhookEventClaim) {
+          await completeChannelWebhookEvent(activeWebhookEventClaim)
+          activeWebhookEventClaim = null
         }
         continue
       }
@@ -236,7 +236,7 @@ export async function POST(req: NextRequest) {
           if (state === 'processed') continue
           throw new Error('WEBHOOK_EVENT_BUSY')
         }
-        activeWebhookEventId = claim.id
+        activeWebhookEventClaim = claim
         // Recuperación de crash: si el timeline ya recibió el mid, no repetir
         // workflows/autorespuesta; cerrar el ledger reclamado y omitir el evento.
         const seen = await db.timelineEvent.findFirst({
@@ -248,8 +248,8 @@ export async function POST(req: NextRequest) {
           select: { id: true },
         })
         if (seen) {
-          await completeChannelWebhookEvent(activeWebhookEventId)
-          activeWebhookEventId = null
+          await completeChannelWebhookEvent(activeWebhookEventClaim)
+          activeWebhookEventClaim = null
           continue
         }
       }
@@ -336,9 +336,9 @@ export async function POST(req: NextRequest) {
           },
         })
       }
-      if (activeWebhookEventId) {
-        await completeChannelWebhookEvent(activeWebhookEventId)
-        activeWebhookEventId = null
+      if (activeWebhookEventClaim) {
+        await completeChannelWebhookEvent(activeWebhookEventClaim)
+        activeWebhookEventClaim = null
       }
       }
     }
@@ -346,8 +346,8 @@ export async function POST(req: NextRequest) {
     // Meta exige 200 rápido
     return json({ ok: true })
   } catch (err) {
-    if (activeWebhookEventId) {
-      await failChannelWebhookEvent(activeWebhookEventId, 'PROCESSING_FAILED').catch(() => undefined)
+    if (activeWebhookEventClaim) {
+      await failChannelWebhookEvent(activeWebhookEventClaim, 'PROCESSING_FAILED').catch(() => undefined)
     }
     console.error('[instagram webhook]', err)
     return json({ ok: false, processed: false }, { status: 500 })
