@@ -33,7 +33,7 @@ afterEach(async () => {
 })
 
 describe('Instagram OAuth callback tenant ownership', () => {
-  it('never overwrites another organization credentials for a globally unique account key', async () => {
+  it('refuses an Instagram account already owned by another organization', async () => {
     const existingIntegration = await db.integration.findUnique({ where: { organizationId: FIX.orgA.id } })
     if (existingIntegration) {
       originalIntegration = {
@@ -58,29 +58,18 @@ describe('Instagram OAuth callback tenant ownership', () => {
       appSecret: ['foreign', 'app', 'secret'].join('-'),
       webhookVerifyToken: ['foreign', 'verify', 'token'].join('-'),
     }))!
-    let foreign: { id: string; organizationId: string; credentialsEnc: string } | null = null
-    const originalFindMany = db.channelConnection.findMany.bind(db.channelConnection)
-    vi.spyOn(db.channelConnection, 'findMany').mockImplementation(async (...args) => {
-      // Simula otra organización reclamando la cuenta justo después del
-      // pre-chequeo de ownership y antes de la transacción de persistencia.
-      const rows = await originalFindMany(...args)
-      if (!foreign) {
-        foreign = await db.channelConnection.create({
-          data: {
-            organizationId: FIX.orgB.id,
-            channel: 'instagram',
-            provider: 'meta_graph',
-            providerAccountKey,
-            externalAccountId: accountId,
-            credentialsEnc: foreignCredentials,
-            status: 'connected',
-          },
-          select: { id: true, organizationId: true, credentialsEnc: true },
-        })
-        createdConnectionId = foreign.id
-      }
-      return rows
+    const foreign = await db.channelConnection.create({
+      data: {
+        organizationId: FIX.orgB.id,
+        channel: 'instagram',
+        provider: 'meta_graph',
+        providerAccountKey,
+        externalAccountId: accountId,
+        credentialsEnc: foreignCredentials,
+        status: 'connected',
+      },
     })
+    createdConnectionId = foreign.id
 
     const originalFetch = global.fetch
     const fetchMock = vi.fn()
@@ -106,9 +95,9 @@ describe('Instagram OAuth callback tenant ownership', () => {
       { token: tokenA(), cookie: `ig_oauth_csrf=${encodeURIComponent(state)}` },
     ))
 
-    expect(response.status).toBe(500)
-    expect(foreign).not.toBeNull()
-    const unchanged = await db.channelConnection.findUniqueOrThrow({ where: { id: foreign!.id } })
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toContain('ig_error=instagram_account_in_use')
+    const unchanged = await db.channelConnection.findUniqueOrThrow({ where: { id: foreign.id } })
     expect(unchanged.organizationId).toBe(FIX.orgB.id)
     expect(unchanged.credentialsEnc).toBe(foreignCredentials)
     expect(fetchMock).toHaveBeenCalledTimes(3)
