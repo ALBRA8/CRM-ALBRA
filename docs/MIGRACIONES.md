@@ -12,9 +12,17 @@ locales de desarrollo.
 
 ```
 prisma/migrations/
-├── 0_baseline/migration.sql                                    (esquema completo previo a la 2ª reparación)
-├── 1_session_revocation_quote_uniqueness_ratelimit/migration.sql (aditiva, no destructiva)
+├── 0_baseline/migration.sql
+├── 1_session_revocation_quote_uniqueness_ratelimit/migration.sql
+├── 2_whatsapp_connections_per_org/migration.sql
+├── 3_two_factor_totp/migration.sql
+├── 4_audit_indexes/migration.sql
 └── migration_lock.toml
+
+La secuencia 0–4 es la que debe aplicar `prisma migrate deploy` en una
+instalación nueva. El baseline crea el esquema previo; las migraciones 1–4
+añaden cambios posteriores. No se debe marcar el baseline como aplicado en
+una base existente sin comparar antes su esquema real con el baseline.
 ```
 
 ### Migración 1 — contenido y garantías
