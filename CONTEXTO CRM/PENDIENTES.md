@@ -142,3 +142,20 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Verificar regreso al panel Super Admin, recarga de página y expiración/renovación de sesión en navegador.
 - [ ] Integrar PR #3 en `main` solo con autorización expresa.
 - [ ] Desplegar solo tras integración, pruebas de humo, backup y autorización expresa.
+
+
+## Actualización 2026-11-13 — multusuario y preparación SaaS
+
+- [x] Corregir el test cross-tenant: org B usa una identidad admin vigente para comprobar que no puede editar ni desactivar miembros de org A.
+- [x] Unificar contraseña mínima de invitación en 8 caracteres, igual que el registro.
+- [x] Añadir test de contraseña corta, manipulación de organizationId, creación por rol, listado aislado y revocación de JWT al cambiar rol.
+- [x] CI run `43384116466` aprobado sobre commit de código `268a124ce8ee2d3a06d33978d3cc31a509efa8a8`: 65/65 archivos y 587/587 pruebas, TypeScript, lint, migraciones, escáner y build.
+- [x] Añadir `CONTEXTO CRM/PREPARACION_SAAS.md` con criterios de salida multiusuario, multicuenta, comercial y operación.
+- [ ] Completar invitación por enlace de un solo uso y verificación de correo.
+- [ ] Diseñar/migrar Instagram, Facebook, Telegram y TikTok desde `Integration` singular a conexiones por cuenta.
+- [ ] Ampliar Baileys a múltiples sesiones/cuentas por organización (hoy el registry separa por org).
+- [ ] Probar dos cuentas reales del mismo canal dentro de una organización y dos organizaciones en paralelo.
+- [ ] Implementar billing/entitlements antes de ofrecer planes de pago.
+- [ ] Migrar/ensayar PostgreSQL y validar backups/restauración en staging.
+- [ ] Verificación visual del equipo y selector Super Admin en staging.
+- [ ] Integrar PR #3 solo con autorización expresa; despliegue y cobros requieren autorización separada.
