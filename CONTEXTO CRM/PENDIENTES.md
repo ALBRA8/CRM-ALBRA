@@ -130,3 +130,15 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Desplegar solo después de integración, smoke tests, backup y autorización expresa.
 
 **Evidencia:** PR #3, head `040d8875ff9b10b5179313bbc374a5e7795af8ed`; CI run `43379605573` aprobado. Esto no equivale a merge ni despliegue.
+
+
+## Validación final del selector — 2026-11-13
+
+- [x] Corregir la recarga de sesión `/api/auth/me` para el contexto activo del superadmin sin alterar su organización base.
+- [x] Añadir prueba que confirma que el superadmin entra en org B, `/api/auth/me` informa org B y los datos listados pertenecen a org B.
+- [x] Confirmar que la organización base del usuario sigue siendo org A.
+- [x] CI del head `5c1e73e0c99c488c843d42aff6fe8cef6928bf23` aprobado: 64/64 archivos, 580/580 pruebas, build correcto.
+- [ ] Prueba visual/manual del botón **Ingresar** en navegador sobre staging.
+- [ ] Verificar regreso al panel Super Admin, recarga de página y expiración/renovación de sesión en navegador.
+- [ ] Integrar PR #3 en `main` solo con autorización expresa.
+- [ ] Desplegar solo tras integración, pruebas de humo, backup y autorización expresa.
