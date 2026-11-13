@@ -59,25 +59,25 @@ export async function dispatchWorkflowOutboundMessage(id: string) {
     if (item.channel === 'whatsapp') {
       const to = typeof payload.to === 'string' ? payload.to : ''
       const text = typeof payload.text === 'string' ? payload.text : ''
-      if (!to || !text) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'RECIPIENT_OR_BODY_MISSING'); return { status: 'failed' as const } }
+      if (!to || !text) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'RECIPIENT_OR_BODY_MISSING'); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       const secret = process.env.INTERNAL_API_SECRET
-      if (!secret || secret.length < 24) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'DAEMON_AUTH_NOT_CONFIGURED'); return { status: 'failed' as const } }
+      if (!secret || secret.length < 24) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'DAEMON_AUTH_NOT_CONFIGURED'); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       const base = (process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002').replace(/\/+$/, '')
       const response = await fetch(base + '/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + secret }, body: JSON.stringify({ orgId: item.organizationId, to, text }), signal: AbortSignal.timeout(12_000) })
       const data = await response.json().catch(() => ({})) as { success?: boolean; messageId?: string }
-      if (response.ok && data.success && data.messageId) { await finishWorkflowOutboundMessage(id, claimToken, 'sent', undefined, data.messageId); return { status: 'sent' as const } }
-      if (response.status >= 400 && response.status < 500) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'DAEMON_HTTP_' + response.status); return { status: 'failed' as const } }
+      if (response.ok && data.success && data.messageId) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'sent', undefined, data.messageId); return { status: done.count === 1 ? 'sent' as const : 'unknown' as const } }
+      if (response.status >= 400 && response.status < 500) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'DAEMON_HTTP_' + response.status); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       await finishWorkflowOutboundMessage(id, claimToken, 'unknown', 'DAEMON_RESULT_UNCERTAIN'); return { status: 'unknown' as const }
     }
     if (item.channel === 'telegram') {
       const chatId = payload.chatId
       const text = typeof payload.text === 'string' ? payload.text : ''
-      if ((typeof chatId !== 'string' && typeof chatId !== 'number') || !text) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'RECIPIENT_OR_BODY_MISSING'); return { status: 'failed' as const } }
+      if ((typeof chatId !== 'string' && typeof chatId !== 'number') || !text) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'RECIPIENT_OR_BODY_MISSING'); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       const integration = await getIntegration(item.organizationId)
       const token = parseTelegramState(integration.telegramBotTokenEnc).token
-      if (!token) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'TELEGRAM_NOT_CONFIGURED'); return { status: 'failed' as const } }
+      if (!token) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'TELEGRAM_NOT_CONFIGURED'); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       const result = await sendTelegramBotMessage({ token, chatId, text })
-      if (result.ok) { await finishWorkflowOutboundMessage(id, claimToken, 'sent'); return { status: 'sent' as const } }
+      if (result.ok) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'sent'); return { status: done.count === 1 ? 'sent' as const : 'unknown' as const } }
       await finishWorkflowOutboundMessage(id, claimToken, 'unknown', 'TELEGRAM_RESULT_UNCERTAIN'); return { status: 'unknown' as const }
     }
     if (item.channel === 'email') {
@@ -85,15 +85,15 @@ export async function dispatchWorkflowOutboundMessage(id: string) {
       const subject = typeof payload.subject === 'string' ? payload.subject : ''
       const html = typeof payload.html === 'string' ? payload.html : ''
       const text = typeof payload.text === 'string' ? payload.text : undefined
-      if (!to || !subject || !html || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'EMAIL_PAYLOAD_INVALID'); return { status: 'failed' as const } }
+      if (!to || !subject || !html || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'EMAIL_PAYLOAD_INVALID'); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       const config = await getSmtpConfig(item.organizationId)
-      if (!config) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'SMTP_NOT_CONFIGURED'); return { status: 'failed' as const } }
+      if (!config) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'SMTP_NOT_CONFIGURED'); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       const result = await trySendSmtp(config, to, subject, html, text)
-      if (result.ok) { await finishWorkflowOutboundMessage(id, claimToken, 'sent', undefined, result.messageId); return { status: 'sent' as const } }
+      if (result.ok) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'sent', undefined, result.messageId); return { status: done.count === 1 ? 'sent' as const : 'unknown' as const } }
       await finishWorkflowOutboundMessage(id, claimToken, 'unknown', 'SMTP_RESULT_UNCERTAIN'); return { status: 'unknown' as const }
     }
-    await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'CHANNEL_UNSUPPORTED')
-    return { status: 'failed' as const }
+    const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'CHANNEL_UNSUPPORTED')
+    return { status: done.count === 1 ? 'failed' as const : 'unknown' as const }
   } catch {
     await finishWorkflowOutboundMessage(id, claimToken, 'unknown', 'PROVIDER_RESULT_UNCERTAIN')
     return { status: 'unknown' as const }
