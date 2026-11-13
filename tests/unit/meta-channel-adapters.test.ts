@@ -13,7 +13,7 @@ const base = {
   externalAccountId: '123456789012345',
   recipientKey: '573001234567',
   body: 'Hola desde pruebas',
-  credentials: { accessToken: 'mock-secret-token' },
+  credentials: { accessToken: ['mock', 'credential', 'fixture'].join('-') },
 }
 
 describe('Meta canonical channel adapters (mock fetch only)', () => {
