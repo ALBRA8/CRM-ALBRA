@@ -305,3 +305,13 @@ Las entradas anteriores que indicaban que la outbox de workflows no existía son
 - Telegram tiene dispatcher workflow propio, pero el adaptador/ciclo de vida de `ChannelConnection` para Telegram sigue pendiente. Messenger y TikTok siguen pendientes de adaptadores de canal.
 - El worker workflow `POST /api/internal/workflow-outbox` requiere `WORKFLOW_OUTBOX_DISPATCH_ENABLED=true` y secreto dedicado; no hay scheduler registrado.
 - CI del HEAD `4500b511` aprobó secret scan, migraciones, TypeScript, lint, suite (77 archivos / 655 tests) y build. Las pruebas de despacho usan mocks; no son pruebas de proveedor ni de staging.
+
+
+## Validación final outbox workflow — HEAD 5b2f763 (2026-11-13)
+
+- [x] Reforzar enqueue: verificar que AutomationRun y Automation pertenecen al tenant que solicita persistir la intención.
+- [x] Reforzar fencing del dispatcher: un ACK tardío cuyo claim ya fue puesto en cuarentena no puede sobrescribir `unknown` ni reportar `sent`.
+- [x] Añadir pruebas de dispatcher para ACK tardío/lease vencido, propiedad tenant del run, conflicto de idempotencia y endpoint interno (auth, gate apagado, métricas agregadas).
+- [x] Push CI `43525779708` y PR CI `43525787021`: ambos success. Secret scan, Prisma generate/migrations, TypeScript, lint, suite completa (78 archivos / 660 tests) y build de producción.
+- [ ] Ejecutar la validación de staging: backup restaurable, dry-run backfill, pruebas con sandbox/destinatarios consentidos y ensayo de rollback. Requiere acceso y credenciales del entorno; no se ejecutó desde este entorno.
+- [ ] Configurar monitorización/alertas y scheduler externo únicamente tras la validación de staging y autorización operativa.
