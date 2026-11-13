@@ -261,3 +261,20 @@ A fecha 2026-11-13, inspección de `src/lib/inbox.ts`, `src/app/api/inbox/route.
 - Run `43397181657`, commit `0833e679`: migraciones y TypeScript completados; lint en curso en la última consulta.
 - Run `43397305922`, commit `ae7d4cea`: CI en curso; aún no se declara validado el HEAD.
 - Los runs se disparan tanto por push como por sincronización del PR. La aceptación debe basarse en el run del HEAD exacto, no en un commit padre.
+
+
+## Outbox saliente: contrato de seguridad (2026-11-13)
+
+Se añadió la base persistente de outbox para impedir que un timeout provoque reenvíos a ciegas:
+
+- Modelo `ChannelOutboundMessage`, migración `8_channel_outbound_messages` y vínculo opcional `ChannelMessage.outboundId`.
+- Servicio `src/lib/channel-outbox.ts`: crea intención antes de red, usa `clientRequestId` único por conversación, valida tenant/conversación/conexión, y hace claim atómico `queued → sending`.
+- Confirmación 2xx se persiste en una transacción: mensaje saliente, estado `sent`, ID externo y preview de conversación.
+- Rechazo explícito del proveedor puede quedar `failed`; timeout o worker interrumpido pasa a `unknown`.
+- `unknown` es terminal y **no se reintenta automáticamente**. Debe reconciliarse con el proveedor antes de cualquier reenvío. Esto evita duplicar a costa de requerir resolución manual cuando el resultado es ambiguo.
+- La idempotencia de la solicitud solo se garantiza dentro de la misma conversación y para el mismo `clientRequestId`; reutilizar la clave con otro cuerpo da conflicto.
+- Tests en `tests/integration/channel-outbox.test.ts` cubren idempotencia, claim concurrente, confirmación atómica, cuarentena y aislamiento de tenant.
+
+**Límite explícito:** esto NO habilita envíos. No hay todavía dispatcher/adaptadores canónicos ni endpoint que procese el outbox; el envío de keys `cc:` permanece bloqueado en UI y servidor. Antes de conectar Meta Graph hay que confirmar formato real de credenciales por provider, IDs de destinatario, versión/API permissions y comportamiento de timeout. No asumir que WhatsApp Cloud e Instagram comparten exactamente el mismo contrato solo porque ambos usan Meta Graph.
+
+**Hallazgo corregido:** el parser devuelve `channel: null` para keys `cc:`; el canal canónico se deriva de `ChannelConversation` y su conexión. No inferir WhatsApp para todas las conversaciones canónicas.
