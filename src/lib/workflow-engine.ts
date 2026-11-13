@@ -304,9 +304,13 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
       const opportunityId = (ctx.opportunityId as string) || (config.opportunityId as string)
       const stageId = config.stageId as string
       if (opportunityId && stageId) {
-        const validStage = await db.pipelineStage.findFirst({ where: { id: stageId, organizationId: orgId }, select: { id: true } })
+        const [validOpportunity, validStage] = await Promise.all([
+          db.opportunity.findFirst({ where: { id: opportunityId, organizationId: orgId }, select: { id: true } }),
+          db.pipelineStage.findFirst({ where: { id: stageId, organizationId: orgId }, select: { id: true } }),
+        ])
+        if (!validOpportunity) return { skipped: 'oportunidad no pertenece a la organización' }
         if (!validStage) return { skipped: 'etapa no pertenece a la organización' }
-        await db.opportunity.updateMany({ where: { id: opportunityId, organizationId: orgId }, data: { stageId: validStage.id } })
+        await db.opportunity.updateMany({ where: { id: validOpportunity.id, organizationId: orgId }, data: { stageId: validStage.id } })
         await recordTimelineEvent({
           orgId,
           opportunityId,
