@@ -260,7 +260,10 @@ export async function POST(req: NextRequest) {
             where: {
               organizationId: matchedOrgId,
               type: 'whatsapp',
-              metadata: { contains: `"messageId":"${status.id}"` },
+              AND: [
+                { metadata: { contains: `"messageId":"${status.id}"` } },
+                { metadata: { contains: `"status":"${status.status}"` } },
+              ],
             },
             select: { id: true },
           })
