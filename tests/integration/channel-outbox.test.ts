@@ -104,6 +104,38 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     expect((await markChannelOutboundSent({ id: intent.id })).id).toBe(sent.id)
   })
 
+  it('vincula un echo del proveedor recibido antes de la confirmación sin duplicar el mensaje', async () => {
+    const conversation = await createConversation()
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'request-echo-before-ack',
+      body: 'Eco recibido antes del ACK',
+    })
+    await claimChannelOutboundMessage(intent.id)
+    const echo = await db.channelMessage.create({
+      data: {
+        conversationId: conversation.id,
+        externalMessageId: 'provider-echo-before-ack',
+        direction: 'out',
+        senderType: 'agent',
+        body: intent.body,
+        metadata: JSON.stringify({ echo: true }),
+      },
+    })
+
+    const confirmed = await markChannelOutboundSent({
+      id: intent.id,
+      providerMessageId: 'provider-echo-before-ack',
+    })
+    expect(confirmed.id).toBe(echo.id)
+    expect(await db.channelMessage.count({
+      where: { conversationId: conversation.id, externalMessageId: 'provider-echo-before-ack' },
+    })).toBe(1)
+    expect((await db.channelMessage.findUnique({ where: { id: echo.id } }))?.outboundId).toBe(intent.id)
+    expect((await db.channelOutboundMessage.findUnique({ where: { id: intent.id } }))?.status).toBe('sent')
+  })
+
   it('pone un resultado incierto en cuarentena y nunca lo reencola', async () => {
     const conversation = await createConversation()
     const intent = await createChannelOutboundIntent({
