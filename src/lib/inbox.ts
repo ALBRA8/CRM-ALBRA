@@ -52,7 +52,7 @@ export interface InboxMessage {
   createdAt: string
   /** 'voice' si es una nota de voz transcrita (chip 🎙 en la UI). */
   messageType?: string
-  deliveryStatus?: 'queued' | 'sending' | 'failed' | 'unknown'
+  deliveryStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'delivery_failed' | 'unknown'
 }
 
 const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = {
@@ -423,7 +423,7 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
         where: { conversationId: conversation.id },
         orderBy: { createdAt: 'desc' },
         take: 200,
-        select: { id: true, direction: true, senderType: true, body: true, createdAt: true, messageType: true },
+        select: { id: true, direction: true, senderType: true, body: true, createdAt: true, messageType: true, metadata: true },
       }),
       db.channelOutboundMessage.findMany({
         where: { conversationId: conversation.id, status: { in: ['queued', 'sending', 'failed', 'unknown'] } },
@@ -439,6 +439,18 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
       text: message.body,
       createdAt: message.createdAt.toISOString(),
       ...(message.messageType === 'voice' ? { messageType: 'voice' } : {}),
+      ...(() => {
+        try {
+          const metadata = message.metadata ? JSON.parse(message.metadata) as { deliveryStatus?: string } : {}
+          return ['sent', 'delivered', 'read'].includes(metadata.deliveryStatus || '')
+            ? { deliveryStatus: metadata.deliveryStatus as 'sent' | 'delivered' | 'read' }
+            : metadata.deliveryStatus === 'failed'
+              ? { deliveryStatus: 'delivery_failed' as const }
+              : {}
+        } catch {
+          return {}
+        }
+      })(),
     }))
     const pendingMessages = pending.map((message) => ({
       id: `outbox:${message.id}`,
