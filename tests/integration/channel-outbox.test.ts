@@ -28,7 +28,7 @@ afterEach(async () => {
   }
 })
 
-async function createConversation(orgId = FIX.orgA.id) {
+async function createConversation(orgId: string = FIX.orgA.id) {
   const id = `outbox-connection-${suffix()}`
   const connection = await db.channelConnection.create({
     data: {
