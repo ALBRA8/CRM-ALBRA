@@ -109,6 +109,7 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
     const accountB = '17840000000000002'
     const connectionA = await createInstagramConnection(accountA)
     const connectionB = await createInstagramConnection(accountB)
+    await createInstagramConnection('17840000000000003', 'disconnected')
     const payload = {
       object: 'instagram',
       entry: [
@@ -126,6 +127,14 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
             sender: { id: accountB },
             recipient: { id: 'contact-10002' },
             message: { mid: 'ig.mid.batch-b', text: 'Echo B', is_echo: true },
+          }],
+        },
+        {
+          id: '17840000000000003',
+          messaging: [{
+            sender: { id: '17840000000000003' },
+            recipient: { id: 'contact-10003' },
+            message: { mid: 'ig.mid.batch-disconnected', text: 'Echo C', is_echo: true },
           }],
         },
       ],
