@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
   })
   for (const integration of integrations) {
     const secret = decryptSecret(integration.metaAppSecretEnc)
-    if (secret && token === secret) {
+    if (secret && safeEquals(token, secret)) {
       return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
     }
   }
