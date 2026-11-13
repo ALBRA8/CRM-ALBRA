@@ -26,12 +26,12 @@
 - [ ] PENDIENTE: limpiar baseline de lint (358 errores preexistentes, mayormente en scripts one-off E2E) sin tocar rutas de producción.
 
 ## Alto — multicuenta
-- [ ] Diseñar entidad de conexiones multi-cuenta por organización.
-- [ ] Migrar Integration uno-a-uno sin perder configuración.
-- [ ] Revisar si la implementación P0.1 resuelve únicamente sesiones WhatsApp por organización o también el modelo general de múltiples cuentas/canales.
-- [ ] Definir OAuth/renovación/revocación Instagram.
-- [ ] Adaptar WhatsApp Cloud y Telegram al modelo multi-cuenta.
-- [ ] Evaluar Facebook Messenger si continúa en alcance.
+- [x] Diseñar entidad canónica `ChannelConnection`, conversaciones y mensajes aislados por conexión.
+- [ ] Migrar Integration uno-a-uno con backfill repetible, dual-read, reporte de conflictos y rollback ensayado.
+- [x] Documentar que Baileys separa sesiones por organización, no por cada cuenta individual; no confundirlo con multicuenta completa.
+- [~] Instagram OAuth/selector y WhatsApp Cloud sincronizan conexiones canónicas; falta auditoría integral de state/PKCE, renovación y revocación por proveedor.
+- [~] WhatsApp Cloud e Instagram tienen webhooks y outbox canónicos en transición; Telegram, Facebook Messenger y TikTok siguen pendientes de adaptadores, ciclo de vida y pruebas.
+- [x] Confirmar el alcance final de cinco canales: WhatsApp, Instagram, Facebook Messenger, Telegram y TikTok.
 
 ## Alto — SaaS y operación
 - [ ] Elegir motor de producción y ensayar migración desde SQLite.
