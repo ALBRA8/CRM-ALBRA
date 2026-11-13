@@ -499,6 +499,84 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     }
   })
 
+  it('procesa mensajes entrantes batch por conexión y tenant sin mezclar conversaciones', async () => {
+    await seedConnection('org-a', '121000301')
+    await seedConnection('org-b', '121000302')
+    await db.whatsAppConnection.create({
+      data: {
+        organizationId: 'org-a',
+        phoneNumberId: '121000303',
+        phoneNumber: '+15550303',
+        displayName: 'Cuenta desconectada batch',
+        accessTokenEnc: 'not-a-real-ciphertext',
+        webhookVerifyToken: 'fixture-disconnected-batch-token',
+        status: 'disconnected',
+      },
+    })
+    const batchBody = {
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          id: 'waba-inbound-a',
+          changes: [{ field: 'messages', value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550301', phone_number_id: '121000301' },
+            contacts: [{ wa_id: '5215512300301', profile: { name: 'Contacto A' } }],
+            messages: [{ from: '5215512300301', id: 'wamid.inbound-batch-a', timestamp: '1794500101', type: 'text', text: { body: 'Mensaje tenant A' } }],
+          } }],
+        },
+        {
+          id: 'waba-inbound-b',
+          changes: [{ field: 'messages', value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550302', phone_number_id: '121000302' },
+            contacts: [{ wa_id: '5215512300302', profile: { name: 'Contacto B' } }],
+            messages: [{ from: '5215512300302', id: 'wamid.inbound-batch-b', timestamp: '1794500102', type: 'text', text: { body: 'Mensaje tenant B' } }],
+          } }],
+        },
+        {
+          id: 'waba-inbound-disconnected',
+          changes: [{ field: 'messages', value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550303', phone_number_id: '121000303' },
+            contacts: [{ wa_id: '5215512300303', profile: { name: 'No debe procesarse' } }],
+            messages: [{ from: '5215512300303', id: 'wamid.inbound-batch-disconnected', timestamp: '1794500103', type: 'text', text: { body: 'No procesar' } }],
+          } }],
+        },
+      ],
+    }
+    const body = JSON.stringify(batchBody)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(body).digest('hex')
+    const request = new (await import('next/server')).NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    })
+
+    const response = await webhookPost(request)
+    expect(response.status).toBe(200)
+    const [connectionA, connectionB, conversationA, conversationB, disconnectedConversation] = await Promise.all([
+      db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000301' } }),
+      db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000302' } }),
+      db.channelConversation.findFirst({ where: { externalContactKey: '5215512300301', connection: { providerAccountKey: 'meta:whatsapp:121000301' } } }),
+      db.channelConversation.findFirst({ where: { externalContactKey: '5215512300302', connection: { providerAccountKey: 'meta:whatsapp:121000302' } } }),
+      db.channelConversation.findFirst({ where: { externalContactKey: '5215512300303' } }),
+    ])
+    expect(connectionA?.organizationId).toBe('org-a')
+    expect(connectionB?.organizationId).toBe('org-b')
+    expect(conversationA?.organizationId).toBe('org-a')
+    expect(conversationB?.organizationId).toBe('org-b')
+    expect(conversationA?.connectionId).toBe(connectionA?.id)
+    expect(conversationB?.connectionId).toBe(connectionB?.id)
+    expect(disconnectedConversation).toBeNull()
+    const [messageA, messageB] = await Promise.all([
+      db.channelMessage.findFirst({ where: { conversationId: conversationA!.id, externalMessageId: 'wamid.inbound-batch-a' } }),
+      db.channelMessage.findFirst({ where: { conversationId: conversationB!.id, externalMessageId: 'wamid.inbound-batch-b' } }),
+    ])
+    expect(messageA?.body).toBe('Mensaje tenant A')
+    expect(messageB?.body).toBe('Mensaje tenant B')
+  })
+
   it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
     await seedConnection('org-a', '121000201')
     await seedConnection('org-b', '121000202')
