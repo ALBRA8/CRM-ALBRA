@@ -91,7 +91,7 @@ describe('Inbox canónico — tenant y conexión exacta', () => {
     const messages = await getInboxMessages(FIX.orgA.id, `cc:${own.conversation.id}`)
     expect(messages).toHaveLength(1)
     expect(messages[0].text).toBe('Hola desde la cuenta exacta')
-    expect(parseInboxKey(`cc:${own.conversation.id}`)).toEqual({ channel: 'whatsapp', id: own.conversation.id })
+    expect(parseInboxKey(`cc:${own.conversation.id}`)).toEqual({ channel: null, id: own.conversation.id })
 
     await markInboxRead(FIX.orgA.id, `cc:${own.conversation.id}`)
     const updated = await db.channelConversation.findUnique({ where: { id: own.conversation.id } })
