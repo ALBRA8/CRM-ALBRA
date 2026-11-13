@@ -246,15 +246,15 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
       clientRequestId: 'request-dispatch01',
       body: 'Mensaje simulado',
     })
-    let observed: { provider: string; channel: string; externalAccountId: string; recipientKey: string; accessToken: string } | null = null
+    let observed: { provider: string; channel: string; externalAccountId: string; recipientKey: string; outboundId: string; accessToken: string } | null = null
     const result = await dispatchChannelOutboundMessage(intent.id, {
       'meta_graph:instagram': async (input) => {
-        observed = { provider: input.provider, channel: input.channel, externalAccountId: input.externalAccountId, recipientKey: input.recipientKey, accessToken: input.credentials.accessToken }
+        observed = { provider: input.provider, channel: input.channel, externalAccountId: input.externalAccountId, recipientKey: input.recipientKey, outboundId: input.outboundId, accessToken: input.credentials.accessToken }
         return { ok: true, providerMessageId: 'mock-provider-message' }
       },
     })
     expect(result.status).toBe('sent')
-    expect(observed).toMatchObject({ provider: 'meta_graph', channel: 'instagram', externalAccountId: expect.any(String), recipientKey: conversation.externalContactKey, accessToken: token })
+    expect(observed).toMatchObject({ provider: 'meta_graph', channel: 'instagram', externalAccountId: expect.any(String), recipientKey: conversation.externalContactKey, outboundId: intent.id, accessToken: token })
     const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
     expect(stored?.status).toBe('sent')
     expect(await db.channelMessage.count({ where: { outboundId: intent.id } })).toBe(1)
