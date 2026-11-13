@@ -62,6 +62,7 @@ export function InboxPage() {
   const [draft, setDraft] = useState('')
   const [filter, setFilter] = useState<ChannelFilter>('all')
   const threadRef = useRef<HTMLDivElement>(null)
+  const canonicalRequestRef = useRef<{ key: string; text: string; id: string } | null>(null)
 
   const loadList = useCallback(async (silent = false) => {
     if (!silent) setLoadingList(true)
@@ -139,18 +140,31 @@ export function InboxPage() {
     const text = draft.trim()
     setDraft('')
     try {
+      const canonical = selected.key.startsWith('cc:')
+      const requestId = canonical
+        ? (canonicalRequestRef.current?.key === selected.key && canonicalRequestRef.current.text === text
+            ? canonicalRequestRef.current.id
+            : globalThis.crypto.randomUUID())
+        : undefined
+      if (canonical && requestId) canonicalRequestRef.current = { key: selected.key, text, id: requestId }
       await api.sendInboxMessage({
         key: selected.key,
         contactHandle: selected.contactHandle,
         clientId: selected.clientId,
         text,
+        ...(requestId ? { clientRequestId: requestId } : {}),
       })
-      // Refresca el hilo real (el servidor registra el mensaje en su fuente)
+      if (canonical) canonicalRequestRef.current = null
+      // Refresca el hilo real; en canonical muestra estado de outbox, no simula entrega.
       const res = (await api.getInboxMessages(selected.key)) as { messages?: InboxMessage[] }
       setMessages(res.messages || [])
-      setConversations((prev) =>
-        prev.map((c) => (c.key === selected.key ? { ...c, lastMessage: text, lastMessageAt: optimistic.createdAt, lastMessageFrom: 'out' } : c))
-      )
+      if (canonical) {
+        toast.info('Mensaje guardado en cola. Todavía no se ha enviado al proveedor.')
+      } else {
+        setConversations((prev) =>
+          prev.map((c) => (c.key === selected.key ? { ...c, lastMessage: text, lastMessageAt: optimistic.createdAt, lastMessageFrom: 'out' } : c))
+        )
+      }
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== optimistic.id))
       setDraft(text)
@@ -317,6 +331,17 @@ export function InboxPage() {
                           </span>
                         )}
                         {m.text}
+                        {m.deliveryStatus && (
+                          <span className={cn(
+                            'block text-[10px] mt-1 font-medium',
+                            m.deliveryStatus === 'failed' ? 'text-red-200' : m.deliveryStatus === 'unknown' ? 'text-amber-200' : 'text-emerald-100'
+                          )}>
+                            {m.deliveryStatus === 'queued' ? 'En cola · aún no enviado' :
+                              m.deliveryStatus === 'sending' ? 'En proceso de entrega' :
+                              m.deliveryStatus === 'failed' ? 'Rechazado · no enviado' :
+                              'Resultado incierto · verificar antes de reenviar'}
+                          </span>
+                        )}
                         <span className={cn('block text-[9px] mt-1', m.direction === 'out' ? (m.senderType === 'agent' ? 'text-amber-600' : 'text-emerald-200') : 'text-slate-400')}>
                           {m.senderType === 'agent' ? 'Agente IA · ' : ''}
                           {new Date(m.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
@@ -328,7 +353,7 @@ export function InboxPage() {
               </div>
 
               <div className="p-3 border-t border-slate-100 bg-white">
-                {selected.key.startsWith('cc:') && <p className="text-[11px] text-amber-700 mb-2">Esta conversación ya usa el historial y la cuenta canónicos. El envío permanece bloqueado hasta validar y habilitar el adaptador por conexión; no se enviará por una cuenta legacy.</p>}
+                {selected.key.startsWith('cc:') && <p className="text-[11px] text-amber-700 mb-2">El mensaje se guardará en una cola segura y podrás ver su estado. El worker de entrega aún no está habilitado: no se enviará al proveedor ni se usará una cuenta legacy.</p>}
                 <div className="flex gap-2 items-end">
                   <Textarea
                     value={draft}
@@ -339,13 +364,13 @@ export function InboxPage() {
                         handleSend()
                       }
                     }}
-                    placeholder={selected.key.startsWith('cc:') ? 'Envío por esta conexión estará disponible tras habilitar el adaptador seguro…' : `Responder por ${selected.channelLabel}…`}
+                    placeholder={selected.key.startsWith('cc:') ? 'Escribe para guardar en la cola (sin envío todavía)…' : `Responder por ${selected.channelLabel}…`}
                     className="min-h-[42px] max-h-32 resize-none text-[13px]"
                     rows={1}
                   />
-                  <Button onClick={handleSend} disabled={sending || !draft.trim() || selected.key.startsWith('cc:')} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
+                  <Button onClick={handleSend} disabled={sending || !draft.trim()} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
                     {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <SendIcon className="w-4 h-4" />}
-                    <span className="hidden sm:inline">Enviar</span>
+                    <span className="hidden sm:inline">{selected.key.startsWith('cc:') ? 'Encolar' : 'Enviar'}</span>
                   </Button>
                 </div>
               </div>
