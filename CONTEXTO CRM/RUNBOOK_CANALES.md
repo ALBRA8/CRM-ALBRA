@@ -145,3 +145,6 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 - El webhook WhatsApp descarta estados de entrega no reconocidos antes de persistirlos.
 - El HTML de correo de workflows escapa el cuerpo como texto plano; el asunto se limita a 200 caracteres y elimina saltos CR/LF.
 - Estas protecciones están cubiertas por tests automatizados; no sustituyen las pruebas con sandbox Meta ni una prueba SMTP controlada en staging.
+
+
+- Un HTTP 2xx de Meta sin ID de mensaje no se considera confirmación suficiente: la intención queda `unknown` y requiere conciliación manual; nunca se reenvía a ciegas.
