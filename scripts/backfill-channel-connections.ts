@@ -50,6 +50,14 @@ function encryptedCredentials(value: unknown) {
   return encrypted || null
 }
 
+function safeParseState<T>(parser: (value: string | null | undefined) => T, value: string | null | undefined): T | Record<string, never> {
+  try {
+    return parser(value)
+  } catch {
+    return {}
+  }
+}
+
 async function persistPlan(plan: ConnectionPlan): Promise<Result> {
   try {
     return await db.$transaction(async (tx) => {
@@ -178,7 +186,7 @@ async function main() {
     const appSecret = safeDecrypt(legacy.metaAppSecretEnc) || process.env.META_APP_SECRET || null
 
     if (legacy.instagramAccountId && legacy.instagramTokenEnc) {
-      const state = parseInstagramState(legacy.instagramTokenEnc)
+      const state = safeParseState(parseInstagramState, legacy.instagramTokenEnc)
       if (state.token) {
         const credentialsEnc = encryptedCredentials({
           accessToken: state.token,
@@ -226,7 +234,7 @@ async function main() {
     }
 
     if (legacy.facebookTokenEnc) {
-      const state = parseFacebookState(legacy.facebookTokenEnc)
+      const state = safeParseState(parseFacebookState, legacy.facebookTokenEnc)
       const pageId = state.pageId || legacy.facebookPageId
       if (pageId && state.pageToken) {
         const credentialsEnc = encryptedCredentials({
@@ -277,7 +285,7 @@ async function main() {
     }
 
     if (legacy.tiktokTokenEnc) {
-      const state = parseTikTokState(legacy.tiktokTokenEnc)
+      const state = safeParseState(parseTikTokState, legacy.tiktokTokenEnc)
       if (state.openId && state.accessToken) {
         const credentialsEnc = encryptedCredentials(state)
         if (credentialsEnc) {
