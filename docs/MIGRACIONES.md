@@ -67,7 +67,26 @@ organización: tras migrar, la primera conserva su número y la segunda queda
 `COT-0001-5d9716`; `tokenVersion=0` en usuarios existentes; 0 duplicados;
 sin filas eliminadas.
 
-### Rollback
+### Reiniciar una base local de pruebas desde cero
+
+Si los registros son ficticios y se decidió descartarlos, reconstruir únicamente
+la base local de pruebas con la secuencia versionada de Prisma:
+
+```bash
+mkdir -p db
+DATABASE_URL="file:./db/custom.db" npm run db:reset
+npx prisma generate
+```
+
+`npm run db:reset` ejecuta `prisma migrate reset`: elimina los datos de la
+base indicada y vuelve a aplicar las migraciones 0–4. Usar solo con una URL
+local de pruebas cuyo contenido se pueda borrar. Antes de ejecutar, comprobar
+que `DATABASE_URL` apunta exactamente al archivo deseado. No usar este
+comando para una base compartida o productiva. Este repositorio no ejecuta el
+borrado remoto automáticamente; la operación debe hacerse en el entorno que
+aloja esa base.
+
+## Rollback
 
 La migración 1 es aditiva. Rollback = restaurar el backup físico del paso 1
 (única vía segura en SQLite; no se escriben down-migrations automáticas).
