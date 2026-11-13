@@ -78,9 +78,33 @@ export async function createChannelOutboundIntent(input: {
 
 /** Claim atómico: solo un worker puede mover queued → sending. */
 export async function claimChannelOutboundMessage(id: string) {
+  const current = await db.channelOutboundMessage.findUnique({
+    where: { id },
+    select: {
+      conversation: {
+        select: { status: true, channel: true, connection: { select: { status: true, channel: true } } },
+      },
+    },
+  })
+  if (
+    !current ||
+    current.conversation.status !== 'active' ||
+    current.conversation.connection.status !== 'connected' ||
+    current.conversation.channel !== current.conversation.connection.channel
+  ) return null
+
   const now = new Date()
   const claimed = await db.channelOutboundMessage.updateMany({
-    where: { id, status: 'queued' },
+    where: {
+      id,
+      status: 'queued',
+      conversation: {
+        is: {
+          status: 'active',
+          connection: { is: { status: 'connected' } },
+        },
+      },
+    },
     data: { status: 'sending', attemptCount: { increment: 1 }, startedAt: now, providerErrorCode: null },
   })
   if (claimed.count !== 1) return null
