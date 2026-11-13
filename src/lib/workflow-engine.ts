@@ -192,7 +192,7 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
         if (!to) return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
         payload = { to, text: rendered.slice(0, 4096) }
       } else if (channel === 'telegram') {
-        const chatId = config.chatId ?? ctx.telegramChatId
+        const chatId = config.chatId
         if ((typeof chatId !== 'string' && typeof chatId !== 'number') || !String(chatId).trim()) {
           return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
         }
