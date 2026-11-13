@@ -9,6 +9,8 @@ import {
   quarantineStaleChannelOutboundMessages,
 } from '@/lib/channel-outbox'
 import { FIX } from '../setup/seed-data'
+import { encryptSecret } from '@/lib/crypto'
+import { dispatchChannelOutboundMessage } from '@/lib/channel-outbound-dispatcher'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const connectionIds: string[] = []
