@@ -1,0 +1,60 @@
+import type { NextRequest } from 'next/server'
+import { db } from '@/lib/db'
+import { json } from '@/lib/api-helpers'
+import { safeEqual } from '@/lib/internal-org-auth'
+import { dispatchChannelOutboundMessage } from '@/lib/channel-outbound-dispatcher'
+import { createMetaChannelAdapters } from '@/lib/meta-channel-adapters'
+
+export const runtime = 'nodejs'
+
+/**
+ * POST /api/internal/channel-outbox
+ * Worker pull endpoint. No scheduler is registered by this route.
+ * Requires a dedicated secret and an explicit feature flag before it can send.
+ */
+export async function POST(req: NextRequest) {
+  const expected = process.env.CHANNEL_OUTBOX_WORKER_SECRET
+  const supplied = req.headers.get('authorization')?.startsWith('Bearer ')
+    ? req.headers.get('authorization')!.slice('Bearer '.length)
+    : ''
+  if (!expected || expected.length < 32 || !supplied || !safeEqual(supplied, expected)) {
+    return json({ error: 'No autorizado' }, { status: 401 })
+  }
+  if (process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED !== 'true') {
+    return json({ error: 'El despacho de mensajes está deshabilitado por configuración' }, { status: 503 })
+  }
+
+  const body = await req.json().catch(() => ({})) as { limit?: number }
+  const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(Number(body.limit), 5)) : 1
+  const queued = await db.channelOutboundMessage.findMany({
+    where: {
+      status: 'queued',
+      conversation: {
+        is: {
+          status: 'active',
+          connection: {
+            is: { status: 'connected', channel: { in: ['whatsapp', 'instagram'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+    select: { id: true },
+  })
+
+  const adapters = createMetaChannelAdapters()
+  const results = []
+  for (const item of queued) {
+    results.push({
+      id: item.id,
+      ...(await dispatchChannelOutboundMessage(item.id, adapters)),
+    })
+  }
+
+  return json({
+    processed: results.length,
+    results,
+    note: 'Los estados unknown requieren conciliación manual; nunca se reintentan automáticamente.',
+  })
+}
