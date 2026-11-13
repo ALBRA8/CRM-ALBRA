@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server'
+import { createHash } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
@@ -512,7 +513,7 @@ export async function POST(req: NextRequest) {
                 const intent = await createChannelOutboundIntent({
                   organizationId: matchedOrgId,
                   conversationId: channelConversation.id,
-                  clientRequestId: `autoreply:${message.id}`,
+                  clientRequestId: `autoreply:${createHash('sha256').update(message.id).digest('hex')}`,
                   body: reply,
                 })
                 await recordTimelineEvent({
