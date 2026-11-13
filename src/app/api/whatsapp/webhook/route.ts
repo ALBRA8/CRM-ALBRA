@@ -477,7 +477,7 @@ export async function POST(req: NextRequest) {
           await runWorkflowsForTrigger({
             orgId: matchedOrgId,
             type: 'message_received',
-            payload: { channel: 'whatsapp', from: phone, text, conversationId: phone, clientId: client?.id },
+            payload: { channel: 'whatsapp', from: phone, text, conversationId: phone, clientId: client?.id, ...(message.id ? { messageId: message.id } : {}) },
           })
         } catch (err) {
           console.error('[whatsapp webhook] workflows', err)
