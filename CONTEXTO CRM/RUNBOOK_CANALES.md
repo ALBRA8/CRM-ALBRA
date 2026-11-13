@@ -7,6 +7,8 @@ Estado: guía de staging; **no autoriza activar envíos ni desplegar**.
 ## 1. Estado seguro por defecto
 
 - `CHANNEL_OUTBOUND_DISPATCH_ENABLED` debe permanecer ausente o distinto de `true`.
+- `CHANNEL_AUTOREPLY_ENABLED` debe permanecer ausente o distinto de `true`; los webhooks no deben responder automáticamente por defecto.
+- `WORKFLOW_EXTERNAL_SENDS_ENABLED` debe permanecer ausente o distinto de `true`; las acciones de workflow que envían WhatsApp/Telegram/email quedan en estado pendiente auditable sin llamar al proveedor.
 - `CHANNEL_OUTBOX_WORKER_SECRET` no debe configurarse en entornos que no vayan a ejecutar el worker.
 - No hay cron/scheduler registrado por el repositorio; el endpoint POST no se ejecuta solo.
 - `POST /api/inbox/send` en conversaciones canónicas crea una intención `queued`; HTTP 202 no significa que Meta haya recibido el mensaje.
@@ -109,7 +111,17 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 ## 8. Limitaciones conocidas
 
 - La tabla de eventos evita claims concurrentes y permite recuperar fallos/leases vencidos. El token de fencing impide que un propietario antiguo marque como completado/fallido un claim posterior; no evita por sí solo que un proceso antiguo continúe un efecto externo que ya inició. Un crash después de un efecto externo y antes de marcar `processed` puede repetir ese efecto en una recuperación. Workflows y auto-respuestas requieren idempotencia/outbox propia.
-- No hay garantía exactly-once de extremo a extremo.
+- Los webhooks propagan `message.id`/`msg.mid` al motor de workflows; la clave única `(automationId, idempotencyKey)` deduplica reentregas del mismo mensaje por automatización.
+- Los envíos externos de workflows y las auto-respuestas tienen opt-in explícito separado. No habilitar estas variables durante pruebas de recepción.
+- No hay garantía exactly-once de extremo a extremo. La deduplicación de workflows evita crear un segundo run, pero no recupera automáticamente una acción que haya quedado `running` tras un crash a mitad de ejecución; las auto-respuestas todavía no usan una outbox durable con clave por mensaje.
 - No se han validado todavía cuentas reales/sandbox de Meta ni el batch firmado completo en rutas.
 - No hay scheduler, alertas, dashboard de conciliación ni SLO/RPO/RTO aprobados.
+
+### Reversión segura de esta fase
+
+1. Deshabilitar `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED` y `WORKFLOW_EXTERNAL_SENDS_ENABLED`; detener cualquier scheduler externo.
+2. No borrar ni reencolar registros `unknown`, `sending` o `queued`; exportar únicamente IDs/códigos sanitizados para conciliación.
+3. Si se revierte el código, mantener las migraciones aditivas aplicadas: no existe una migración down automática y las tablas/columnas nuevas no deben eliminarse mientras la versión anterior siga operando.
+4. Restaurar backup solo si se verificó el punto de recuperación y se evaluó la pérdida de escrituras posteriores. Nunca usar `migrate reset` en un entorno con datos.
+5. Reconciliar el estado del proveedor antes de volver a habilitar cualquier envío; hacerlo requiere aprobación separada.
 - Messenger, Telegram y TikTok no están conectados al outbox canónico.
