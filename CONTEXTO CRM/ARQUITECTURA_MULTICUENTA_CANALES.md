@@ -168,3 +168,73 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 La CI `43395332553` validó correctamente schema, migraciones, TypeScript, lint, suite y build para el modelo `ChannelMessage` antes de la última incorporación de escrituras canónicas en los webhooks. La CI `43395622374` está validando el HEAD actual `402c585d`; todavía no se debe declarar validado hasta que termine.
 
 Esto todavía **no es una funcionalidad de multicuenta operativa de extremo a extremo**. No hay backfill ni dual-read; la bandeja, el historial, la lectura y los envíos siguen consumiendo principalmente las estructuras legacy. La persistencia canónica de mensajes salientes y una deduplicación recuperable de eventos siguen pendientes. No hacer merge, despliegue ni activar mensajería real sin autorización expresa.
+
+
+---
+
+## Instrucciones operativas para agentes (lectura obligatoria antes de tocar código)
+
+Esta sección es normativa para cualquier agente, desarrollador o automatización que continúe este trabajo. Si otra nota, issue o comentario contradice estas reglas, detenerse y aclarar antes de ejecutar cambios destructivos.
+
+### Fuente de verdad y alcance
+
+- Trabajar en `fix/migration-safety-audit`, PR #3, salvo instrucción expresa distinta. No asumir que el PR title describe todo el contenido actual: inspeccionar siempre el diff y el HEAD.
+- La arquitectura objetivo es multicuenta para WhatsApp, Instagram, Facebook Messenger, Telegram y TikTok. Prioridad de entrega: WhatsApp e Instagram; después Messenger; finalmente Telegram y TikTok.
+- `ChannelConnection` es la identidad canónica de la cuenta; `ChannelConversation` la conversación por conexión; `ChannelMessage` sus mensajes. Legacy (`Integration`, `WhatsAppConnection`, `WhatsAppConversation`, `WhatsAppMessage`, `TimelineEvent`) permanece durante expand/contract.
+- Nunca declarar "multicuenta completa" mientras inbox, historial, lectura, envío, webhooks, backfill, deduplicación y pruebas no estén migrados y validados.
+
+### Reglas de seguridad que no se negocian
+
+1. **Tenant isolation en cada query y mutación**: derivar `organizationId` de la sesión autenticada; no confiar en tenant, connectionId, canal ni accountId enviados por el cliente sin validar pertenencia.
+2. **Conexión exacta**: cada lectura/envío debe resolver una conversación canónica por su ID y validar `conversation.organizationId === auth.orgId`; la conexión relacionada debe coincidir con canal y estar `connected`. No elegir la primera conexión ni leer tokens de `Integration` para una conversación canónica.
+3. **Credenciales**: descifrar únicamente las credenciales de la conexión ya validada. Nunca devolver, registrar, copiar a fixtures/docs ni incluir secretos en errores. Metadata solo allowlisted y no secreta.
+4. **Fail closed**: conexión ausente, ajena, revocada, desconectada, canal incompatible o credencial inválida => no enviar ni exponer datos. No usar fallback legacy para una key canónica inválida.
+5. **No mezclar conversaciones**: misma persona/contacto en dos conexiones distintas debe producir conversaciones distintas. La identidad de inbox debe incluir el ID canónico de conversación, no solo clientId o handle.
+6. **Sin acciones externas accidentales**: tests con mocks/stubs; no enviar mensajes reales ni activar automatizaciones/cobros. No merge ni deploy sin autorización expresa.
+7. **No borrar/alterar legacy**: conservar dual-read/escrituras existentes hasta tener migración, reconciliación, rollback y evidencia. No cambiar unicidades legacy de forma destructiva ni asignar históricos ambiguos a una conexión por conjetura.
+8. **Idempotencia**: no confundir upsert de mensaje con idempotencia de todo el webhook. Los eventos deben tener estado/reintento recuperable y los efectos secundarios no deben duplicarse ante retry.
+
+### Estado real de la bandeja (auditoría de código)
+
+A fecha 2026-11-13, inspección de `src/lib/inbox.ts`, `src/app/api/inbox/route.ts` y `src/app/api/inbox/send/route.ts`:
+
+- `listInbox` agrega WhatsApp legacy (`WhatsAppConversation`) y Telegram/Instagram/Facebook agrupados por `TimelineEvent`; no consulta `ChannelConversation`.
+- Las keys actuales son `wa:<WhatsAppConversation.id>`, `tg:<clientId>`, `ig:<clientId>`, `fb:<clientId>`. Agrupar por clientId mezcla potencialmente cuentas/canales distintos y no identifica una conexión concreta.
+- `getInboxMessages` lee `WhatsAppMessage` o `TimelineEvent`; no lee `ChannelMessage`.
+- `markInboxRead` actualiza `WhatsAppConversation` o metadatos de `TimelineEvent`; no actualiza `ChannelConversation.unreadCount`.
+- `sendInboxMessage` usa daemon Baileys para WhatsApp y `Integration` para Telegram/Instagram/Facebook; no resuelve `ChannelConversation`/ `ChannelConnection`, no elige token por conexión y no persiste mensajes salientes en `ChannelMessage`.
+- `POST /api/inbox/send` recibe `key`, `contactHandle`, `clientId`, `text`; valida clientId contra el tenant, pero el contrato actual no contiene `connectionId` explícito.
+- El API GET marca como leída al solicitar mensajes (actualmente en paralelo con la lectura); conservar o cambiar esa semántica conscientemente, sin pérdida de unread en fallos.
+- `listClientChannels` también produce keys/handles legacy para WhatsApp y timeline. Debe revisarse para no seguir ofreciendo opciones ambiguas a los flujos de envío desde ficha/IA de cierre.
+
+### Contrato recomendado para migrar inbox
+
+- Introducir una key inequívoca, por ejemplo `cc:<ChannelConversation.id>`, validada estrictamente. No interpretar IDs canónicos como keys legacy ni viceversa.
+- Listar conversaciones canónicas por `organizationId`, incluir datos mínimos de conexión (canal/displayName) y ordenar por actividad. Si se muestran simultáneamente legacy y canónicas, evitar duplicados mediante una regla explícita; no fusionar por teléfono/handle sin prueba de identidad.
+- Para hilo, consultar `ChannelMessage` solo mediante una `ChannelConversation` encontrada por `id + organizationId`. Ordenar cronológicamente para UI y limitar paginación.
+- Para lectura, actualizar `ChannelConversation.unreadCount` con filtro tenant-scoped; evitar mutación antes de validar conversación.
+- Para envío, el servidor debe obtener el handle externo y credenciales desde la conversación y su conexión validadas. No confiar en `contactHandle` ni `channel` del cliente como autoridad. El adaptador se selecciona por `connection.provider/channel`; validar status y credenciales justo antes del envío.
+- Tras respuesta exitosa del proveedor, guardar `ChannelMessage(direction="out")` y actualizar `lastMessage`, `lastMessageAt`, `lastMessageFrom` de forma coherente. Usar ID externo del proveedor si está disponible. Si falla persistencia después de que el proveedor aceptó el mensaje, diseñar recuperación para no reenviar a ciegas.
+- No afirmar soporte de un adaptador por reutilizar un sender legacy que toma `Integration`. Si un proveedor no tiene adaptador canónico probado, rechazar envío canónico de forma segura.
+- Las opciones legacy (`wa-new:<phone>`, timeline por clientId) no contienen conexión exacta: mantenerlas separadas como compatibilidad, no convertirlas silenciosamente en `cc:`. La ruta canónica debe ser explícita.
+- La UI debe mostrar canal y cuenta/conexión cuando existan varias; los IDs internos pueden estar en key, nunca tokens.
+
+### Orden de trabajo y pruebas obligatorias
+
+1. Confirmar CI del HEAD actual y registrar SHA exacto; no extrapolar CI de un commit padre.
+2. Documentar cambios y reglas aquí antes de modificar código sustantivo.
+3. Añadir parser y tests unitarios de key canónica; probar key malformada.
+4. Migrar lectura/listado canónico con aislamiento tenant; pruebas para mismo contacto en dos conexiones y dos tenants.
+5. Migrar lectura de mensajes y marcar leído; probar conversación ajena/no existente, orden y unread.
+6. Implementar envío por adaptador canónico WhatsApp Cloud e Instagram primero; pruebas mockeadas que aseguren que token/endpoint corresponden a la conexión exacta. No usar daemon Baileys para WhatsApp Cloud salvo que el provider de esa conexión sea Baileys.
+7. Persistir salientes y probar fallo proveedor, duplicados y recuperación; después integrar UI y `listClientChannels`.
+8. Añadir Facebook, Telegram y TikTok solo con adaptadores oficiales/permisos validados, respetando prioridad y limitaciones.
+9. Ejecutar CI completa (migraciones SQLite limpias, TypeScript, lint, suite y build) sobre el nuevo HEAD. Actualizar este documento con SHA/run y limitaciones reales.
+10. Mantener PR en draft y sin merge/deploy hasta autorización.
+
+### CI y estado del PR verificados
+
+- PR #3: abierta, draft, no mergeada; HEAD verificado al documentar: `4b1ba77316fbafdae0a21b00d3109c13018f2bdf`.
+- Run `43395622374` (commit de código `402c585d`): job CI completado con éxito; incluye instalación, escáner de secretos, Prisma, migraciones SQLite limpias, TypeScript, lint, tests y build.
+- Run `43395971244` (HEAD documental `4b1ba773`): job CI completado con éxito en los mismos pasos.
+- Estas ejecuciones validan sus respectivos commits; cualquier cambio posterior requiere CI nuevo sobre el HEAD actualizado.
