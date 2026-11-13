@@ -44,7 +44,7 @@ Introducir una entidad `ChannelConnection` como identidad canónica de cada cuen
 
 Índices y restricciones:
 - `@@index([organizationId, channel, status])` para listado/operación por tenant.
-- `@@unique([provider, providerAccountKey])` para impedir reclamar una misma cuenta externa en dos workspaces. La clave debe ser estable, normalizada y namespaced cuando el proveedor lo requiera.
+- `providerAccountKey` tiene unicidad global (`@unique`) para impedir reclamar una misma cuenta externa en dos workspaces. La propia clave incluye el namespace del proveedor/app cuando se requiere (por ejemplo, `meta:instagram:<id>`).
 - No asumir que `externalAccountId` por sí solo es globalmente único entre apps/proveedores.
 - Si el proveedor permite varias conexiones legítimas al mismo objeto externo bajo distintas apps, definir explícitamente el namespace de `providerAccountKey` y la política de propiedad antes de relajar la restricción.
 
