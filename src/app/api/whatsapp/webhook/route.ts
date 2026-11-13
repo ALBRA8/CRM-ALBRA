@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
-  let activeWebhookEventId: string | null = null
+  let activeWebhookEventClaim: { id: string; claimToken: string } | null = null
   try {
     const signature = req.headers.get('x-hub-signature-256')
     if (!signature) return json({ error: 'Firma X-Hub-Signature-256 requerida' }, { status: 401 })
@@ -272,7 +272,7 @@ export async function POST(req: NextRequest) {
             if (state === 'processed') continue
             throw new Error('WEBHOOK_EVENT_BUSY')
           }
-          activeWebhookEventId = claim.id
+          activeWebhookEventClaim = claim
         }
         if (status.id) {
           const seenStatus = await db.timelineEvent.findFirst({
@@ -287,9 +287,9 @@ export async function POST(req: NextRequest) {
             select: { id: true },
           })
           if (seenStatus) {
-            if (activeWebhookEventId) {
-              await completeChannelWebhookEvent(activeWebhookEventId)
-              activeWebhookEventId = null
+            if (activeWebhookEventClaim) {
+              await completeChannelWebhookEvent(activeWebhookEventClaim)
+              activeWebhookEventClaim = null
             }
             continue
           }
@@ -301,9 +301,9 @@ export async function POST(req: NextRequest) {
           metadata: { messageId: status.id, status: status.status, direction: 'out' },
           source: 'integration',
         })
-        if (activeWebhookEventId) {
-          await completeChannelWebhookEvent(activeWebhookEventId)
-          activeWebhookEventId = null
+        if (activeWebhookEventClaim) {
+          await completeChannelWebhookEvent(activeWebhookEventClaim)
+          activeWebhookEventClaim = null
         }
       }
   
@@ -321,7 +321,7 @@ export async function POST(req: NextRequest) {
             if (state === 'processed') continue
             throw new Error('WEBHOOK_EVENT_BUSY')
           }
-          activeWebhookEventId = claim.id
+          activeWebhookEventClaim = claim
         }
         // ================================================================
         // (A4-02, auditoría 2026-11-11) DEDUP por waMessageId: Meta re-entrega
@@ -336,9 +336,9 @@ export async function POST(req: NextRequest) {
             select: { id: true },
           })
           if (seen) {
-            if (activeWebhookEventId) {
-              await completeChannelWebhookEvent(activeWebhookEventId)
-              activeWebhookEventId = null
+            if (activeWebhookEventClaim) {
+              await completeChannelWebhookEvent(activeWebhookEventClaim)
+              activeWebhookEventClaim = null
             }
             continue
           }
@@ -395,25 +395,25 @@ export async function POST(req: NextRequest) {
             select: { id: true },
           })
           if (seen) {
-            if (activeWebhookEventId) {
-              await completeChannelWebhookEvent(activeWebhookEventId)
-              activeWebhookEventId = null
+            if (activeWebhookEventClaim) {
+              await completeChannelWebhookEvent(activeWebhookEventClaim)
+              activeWebhookEventClaim = null
             }
             continue
           }
         }
         if (!text) {
-          if (activeWebhookEventId) {
-            await completeChannelWebhookEvent(activeWebhookEventId)
-            activeWebhookEventId = null
+          if (activeWebhookEventClaim) {
+            await completeChannelWebhookEvent(activeWebhookEventClaim)
+            activeWebhookEventClaim = null
           }
           continue
         }
         const phone = normalizePhone(message.from)
         if (!phone) {
-          if (activeWebhookEventId) {
-            await completeChannelWebhookEvent(activeWebhookEventId)
-            activeWebhookEventId = null
+          if (activeWebhookEventClaim) {
+            await completeChannelWebhookEvent(activeWebhookEventClaim)
+            activeWebhookEventClaim = null
           }
           continue
         }
@@ -532,9 +532,9 @@ export async function POST(req: NextRequest) {
             },
           })
         }
-        if (activeWebhookEventId) {
-          await completeChannelWebhookEvent(activeWebhookEventId)
-          activeWebhookEventId = null
+        if (activeWebhookEventClaim) {
+          await completeChannelWebhookEvent(activeWebhookEventClaim)
+          activeWebhookEventClaim = null
         }
       }
   
@@ -545,8 +545,8 @@ export async function POST(req: NextRequest) {
     // Meta exige 200 rápido
     return json({ ok: true })
   } catch (err) {
-    if (activeWebhookEventId) {
-      await failChannelWebhookEvent(activeWebhookEventId, 'PROCESSING_FAILED').catch(() => undefined)
+    if (activeWebhookEventClaim) {
+      await failChannelWebhookEvent(activeWebhookEventClaim, 'PROCESSING_FAILED').catch(() => undefined)
     }
     console.error('[whatsapp webhook]', err)
     return json({ ok: false, processed: false }, { status: 500 })
