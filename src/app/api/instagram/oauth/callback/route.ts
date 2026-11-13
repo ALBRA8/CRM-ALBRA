@@ -105,86 +105,97 @@ export async function GET(req: NextRequest) {
       }>
     }
     const pages = pagesJson.data || []
-    const hit = pages.find((p) => p.instagram_business_account?.id)
-    if (!hit) return fail('no_ig_business_linked')
+    const eligiblePages = pages.filter((page) => page.instagram_business_account?.id && page.access_token)
+    if (!eligiblePages.length) return fail('no_ig_business_linked')
 
-    const igAccount = hit.instagram_business_account!
-    const pageToken = hit.access_token || longToken
-
-    // 4) registrar la cuenta en el inventario canónico (shadow-write).
-    // La clave está namespaced por proveedor/canal y nunca contiene credenciales.
-    // Una cuenta Meta no puede quedar vinculada simultáneamente a dos tenants.
-    const providerAccountKey = `meta:instagram:${igAccount.id}`
-    const existingCanonical = await db.channelConnection.findUnique({
-      where: { providerAccountKey },
-      select: { id: true, organizationId: true },
+    // Una sola autorización Meta puede devolver varias páginas con Instagram.
+    // Registrar todas evita perder las cuentas secundarias; la primera sigue
+    // siendo la seleccionada en Integration hasta que la UI permita elegir.
+    const accountKeys = eligiblePages.map((page) => `meta:instagram:${page.instagram_business_account!.id}`)
+    const existingConnections = await db.channelConnection.findMany({
+      where: { providerAccountKey: { in: accountKeys } },
+      select: { providerAccountKey: true, organizationId: true },
     })
-    if (existingCanonical && existingCanonical.organizationId !== auth.orgId) {
+    if (existingConnections.some((connection) => connection.organizationId !== auth.orgId)) {
       return fail('instagram_account_in_use')
     }
 
-    const next = encodeInstagramState({ ...ig, token: pageToken })
-    const credentialsEnc = encryptSecret(JSON.stringify({
-      accessToken: pageToken,
-      appSecret,
-      webhookVerifyToken: ig.webhookVerifyToken || null,
-    }))
-    if (!credentialsEnc) return fail('credential_encryption_failed')
+    const selectedPage = eligiblePages[0]
+    const selectedAccount = selectedPage.instagram_business_account!
+    const selectedToken = selectedPage.access_token || longToken
+    const next = encodeInstagramState({ ...ig, token: selectedToken })
 
-    // La escritura canónica y el espejo legacy son atómicos. El webhook seguirá
-    // leyendo Integration durante esta fase; el dual-read llegará tras paridad.
+    const prepared = eligiblePages.map((page) => {
+      const account = page.instagram_business_account!
+      const pageToken = page.access_token || longToken
+      const credentialsEnc = encryptSecret(JSON.stringify({
+        accessToken: pageToken,
+        appSecret,
+        webhookVerifyToken: ig.webhookVerifyToken || null,
+      }))
+      return { page, account, pageToken, credentialsEnc }
+    })
+    if (prepared.some((item) => !item.credentialsEnc)) return fail('credential_encryption_failed')
+
+    // Todas las cuentas se registran atómicamente. Integration conserva solo
+    // la primera por compatibilidad hasta completar selector y dual-read.
     await db.$transaction(async (tx) => {
-      const connection = await tx.channelConnection.upsert({
-        where: { providerAccountKey },
-        create: {
-          organizationId: auth.orgId,
-          channel: 'instagram',
-          provider: 'meta_graph',
-          providerAccountKey,
-          externalAccountId: igAccount.id,
-          displayName: igAccount.username || hit.name || null,
-          status: 'connected',
-          credentialsEnc,
-          metadata: JSON.stringify({ pageId: hit.id, pageName: hit.name || null, username: igAccount.username || null }),
-          lastVerifiedAt: new Date(),
-        },
-        update: {
-          displayName: igAccount.username || hit.name || null,
-          status: 'connected',
-          credentialsEnc,
-          metadata: JSON.stringify({ pageId: hit.id, pageName: hit.name || null, username: igAccount.username || null }),
-          lastVerifiedAt: new Date(),
-          lastErrorAt: null,
-          lastErrorCode: null,
-        },
-      })
-      await tx.channelConnectionEvent.create({
-        data: {
-          organizationId: auth.orgId,
-          connectionId: connection.id,
-          type: 'connected',
-          detail: 'instagram_oauth_connected',
-        },
-      })
+      for (const item of prepared) {
+        const providerAccountKey = `meta:instagram:${item.account.id}`
+        const connection = await tx.channelConnection.upsert({
+          where: { providerAccountKey },
+          create: {
+            organizationId: auth.orgId,
+            channel: 'instagram',
+            provider: 'meta_graph',
+            providerAccountKey,
+            externalAccountId: item.account.id,
+            displayName: item.account.username || item.page.name || null,
+            status: 'connected',
+            credentialsEnc: item.credentialsEnc!,
+            metadata: JSON.stringify({ pageId: item.page.id, pageName: item.page.name || null, username: item.account.username || null }),
+            lastVerifiedAt: new Date(),
+          },
+          update: {
+            displayName: item.account.username || item.page.name || null,
+            status: 'connected',
+            credentialsEnc: item.credentialsEnc!,
+            metadata: JSON.stringify({ pageId: item.page.id, pageName: item.page.name || null, username: item.account.username || null }),
+            lastVerifiedAt: new Date(),
+            lastErrorAt: null,
+            lastErrorCode: null,
+          },
+        })
+        await tx.channelConnectionEvent.create({
+          data: {
+            organizationId: auth.orgId,
+            connectionId: connection.id,
+            type: 'connected',
+            detail: 'instagram_oauth_connected',
+          },
+        })
+      }
       await tx.integration.update({
         where: { organizationId: auth.orgId },
         data: {
           instagramTokenEnc: next,
-          instagramAccountId: igAccount.id,
+          instagramAccountId: selectedAccount.id,
           enableInstagram: true,
         },
       })
     })
 
-    // 5) best-effort: suscribir la cuenta IG a los webhooks de la app
-    try {
-      await fetch(`${graph}/${v}/${encodeURIComponent(igAccount.id)}/subscribed_apps`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${pageToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscribed_fields: 'messages,messaging_postbacks,message_reactions' }),
-      })
-    } catch {
-      // no fatal: la suscripción también puede hacerse desde Meta Developers
+    // 5) best-effort: suscribir todas las cuentas registradas.
+    for (const item of prepared) {
+      try {
+        await fetch(`${graph}/${v}/${encodeURIComponent(item.account.id)}/subscribed_apps`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${item.pageToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscribed_fields: 'messages,messaging_postbacks,message_reactions' }),
+        })
+      } catch {
+        // no fatal: la suscripción también puede hacerse desde Meta Developers
+      }
     }
 
     await auditAndTimeline({
@@ -195,15 +206,14 @@ export async function GET(req: NextRequest) {
       details: {
         provider: 'instagram',
         via: 'meta_oauth',
-        igAccountId: igAccount.id,
-        igUsername: igAccount.username || null,
-        pageId: hit.id,
-        tokenMasked: pageToken ? `${pageToken.slice(0, 4)}••••` : null,
+        igAccountIds: prepared.map((item) => item.account.id),
+        selectedIgAccountId: selectedAccount.id,
+        pageCount: prepared.length,
       },
     })
 
     const ok = new URL('/settings?tab=instagram', req.url)
-    ok.searchParams.set('ig_connected', igAccount.username || igAccount.id)
+    ok.searchParams.set('ig_connected', selectedAccount.username || selectedAccount.id)
     const res = NextResponse.redirect(ok)
     res.cookies.delete('ig_oauth_csrf')
     return res
