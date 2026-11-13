@@ -60,6 +60,7 @@ model Organization {
   whatsappConnections   WhatsAppConnection[]
   channelConnections    ChannelConnection[]
   channelConnectionEvents ChannelConnectionEvent[]
+  channelWebhookEvents ChannelWebhookEvent[]
   channelConversations ChannelConversation[]
 }
 
@@ -813,6 +814,7 @@ model ChannelConnectionEvent {
 model ChannelWebhookEvent {
   id             String   @id @default(cuid())
   organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   connectionId   String
   connection     ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   eventKey       String
