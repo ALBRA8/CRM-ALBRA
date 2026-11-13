@@ -255,11 +255,15 @@ async function listCanonicalChannelConversations(orgId: string, limit: number): 
   try {
     const rows = await db.channelConversation.findMany({
       where: { organizationId: orgId, status: 'active' },
-      include: { connection: { select: { displayName: true, status: true, channel: true } } },
+      include: {
+        connection: { select: { displayName: true, status: true, channel: true } },
+        messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { direction: true } },
+      },
       orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
       take: limit,
     })
     return rows
+      .filter((row) => ['whatsapp', 'instagram', 'facebook', 'telegram'].includes(row.channel))
       .filter((row) => row.connection.status === 'connected' && row.connection.channel === row.channel)
       .map((row) => ({
         key: 'cc:' + row.id,
@@ -271,7 +275,7 @@ async function listCanonicalChannelConversations(orgId: string, limit: number): 
         clientId: null,
         lastMessage: row.lastMessage || '',
         lastMessageAt: row.lastMessageAt?.toISOString() || null,
-        lastMessageFrom: 'in' as const,
+        lastMessageFrom: row.messages[0]?.direction === 'out' ? 'out' as const : 'in' as const,
         unreadCount: row.unreadCount,
         isAutoReply: false,
       }))
