@@ -15,7 +15,7 @@ afterEach(async () => {
   }
 })
 
-async function createConnection(organizationId = FIX.orgA.id) {
+async function createConnection(organizationId: string = FIX.orgA.id) {
   const id = `webhook-event-connection-${suffix()}`
   const connection = await db.channelConnection.create({
     data: {
