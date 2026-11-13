@@ -200,3 +200,15 @@ No preparar ni abrir los PR todavía. Cerrar B2 primero: el daemon debe recibir 
 4. Probar que el superadmin puede entrar a otra organización, que el contexto se refleja en `/me` y que los datos del dashboard quedan correctamente limitados a esa organización.
 5. Revisar expiración/rotación del token y regreso al contexto administrativo.
 6. Integrar solo con verificaciones satisfactorias y autorización; desplegar por separado, con plan de rollback.
+
+
+## Validación correctiva de CI y selector multiempresa (2026-11-13)
+
+- PR #3, rama `fix/migration-safety-audit`, head validado: `040d8875ff9b10b5179313bbc374a5e7795af8ed`.
+- GitHub Actions `CI CRM-ALBRA` (run `43379605573`): **success**.
+- Resultado: TypeScript, lint, escáner de secretos, migraciones Prisma en SQLite temporal, suite completa y build de producción aprobados.
+- Suite: **64/64 archivos y 580/580 pruebas aprobadas**.
+- Causa de los 9 fallos anteriores: algunas pruebas fabricaban JWT con rol `owner` para el usuario B mientras la BD de test conservaba `member`. La validación del rol vigente en `assertSessionState` rechazaba correctamente esos tokens. Se corrigieron las pruebas para persistir el rol requerido durante cada escenario y restaurar `member` al finalizar; no se debilitó la autenticación.
+- El error del PDF era consecuencia del 401 de la sesión owner B; con rol persistido la prueba de aislamiento y cifras volvió a pasar.
+- Las pruebas de integración del selector Super Admin también están incluidas en la suite aprobada: cambio de contexto a org B, lectura de datos de org B, conservación de la organización base, denegación de usuario normal y rechazo de organización inexistente.
+- **Límite:** esto acredita CI y pruebas automatizadas, no una prueba visual en navegador ni una prueba en staging/producción. PR sigue abierta/en draft; no merge ni despliegue.
