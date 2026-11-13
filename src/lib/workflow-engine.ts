@@ -273,13 +273,19 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
       return { queued: true, channel, sent, error: sendError }
     }
     case 'create_opportunity': {
-      const stage = await db.pipelineStage.findFirst({ where: { organizationId: orgId }, orderBy: { order: 'asc' } })
+      const requestedStageId = config.stageId as string | undefined
+      const [requestedStage, firstStage] = await Promise.all([
+        requestedStageId
+          ? db.pipelineStage.findFirst({ where: { id: requestedStageId, organizationId: orgId }, select: { id: true } })
+          : Promise.resolve(null),
+        db.pipelineStage.findFirst({ where: { organizationId: orgId }, orderBy: { order: 'asc' }, select: { id: true } }),
+      ])
       const opp = await db.opportunity.create({
         data: {
           organizationId: orgId,
           title: renderTemplate(String(config.title || 'Nueva oportunidad'), ctx),
           clientId: (ctx.clientId as string) || null,
-          stageId: (config.stageId as string) || stage?.id || null,
+          stageId: requestedStage?.id || firstStage?.id || null,
           amount: Number(config.amount || 0),
           source: 'automation',
         },
@@ -298,7 +304,9 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
       const opportunityId = (ctx.opportunityId as string) || (config.opportunityId as string)
       const stageId = config.stageId as string
       if (opportunityId && stageId) {
-        await db.opportunity.updateMany({ where: { id: opportunityId, organizationId: orgId }, data: { stageId } })
+        const validStage = await db.pipelineStage.findFirst({ where: { id: stageId, organizationId: orgId }, select: { id: true } })
+        if (!validStage) return { skipped: 'etapa no pertenece a la organización' }
+        await db.opportunity.updateMany({ where: { id: opportunityId, organizationId: orgId }, data: { stageId: validStage.id } })
         await recordTimelineEvent({
           orgId,
           opportunityId,
