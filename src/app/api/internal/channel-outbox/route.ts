@@ -12,12 +12,49 @@ export const runtime = 'nodejs'
  * Worker pull endpoint. No scheduler is registered by this route.
  * Requires a dedicated secret and an explicit feature flag before it can send.
  */
-export async function POST(req: NextRequest) {
+
+function isAuthorized(req: NextRequest) {
   const expected = process.env.CHANNEL_OUTBOX_WORKER_SECRET
-  const supplied = req.headers.get('authorization')?.startsWith('Bearer ')
-    ? req.headers.get('authorization')!.slice('Bearer '.length)
-    : ''
-  if (!expected || expected.length < 32 || !supplied || !safeEqual(supplied, expected)) {
+  const authorization = req.headers.get('authorization') || ''
+  const supplied = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : ''
+  return !!expected && expected.length >= 32 && !!supplied && safeEqual(supplied, expected)
+}
+
+/**
+ * GET /api/internal/channel-outbox
+ * Read-only aggregate health snapshot. Never returns message bodies, IDs,
+ * connection names, tenant IDs or credentials.
+ */
+export async function GET(req: NextRequest) {
+  if (!isAuthorized(req)) return json({ error: 'No autorizado' }, { status: 401 })
+
+  const staleBefore = new Date(Date.now() - 5 * 60 * 1000)
+  const [queued, sending, sent, failed, unknown, staleSending, webhookProcessing, webhookFailed, staleWebhookEvents, connectedMeta] = await Promise.all([
+    db.channelOutboundMessage.count({ where: { status: 'queued' } }),
+    db.channelOutboundMessage.count({ where: { status: 'sending' } }),
+    db.channelOutboundMessage.count({ where: { status: 'sent' } }),
+    db.channelOutboundMessage.count({ where: { status: 'failed' } }),
+    db.channelOutboundMessage.count({ where: { status: 'unknown' } }),
+    db.channelOutboundMessage.count({ where: { status: 'sending', startedAt: { lt: staleBefore } } }),
+    db.channelWebhookEvent.count({ where: { status: 'processing' } }),
+    db.channelWebhookEvent.count({ where: { status: 'failed' } }),
+    db.channelWebhookEvent.count({ where: { status: 'processing', updatedAt: { lt: staleBefore } } }),
+    db.channelConnection.count({
+      where: { status: 'connected', channel: { in: ['whatsapp', 'instagram'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
+    }),
+  ])
+
+  return json({
+    workerEnabled: process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED === 'true',
+    outbox: { queued, sending, sent, failed, unknown, staleSending },
+    webhookEvents: { processing: webhookProcessing, failed: webhookFailed, staleProcessing: staleWebhookEvents },
+    connectedMetaConnections: connectedMeta,
+    sampledAt: new Date().toISOString(),
+  })
+}
+
+export async function POST(req: NextRequest) {
+  if (!isAuthorized(req)) {
     return json({ error: 'No autorizado' }, { status: 401 })
   }
   if (process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED !== 'true') {
