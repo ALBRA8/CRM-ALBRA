@@ -68,6 +68,13 @@ class ApiClient {
     return this.request('/super/overview')
   }
 
+  async switchSuperOrganization(organizationId: string) {
+    return this.request('/super/switch-organization', {
+      method: 'POST',
+      body: JSON.stringify({ organizationId }),
+    })
+  }
+
   async demoLogin() {
     return this.request('/auth/demo', { method: 'POST' })
   }
