@@ -31,13 +31,13 @@ Estado: plan de ejecución y brechas verificadas; NO equivale a lanzamiento SaaS
 
 ## Bloque B — Multicuenta de canales (bloqueante antes de prometerlo)
 
-- [ ] Definir entidad común `ChannelConnection`: `organizationId`, `channel`, `provider`, `externalAccountId`, `displayName`, `status`, `scopes`, timestamps de token, referencia cifrada de credenciales y estado de salud.
-- [ ] Índices únicos compuestos: por proveedor/cuenta externa y por organización/canal según reglas de negocio; nunca permitir que un webhook se asigne por coincidencia parcial.
-- [ ] Migrar la integración singular actual con estrategia expand/contract y rollback; mantener compatibilidad hasta verificar paridad.
-- [ ] OAuth: state firmado, PKCE cuando aplique, redirect URI allowlist, validación de scopes, renovación y revocación; no registrar tokens.
-- [ ] Webhooks: validar firma, resolver por identificador externo exacto, deduplicar por `connectionId + eventId`, manejar reintentos y dead-letter queue.
+- [x] Definir entidad común `ChannelConnection` con tenant, canal/proveedor, identidad externa namespaced, estado, scopes, credenciales cifradas, timestamps y salud.
+- [x] Unicidad global de `providerAccountKey` namespaced y resolución exacta de cuenta; índice tenant/canal/estado. La política de múltiples apps Meta para el mismo objeto externo sigue documentada como decisión pendiente.
+- [ ] Migración expand/contract parcialmente ejecutada: escritura sombra Instagram/WhatsApp Cloud y lectura canónica para conversaciones nuevas; backfill repetible, dual-read/paridad y rollback ensayado siguen pendientes.
+- [~] OAuth Instagram registra conexiones Meta canónicas con credenciales cifradas y selector; revisar formalmente state/PKCE/redirect/scopes, renovación y revocación para todos los proveedores.
+- [~] WhatsApp Cloud e Instagram validan firma y resuelven conexiones exactas; `ChannelWebhookEvent` deduplica por conexión/evento con leases recuperables. Falta outbox de efectos externos, dead-letter operativa y fixtures firmados batch de ruta.
 - [ ] WhatsApp Baileys: sesión/auth-state independiente por conexión, orquestador, concurrencia, reconexión y recuperación probadas.
-- [ ] WhatsApp Cloud, Instagram, Messenger y Telegram: ciclo conectar/desconectar/renovar/revocar y enrutamiento por conexión; no declarar cubierto un canal por tener un endpoint aislado.
+- [~] WhatsApp Cloud e Instagram tienen parte del ciclo de conexión/enrutamiento canónico; Messenger, Telegram y TikTok no están integrados de extremo a extremo en el contrato nuevo.
 - [ ] Prueba integrada con dos organizaciones y dos cuentas del mismo canal, procesos separados y credenciales reales de sandbox; demostrar que no hay cruce.
 
 ## Bloque C — SaaS comercial (bloqueante antes de cobrar)
