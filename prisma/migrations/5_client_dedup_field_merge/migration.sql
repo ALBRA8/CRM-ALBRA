@@ -55,12 +55,18 @@ SET
       AND b."createdById" IS NOT NULL
     ORDER BY b."id" LIMIT 1
   )),
-  "lastContactAt" = COALESCE(c."lastContactAt", (
-    SELECT b."lastContactAt" FROM "Client_dedup_backup_20261111" b
-    WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
-      AND b."lastContactAt" IS NOT NULL
-    ORDER BY datetime(b."lastContactAt") DESC, b."id" LIMIT 1
-  )),
+  "lastContactAt" = CASE
+    WHEN c."lastContactAt" IS NULL OR datetime(c."lastContactAt") < datetime((
+      SELECT b."lastContactAt" FROM "Client_dedup_backup_20261111" b
+      WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
+        AND b."lastContactAt" IS NOT NULL
+      ORDER BY datetime(b."lastContactAt") DESC, b."id" LIMIT 1
+    )) THEN (
+      SELECT b."lastContactAt" FROM "Client_dedup_backup_20261111" b
+      WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
+        AND b."lastContactAt" IS NOT NULL
+      ORDER BY datetime(b."lastContactAt") DESC, b."id" LIMIT 1
+    ) ELSE c."lastContactAt" END,
   "status" = CASE
     WHEN c."status" = 'prospect' AND EXISTS (
       SELECT 1 FROM "Client_dedup_backup_20261111" b
@@ -72,18 +78,30 @@ SET
         AND b."status" <> 'prospect'
       ORDER BY b."id" LIMIT 1
     ) ELSE c."status" END,
-  "createdAt" = COALESCE((
-    SELECT b."createdAt" FROM "Client_dedup_backup_20261111" b
-    WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
-      AND b."createdAt" IS NOT NULL
-    ORDER BY datetime(b."createdAt"), b."id" LIMIT 1
-  ), c."createdAt"),
-  "updatedAt" = COALESCE((
-    SELECT b."updatedAt" FROM "Client_dedup_backup_20261111" b
-    WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
-      AND b."updatedAt" IS NOT NULL
-    ORDER BY datetime(b."updatedAt") DESC, b."id" LIMIT 1
-  ), c."updatedAt")
+  "createdAt" = CASE
+    WHEN datetime(c."createdAt") > datetime((
+      SELECT b."createdAt" FROM "Client_dedup_backup_20261111" b
+      WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
+        AND b."createdAt" IS NOT NULL
+      ORDER BY datetime(b."createdAt"), b."id" LIMIT 1
+    )) THEN (
+      SELECT b."createdAt" FROM "Client_dedup_backup_20261111" b
+      WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
+        AND b."createdAt" IS NOT NULL
+      ORDER BY datetime(b."createdAt"), b."id" LIMIT 1
+    ) ELSE c."createdAt" END,
+  "updatedAt" = CASE
+    WHEN datetime(c."updatedAt") < datetime((
+      SELECT b."updatedAt" FROM "Client_dedup_backup_20261111" b
+      WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
+        AND b."updatedAt" IS NOT NULL
+      ORDER BY datetime(b."updatedAt") DESC, b."id" LIMIT 1
+    )) THEN (
+      SELECT b."updatedAt" FROM "Client_dedup_backup_20261111" b
+      WHERE b."organizationId" = c."organizationId" AND b."phone" = c."phone"
+        AND b."updatedAt" IS NOT NULL
+      ORDER BY datetime(b."updatedAt") DESC, b."id" LIMIT 1
+    ) ELSE c."updatedAt" END
 WHERE c."phone" IS NOT NULL
   AND c."id" = (
     SELECT MIN(c2."id") FROM "Client" c2
