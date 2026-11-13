@@ -394,15 +394,13 @@ export async function POST(req: NextRequest) {
             },
             select: { id: true },
           })
-          if (activeWebhookEventId) {
-            await completeChannelWebhookEvent(activeWebhookEventId)
-            activeWebhookEventId = null
+          if (seen) {
+            if (activeWebhookEventId) {
+              await completeChannelWebhookEvent(activeWebhookEventId)
+              activeWebhookEventId = null
+            }
+            continue
           }
-          if (activeWebhookEventId) {
-            await completeChannelWebhookEvent(activeWebhookEventId)
-            activeWebhookEventId = null
-          }
-          continue
         }
         if (!text) {
           if (activeWebhookEventId) {
