@@ -54,4 +54,39 @@ describe('workflow trigger idempotency for channel messages', () => {
     expect(runs).toHaveLength(1)
     expect(runs[0].idempotencyKey).toBe('message_received:wamid.workflow-idempotency-test')
   })
+  it('does not perform workflow channel sends unless explicitly enabled', async () => {
+    delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+    const automation = await db.automation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        name: 'External send safety test',
+        triggerType: 'message_received',
+        isActive: true,
+        actions: JSON.stringify([{ type: 'send_whatsapp', config: { body: 'No enviar en pruebas' } }]),
+      },
+    })
+    automationIds.push(automation.id)
+
+    await runWorkflowsForTrigger({
+      orgId: FIX.orgA.id,
+      type: 'message_received',
+      payload: {
+        messageId: 'wamid.external-send-safety-test',
+        clientId: FIX.clientA1.id,
+        phone: FIX.clientA1.phone,
+      },
+    })
+
+    const notification = await db.notification.findFirst({
+      where: {
+        organizationId: FIX.orgA.id,
+        title: 'Mensaje whatsapp PENDIENTE de envío (fallo de canal)',
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(notification).not.toBeNull()
+    expect(notification?.data).toContain('"sent":false')
+    expect(notification?.data).toContain('WORKFLOW_EXTERNAL_SENDS_ENABLED')
+  })
+
 })
