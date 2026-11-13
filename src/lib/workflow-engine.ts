@@ -185,22 +185,14 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         if (tpl) body = tpl.body
       }
       const rendered = renderTemplate(body, ctx)
-      // ENVÍO REAL (auditoría Antigravity, importante #3 — antes email/telegram eran
-      // stubs que solo creaban una notificación interna):
-      //  - whatsapp → daemon Baileys (POST /send con secreto server-to-server)
-      //  - email    → SMTP de la organización (mail.ts trySendSmtp)
-      //  - telegram → Bot API con el token cifrado de la organización
-      // Los fallos quedan registrados como notificación en cola para revisión.
-      // No hay una outbox durable común para las acciones workflow (Baileys,
-      // Telegram y SMTP). Un flag de entorno no puede habilitar envíos directos
-      // con una ventana de crash no reconciliable. Mantenerlas pendientes hasta
-      // integrar persistencia/dispatcher idempotente para cada proveedor.
+      // Seguridad: no hay outbox durable común para Baileys, Telegram y SMTP.
+      // Un flag de entorno no puede habilitar envíos directos con una ventana
+      // de crash no reconciliable. Mantener la acción pendiente hasta integrar
+      // persistencia y dispatcher idempotente para cada proveedor.
       const sent = false
       const sendError = 'WORKFLOW_OUTBOX_NOT_CONFIGURED'
-      // Registro del intento + evento de timeline (auditable). El título deja claro
-      // si el mensaje SALIÓ de verdad o quedó pendiente — nada de engaños.
-      const { db: database } = await import('./db')
-      await database.notification.create({
+      // Registrar el pendiente y su evento de timeline; no afirmar que está queued.
+      await db.notification.create({
         data: {
           organizationId: orgId,
           type: 'automation',
