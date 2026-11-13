@@ -128,6 +128,7 @@ export function InboxPage() {
 
   async function handleSend() {
     if (!selected || !draft.trim() || sending) return
+    if (selected.key.startsWith('cc:') && selected.channel !== 'whatsapp' && selected.channel !== 'instagram') return
     setSending(true)
     const optimistic: InboxMessage = {
       id: `tmp-${Date.now()}`,
