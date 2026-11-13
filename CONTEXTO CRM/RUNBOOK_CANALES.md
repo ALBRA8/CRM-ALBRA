@@ -119,7 +119,7 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 - Los envíos externos de workflows y las auto-respuestas tienen opt-in explícito separado. No habilitar estas variables durante pruebas de recepción.
 - Las auto-respuestas WhatsApp/Instagram ahora persisten primero en `ChannelOutboundMessage` con clave derivada del ID del proveedor; el webhook no llama directamente a Meta. El worker de outbox sigue apagado por defecto y los reintentos se protegen por clave idempotente.
 - No hay garantía exactly-once de extremo a extremo. La deduplicación de workflows evita crear un segundo run, pero no recupera automáticamente una acción que haya quedado `running` tras un crash a mitad de ejecución; las acciones externas de workflow no están integradas todavía con la outbox canónica.
-- No se han validado todavía cuentas reales/sandbox de Meta ni el batch firmado completo en rutas.
+- No se han validado todavía cuentas reales/sandbox de Meta. Las pruebas de integración usan payloads firmados con secretos sintéticos y cubren ambos canales, outbox y aislamiento; la validación de sandbox sigue pendiente.
 - No hay scheduler, alertas, dashboard de conciliación ni SLO/RPO/RTO aprobados.
 
 ### Reversión segura de esta fase
