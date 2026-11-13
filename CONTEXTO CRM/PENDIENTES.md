@@ -75,9 +75,9 @@
 - [x] Orden monotónico de recibos y deduplicación de timeline por `messageId + status`.
 - [x] Tabla `ChannelWebhookEvent`, migración 9, claim concurrente por conexión, recuperación de eventos fallidos/leases vencidos y tests de integración del ledger.
 - [x] Integración del ledger en los handlers canónicos de WhatsApp e Instagram; los handlers responden 500 ante fallo procesando un evento reclamado para permitir retry del proveedor.
-- [ ] Garantía de no duplicar workflows/autorespuestas tras crash entre efecto externo y confirmación del ledger; requiere idempotencia/outbox por automatización.
-- [ ] Fixtures firmados de POST batch reales para ambos webhooks y pruebas de ruta completas.
-- [ ] CI completa del HEAD actual; no declarar validado hasta conclusión exitosa.
+- [~] La reclamación + deduplicación por TimelineEvent evita repetir workflows/autorespuestas después de que el timeline se confirmó; queda una ventana at-most-once donde un crash antes del efecto puede perder la automatización. Outbox/idempotencia propia sigue pendiente.
+- [x] Fixtures firmados de POST batch y pruebas de ruta completas para WhatsApp (dos tenants + destino desconectado) e Instagram (dos cuentas + destino desconectado + fallback legacy bloqueado).
+- [x] CI completa del HEAD de código `61c35988a54ee3182169122de0681c6724454940` — éxito en push y pull_request; los cambios posteriores son documentales.
 
 ## Trabajo de tests Windows/.env — RESUELTO 2026-11-06
 - [x] 658740b localizado y verificado en ALBRA8/YOUTUBE-AUTOMATION (cuarto repositorio del ecosistema, confirmado por el propietario).
