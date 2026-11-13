@@ -229,19 +229,17 @@ export async function assertSessionState(ctx: AuthContext): Promise<AuthContext>
   if (user.role !== ctx.role) {
     throw new HttpError(401, 'El rol de la cuenta cambió. Vuelve a iniciar sesión')
   }
-  if (user.organizationId !== ctx.orgId) {
+  const activeOrg = await db.organization.findUnique({
+    where: { id: ctx.orgId },
+    select: { isActive: true },
+  })
+  if (!activeOrg?.isActive) {
+    throw new HttpError(403, 'La organización seleccionada no existe o está inactiva')
+  }
+  if (user.organizationId !== ctx.orgId && user.role !== 'superadmin') {
     // Única excepción cross-tenant: cuenta cuyo rol ACTUAL en BD es superadmin.
     // El orgId del token representa el contexto activo, nunca una membresía del usuario.
-    if (user.role !== 'superadmin') {
-      throw new HttpError(401, 'Sesión inválida para esta organización')
-    }
-    const activeOrg = await db.organization.findUnique({
-      where: { id: ctx.orgId },
-      select: { isActive: true },
-    })
-    if (!activeOrg?.isActive) {
-      throw new HttpError(403, 'La organización seleccionada no existe o está inactiva')
-    }
+    throw new HttpError(401, 'Sesión inválida para esta organización')
   }
   return ctx
 }
