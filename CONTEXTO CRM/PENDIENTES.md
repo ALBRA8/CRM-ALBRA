@@ -159,3 +159,13 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Migrar/ensayar PostgreSQL y validar backups/restauración en staging.
 - [ ] Verificación visual del equipo y selector Super Admin en staging.
 - [ ] Integrar PR #3 solo con autorización expresa; despliegue y cobros requieren autorización separada.
+
+
+## Canales canónicos — avance 2026-11-13
+
+- [x] Bandeja canónica encola respuestas con `clientRequestId` e identidad/tenant derivados de sesión.
+- [x] Hilo canónico muestra estados `queued`, `sending`, `failed` y `unknown`; pruebas de aislamiento de tenant.
+- [x] Worker interno autenticado con secreto dedicado, lote máximo 5 y bandera `CHANNEL_OUTBOUND_DISPATCH_ENABLED`; sin cron ni scheduler.
+- [x] Endpoint de conciliación manual `unknown → sent|failed`, requiere confirmación de consulta al proveedor y registra evento de auditoría.
+- [ ] Pendiente: aprobar permisos Meta, ventanas de mensajería, observabilidad/runbook, prueba controlada y autorización expresa antes de configurar el secreto/activar el worker.
+- [ ] Pendiente: añadir Messenger, Telegram y TikTok al outbox con adaptadores y contratos verificados; actualmente solo WhatsApp Cloud e Instagram son encolables.
