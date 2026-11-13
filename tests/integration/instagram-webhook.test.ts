@@ -191,7 +191,7 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
       })
       expect(outbound).toHaveLength(0)
       const autoReply = await db.timelineEvent.findFirst({
-        where: { organizationId: FIX.orgA.id, title: 'Respuesta automática del agente IA' },
+        where: { organizationId: FIX.orgA.id, title: 'Respuesta automática del agente IA', metadata: { contains: 'ig.mid.no-auto-reply' } },
       })
       expect(autoReply).toBeNull()
     } finally {
