@@ -61,8 +61,9 @@ describe('workflow trigger idempotency for channel messages', () => {
     expect(runs).toHaveLength(1)
     expect(runs[0].idempotencyKey).toBe('message_received:wamid.workflow-idempotency-test')
   })
-  it('does not perform workflow channel sends unless explicitly enabled', async () => {
-    delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+  it('keeps workflow sends blocked even if the legacy opt-in flag is set, until durable outbox exists', async () => {
+    process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = 'true'
+    const fetchSpy = vi.spyOn(global, 'fetch')
     const automation = await db.automation.create({
       data: {
         organizationId: FIX.orgA.id,
@@ -94,7 +95,9 @@ describe('workflow trigger idempotency for channel messages', () => {
     expect(notification).not.toBeNull()
     if (notification) notificationIds.push(notification.id)
     expect(notification?.data).toContain('"sent":false')
-    expect(notification?.data).toContain('WORKFLOW_EXTERNAL_SENDS_ENABLED')
+    expect(notification?.data).toContain('WORKFLOW_OUTBOX_NOT_CONFIGURED')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    fetchSpy.mockRestore()
   })
 
 })
