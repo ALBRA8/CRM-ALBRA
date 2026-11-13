@@ -43,7 +43,20 @@ Campos:
 - `workerEnabled`: valor efectivo del feature flag.
 - `connectedMetaConnections`: conexiones WhatsApp/Instagram canónicas conectadas.
 
-No se ha configurado un sistema de alertas en este repositorio. En staging, como mínimo, alertar si `staleSending > 0`, `unknown > 0`, `staleProcessing > 0` o `webhookEvents.failed > 0`; revisar cualquier crecimiento sostenido de `queued`.
+No se ha configurado un sistema de alertas en este repositorio; los umbrales siguientes son criterios operativos para el monitor externo, no alertas ya desplegadas.
+
+| Señal | Umbral | Severidad y acción |
+|---|---:|---|
+| `outbox.staleSending` | `> 0` durante 5 min | Crítica: pausar worker, inspeccionar intento y reconciliar; no reenviar a ciegas |
+| `outbox.unknown` | `> 0` | Alta inmediata: conciliación humana con el proveedor; prohibido reencolar automáticamente |
+| `webhookEvents.staleProcessing` | `> 0` durante 2 sondeos (intervalo sugerido 1 min) | Alta: revisar crash/lease; el lease base es 5 min |
+| `webhookEvents.failed` | `> 0` | Alta: revisar código sanitizado y reintentos del proveedor |
+| `outbox.queued` | edad del más antiguo `> 10 min` o crecimiento 3 sondeos | Media: comprobar worker apagado/cola acumulada |
+| `connectedMetaConnections` | cae inesperadamente | Media: verificar revocación/token/estado con operador |
+
+Sondear cada minuto en staging y cada 1–2 minutos en producción cuando exista aprobación para operar. Mantener ventana de evaluación de 5 minutos para señales de edad; `unknown` y fallos no se silencian por ser pocos. El endpoint actual solo entrega contadores, no antigüedad del queued más antiguo ni series temporales: para esos dos criterios el monitor debe derivar edad/crecimiento con snapshots o ampliar la instrumentación antes de automatizar alertas. No alertar por `queued > 0` aislado: el worker está intencionalmente apagado en el estado actual.
+
+La reclamación usa un `claimToken` de fencing. Completar/fallar solo actualiza el evento si conserva el token vigente; un handler antiguo no puede cerrar el claim de quien recuperó el lease. Esto protege el estado del ledger, pero no cancela un efecto externo que el handler antiguo ya hubiera iniciado.
 
 ## 4. Prueba controlada de recepción
 
@@ -94,7 +107,7 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 
 ## 8. Limitaciones conocidas
 
-- La tabla de eventos evita claims concurrentes y permite recuperar fallos/leases vencidos, pero un crash después de un efecto externo y antes de marcar `processed` puede repetir ese efecto en una recuperación. Workflows y auto-respuestas requieren idempotencia/outbox propia.
+- La tabla de eventos evita claims concurrentes y permite recuperar fallos/leases vencidos. El token de fencing impide que un propietario antiguo marque como completado/fallido un claim posterior; no evita por sí solo que un proceso antiguo continúe un efecto externo que ya inició. Un crash después de un efecto externo y antes de marcar `processed` puede repetir ese efecto en una recuperación. Workflows y auto-respuestas requieren idempotencia/outbox propia.
 - No hay garantía exactly-once de extremo a extremo.
 - No se han validado todavía cuentas reales/sandbox de Meta ni el batch firmado completo en rutas.
 - No hay scheduler, alertas, dashboard de conciliación ni SLO/RPO/RTO aprobados.
