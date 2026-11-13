@@ -159,23 +159,27 @@ export async function POST(req: NextRequest) {
         externalContactKey: senderId,
       })
       if (conversation) {
-        try {
-          await db.channelMessage.create({
-            data: {
-              conversationId: conversation.id,
-              externalMessageId: msg.mid || null,
-              direction: 'in',
-              senderType: 'contact',
-              body: text,
-              messageType: 'text',
-              metadata: JSON.stringify({ senderId }),
+        const messageData = {
+          conversationId: conversation.id,
+          direction: 'in',
+          senderType: 'contact',
+          body: text,
+          messageType: 'text',
+          metadata: JSON.stringify({ senderId }),
+        }
+        if (msg.mid) {
+          await db.channelMessage.upsert({
+            where: {
+              conversationId_externalMessageId: {
+                conversationId: conversation.id,
+                externalMessageId: msg.mid,
+              },
             },
+            create: { ...messageData, externalMessageId: msg.mid },
+            update: {},
           })
-        } catch (err) {
-          // La unicidad por conversación + ID externo hace idempotente la
-          // entrega repetida de Meta antes de actualizar unread/timeline/IA.
-          if ((err as { code?: string })?.code === 'P2002' && msg.mid) continue
-          throw err
+        } else {
+          await db.channelMessage.create({ data: messageData })
         }
         await db.channelConversation.update({
           where: { id: conversation.id },
