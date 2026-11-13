@@ -204,7 +204,7 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         data: {
           organizationId: orgId,
           type: 'automation',
-          title: `Mensaje ${channel} ${sent ? 'enviado' : 'PENDIENTE de envío (fallo de canal)'}`,
+          title: `Mensaje ${channel} ${sent ? 'enviado' : 'PENDIENTE (outbox workflow no configurada)'}`,
           body: rendered.slice(0, 500),
           data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent, error: sendError ?? null }),
         },
@@ -213,11 +213,11 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         orgId,
         clientId: (ctx.clientId as string) || null,
         type: channel,
-        title: `Mensaje ${channel} (automatización)${sent ? '' : ' — no entregado'}`,
+        title: `Mensaje ${channel} (automatización)${sent ? '' : ' — pendiente de outbox'}`,
         description: rendered.slice(0, 300),
         source: 'automation',
       })
-      return { queued: true, channel, sent, error: sendError }
+      return { queued: false, pending: true, channel, sent, error: sendError }
     }
     case 'create_opportunity': {
       const requestedStageId = config.stageId as string | undefined
