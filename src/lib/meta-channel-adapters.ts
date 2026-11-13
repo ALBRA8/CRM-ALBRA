@@ -1,7 +1,6 @@
-import { GRAPH_VERSION } from '@/lib/meta-oauth'
 import type { ChannelProviderAdapter, ChannelProviderAdapters } from '@/lib/channel-outbound-dispatcher'
 
-const GRAPH_BASE = 'https://graph.facebook.com'
+const GRAPH_BASE = 'https://graph.facebook.com'\nconst configuredVersion = process.env.META_CHANNELS_GRAPH_VERSION\nexport const META_CHANNELS_GRAPH_VERSION = configuredVersion && /^v\\d+\\.\\d+$/.test(configuredVersion)\n  ? configuredVersion\n  : 'v27.0'
 
 interface MetaSendResponse {
   messages?: Array<{ id?: string }>
@@ -22,7 +21,7 @@ function makeMetaAdapter(
     }
 
     const endpoint = channel === 'whatsapp'
-      ? `${GRAPH_BASE}/${GRAPH_VERSION}/${encodeURIComponent(input.externalAccountId)}/messages`
+      ? `${GRAPH_BASE}/${META_CHANNELS_GRAPH_VERSION}/${encodeURIComponent(input.externalAccountId)}/messages`
       : `${GRAPH_BASE}/${GRAPH_VERSION}/${encodeURIComponent(input.externalAccountId)}/messages`
 
     const payload = channel === 'whatsapp'
@@ -72,7 +71,7 @@ function makeMetaAdapter(
  */
 export function createMetaChannelAdapters(fetchImpl: typeof fetch = fetch): ChannelProviderAdapters {
   return {
-    'meta_cloud:whatsapp': makeMetaAdapter('whatsapp', fetchImpl),
-    'meta_graph:instagram': makeMetaAdapter('instagram', fetchImpl),
+    'meta_cloud:whatsapp': makeMetaAdapter('whatsapp', 'meta_cloud', fetchImpl),
+    'meta_graph:instagram': makeMetaAdapter('instagram', 'meta_graph', fetchImpl),
   }
 }
