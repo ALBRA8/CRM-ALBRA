@@ -258,3 +258,12 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Impedir que un callback de entrega `failed` retrasado degrade estados `sent/delivered/read` en la outbox.
 - [x] Añadir pruebas de regresión para los tres casos.
 - [ ] Confirmar CI completo (secret scan, migraciones, TypeScript, lint, suite y build) sobre el HEAD posterior a estos cambios.
+
+
+## Cierre de detalles de seguridad — 2026-11-13
+
+- [x] Limpiar cookie CSRF OAuth de Instagram en éxito y error con path idéntico al de creación.
+- [x] Rechazar estados WhatsApp desconocidos sin persistirlos en ledger/timeline.
+- [x] Escapar HTML del cuerpo de email workflow y neutralizar CR/LF en asunto.
+- [x] Añadir pruebas de regresión para cookie CSRF, estados desconocidos y escape HTML.
+- [ ] Confirmar CI completo sobre HEAD final tras los últimos tests.
