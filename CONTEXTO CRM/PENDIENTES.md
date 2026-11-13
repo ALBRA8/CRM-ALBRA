@@ -269,3 +269,6 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Confirmar CI completo sobre HEAD final tras los últimos tests.
 
 - [x] Poner en cuarentena como `unknown` una respuesta HTTP 2xx de Meta sin ID de mensaje, para conservar correlación y evitar falsos `sent`.
+
+
+- [x] Reforzar el aislamiento de la bandeja canónica: listado, lectura y marcado como leído exigen que `ChannelConversation.organizationId` coincida con `connection.organizationId`; prueba negativa con fila inconsistente.
