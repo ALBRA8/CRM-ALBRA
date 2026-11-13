@@ -462,7 +462,12 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
       await opts.send('Respuesta WhatsApp en cola')
       return { replied: true, handoff: false, reply: 'Respuesta WhatsApp en cola' }
     })
-    const { body, signature } = signedBody()
+    // Un ID de proveedor único evita que la deduplicación durable de otro test
+    // convierta este evento en replay y omita correctamente la creación de conversación.
+    const uniquePayload = structuredClone(WEBHOOK_BODY)
+    uniquePayload.entry[0].changes[0].value.messages[0].id = 'wamid.autoreply-outbox-test'
+    const body = JSON.stringify(uniquePayload)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(body).digest('hex')
     const request = new (await import('next/server')).NextRequest('http://localhost:3000/api/whatsapp/webhook', {
       method: 'POST',
       body,
@@ -472,6 +477,7 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     try {
       const response = await webhookPost(request)
       expect(response.status).toBe(200)
+      expect(sendSpy).toHaveBeenCalledOnce()
       const canonicalConnection = await db.channelConnection.findUnique({
         where: { providerAccountKey: 'meta:whatsapp:121000121' },
         select: { id: true },
