@@ -5,6 +5,7 @@ Memoria documental del repositorio **ALBRA8/CRM-ALBRA**. Esta carpeta pertenece 
 ## Índice
 - [Estado actual](ESTADO_ACTUAL.md)
 - [Arquitectura](ARQUITECTURA.md)
+- [Arquitectura multicuenta de canales y guía obligatoria para agentes](ARQUITECTURA_MULTICUENTA_CANALES.md)
 - [Decisiones](DECISIONES.md)
 - [Plan maestro SaaS](PLAN_MAESTRO_SAAS.md)
 - [Roadmap resumido](ROADMAP.md)
@@ -18,3 +19,4 @@ Memoria documental del repositorio **ALBRA8/CRM-ALBRA**. Esta carpeta pertenece 
 3. Registrar fecha, rama, commit y evidencia de cada auditoría.
 4. No guardar secretos, tokens, contraseñas, datos de clientes ni archivos .env.
 5. El código de la rama correspondiente es la fuente de verdad del comportamiento.
+6. Antes de tocar multicuenta, webhooks, inbox o envíos, leer [ARQUITECTURA_MULTICUENTA_CANALES.md](ARQUITECTURA_MULTICUENTA_CANALES.md), especialmente **Instrucciones operativas para agentes**. Sus reglas de tenant isolation, conexión exacta, compatibilidad legacy y no activación de envíos reales son obligatorias.
