@@ -52,6 +52,7 @@ export interface InboxMessage {
   createdAt: string
   /** 'voice' si es una nota de voz transcrita (chip 🎙 en la UI). */
   messageType?: string
+  deliveryStatus?: 'queued' | 'sending' | 'failed' | 'unknown'
 }
 
 const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = {
@@ -417,13 +418,21 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
       select: { id: true, channel: true, connection: { select: { status: true, channel: true } } },
     })
     if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return []
-    const rows = await db.channelMessage.findMany({
-      where: { conversationId: conversation.id },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-      select: { id: true, direction: true, senderType: true, body: true, createdAt: true, messageType: true },
-    })
-    return rows.reverse().map((message) => ({
+    const [rows, pending] = await Promise.all([
+      db.channelMessage.findMany({
+        where: { conversationId: conversation.id },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        select: { id: true, direction: true, senderType: true, body: true, createdAt: true, messageType: true },
+      }),
+      db.channelOutboundMessage.findMany({
+        where: { conversationId: conversation.id, status: { in: ['queued', 'sending', 'failed', 'unknown'] } },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        select: { id: true, body: true, status: true, createdAt: true },
+      }),
+    ])
+    const persisted = rows.reverse().map((message) => ({
       id: message.id,
       direction: message.direction === 'out' ? 'out' as const : 'in' as const,
       senderType: message.senderType === 'agent' ? 'agent' as const : message.senderType === 'user' ? 'user' as const : 'contact' as const,
@@ -431,6 +440,15 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
       createdAt: message.createdAt.toISOString(),
       ...(message.messageType === 'voice' ? { messageType: 'voice' } : {}),
     }))
+    const pendingMessages = pending.map((message) => ({
+      id: `outbox:${message.id}`,
+      direction: 'out' as const,
+      senderType: 'user' as const,
+      text: message.body,
+      createdAt: message.createdAt.toISOString(),
+      deliveryStatus: message.status as 'queued' | 'sending' | 'failed' | 'unknown',
+    }))
+    return [...persisted, ...pendingMessages].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 
   if (!parsed.channel) return []
