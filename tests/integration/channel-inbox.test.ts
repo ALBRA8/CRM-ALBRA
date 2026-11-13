@@ -87,6 +87,51 @@ describe('Inbox canónico — tenant y conexión exacta', () => {
     expect(unchanged?.unreadCount).toBe(2)
   })
 
+  it('rechaza una conversación cuyo organizationId no coincide con el tenant de su conexión', async () => {
+    const id = `inbox-mismatched-connection-${suffix()}`
+    const foreignConnection = await db.channelConnection.create({
+      data: {
+        id,
+        organizationId: FIX.orgB.id,
+        channel: 'instagram',
+        provider: 'meta_graph',
+        providerAccountKey: `meta:instagram:mismatch:${id}`,
+        externalAccountId: id,
+        displayName: 'Cuenta de otra organización',
+        credentialsEnc: 'v1:test-ciphertext',
+        status: 'connected',
+      },
+    })
+    connectionIds.push(foreignConnection.id)
+    const mismatched = await db.channelConversation.create({
+      data: {
+        id: `inbox-mismatched-conversation-${suffix()}`,
+        organizationId: FIX.orgA.id,
+        connectionId: foreignConnection.id,
+        channel: 'instagram',
+        externalContactKey: 'foreign-account-contact',
+        contactName: 'No debe filtrarse',
+        unreadCount: 7,
+      },
+    })
+    conversationIds.push(mismatched.id)
+    await db.channelMessage.create({
+      data: {
+        conversationId: mismatched.id,
+        direction: 'in',
+        senderType: 'contact',
+        body: 'Contenido privado de otro tenant',
+      },
+    })
+
+    const listed = await listInbox(FIX.orgA.id, 200)
+    expect(listed.some((item) => item.key === `cc:${mismatched.id}`)).toBe(false)
+    expect(await getInboxMessages(FIX.orgA.id, `cc:${mismatched.id}`)).toEqual([])
+    await markInboxRead(FIX.orgA.id, `cc:${mismatched.id}`)
+    const unchanged = await db.channelConversation.findUnique({ where: { id: mismatched.id } })
+    expect(unchanged?.unreadCount).toBe(7)
+  })
+
   it('lee mensajes canónicos en orden y marca solo la conversación propia', async () => {
     const own = await createConversation(FIX.orgA.id, 'OWN', 'sender-own')
     const messages = await getInboxMessages(FIX.orgA.id, `cc:${own.conversation.id}`)
