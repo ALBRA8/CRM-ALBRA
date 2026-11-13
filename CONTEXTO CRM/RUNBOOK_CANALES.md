@@ -43,7 +43,9 @@ Campos:
 - `outbox.unknown`: resultado ambiguo que exige conciliación humana.
 - `outbox.failed`: fallos definitivos o no enviables.
 - `webhookEvents.processing`, `failed`, `staleProcessing`: eventos en proceso, fallidos o con lease vencido.
-- `workerEnabled`: valor efectivo del feature flag.
+- `workerEnabled`: valor efectivo del feature flag de outbox.
+- `autoReplyEnabled`: estado efectivo de `CHANNEL_AUTOREPLY_ENABLED`.
+- `workflowExternalSendsEnabled`: estado efectivo de `WORKFLOW_EXTERNAL_SENDS_ENABLED`.
 - `connectedMetaConnections`: conexiones WhatsApp/Instagram canónicas conectadas.
 
 No se ha configurado un sistema de alertas en este repositorio; los umbrales siguientes son criterios operativos para el monitor externo, no alertas ya desplegadas.
