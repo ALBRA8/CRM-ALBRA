@@ -160,16 +160,37 @@ export async function markChannelOutboundSent(input: {
     }
 
     const now = new Date()
-    const message = await tx.channelMessage.create({
-      data: {
-        conversationId: outbound.conversationId,
-        outboundId: outbound.id,
-        externalMessageId: input.providerMessageId || null,
-        direction: 'out',
-        senderType: 'user',
-        body: outbound.body,
-      },
-    })
+    // El webhook echo de Meta puede llegar antes que la respuesta 2xx del
+    // worker. Si ya registró ese externalMessageId, vincularlo al outbox en
+    // vez de insertar una segunda fila (unique conversationId + externalId).
+    const echoedMessage = input.providerMessageId
+      ? await tx.channelMessage.findUnique({
+          where: {
+            conversationId_externalMessageId: {
+              conversationId: outbound.conversationId,
+              externalMessageId: input.providerMessageId,
+            },
+          },
+        })
+      : null
+    if (echoedMessage && (echoedMessage.direction !== 'out' || echoedMessage.body !== outbound.body || (echoedMessage.outboundId && echoedMessage.outboundId !== outbound.id))) {
+      throw new ChannelOutboundError('El mensaje del proveedor no coincide con la intención saliente', 'INVALID_STATE')
+    }
+    const message = echoedMessage
+      ? await tx.channelMessage.update({
+          where: { id: echoedMessage.id },
+          data: { outboundId: outbound.id },
+        })
+      : await tx.channelMessage.create({
+          data: {
+            conversationId: outbound.conversationId,
+            outboundId: outbound.id,
+            externalMessageId: input.providerMessageId || null,
+            direction: 'out',
+            senderType: 'user',
+            body: outbound.body,
+          },
+        })
     await tx.channelOutboundMessage.update({
       where: { id: outbound.id },
       data: {
@@ -223,16 +244,34 @@ export async function reconcileUnknownChannelOutboundMessage(input: {
 
     const now = new Date()
     if (input.resolution === 'sent') {
-      const message = await tx.channelMessage.create({
-        data: {
-          conversationId: outbound.conversationId,
-          outboundId: outbound.id,
-          externalMessageId: input.providerMessageId || null,
-          direction: 'out',
-          senderType: 'user',
-          body: outbound.body,
-        },
-      })
+      const echoedMessage = input.providerMessageId
+        ? await tx.channelMessage.findUnique({
+            where: {
+              conversationId_externalMessageId: {
+                conversationId: outbound.conversationId,
+                externalMessageId: input.providerMessageId,
+              },
+            },
+          })
+        : null
+      if (echoedMessage && (echoedMessage.direction !== 'out' || echoedMessage.body !== outbound.body || (echoedMessage.outboundId && echoedMessage.outboundId !== outbound.id))) {
+        throw new ChannelOutboundError('El mensaje del proveedor no coincide con la intención saliente', 'INVALID_STATE')
+      }
+      const message = echoedMessage
+        ? await tx.channelMessage.update({
+            where: { id: echoedMessage.id },
+            data: { outboundId: outbound.id },
+          })
+        : await tx.channelMessage.create({
+            data: {
+              conversationId: outbound.conversationId,
+              outboundId: outbound.id,
+              externalMessageId: input.providerMessageId || null,
+              direction: 'out',
+              senderType: 'user',
+              body: outbound.body,
+            },
+          })
       await tx.channelOutboundMessage.update({
         where: { id: outbound.id },
         data: {
