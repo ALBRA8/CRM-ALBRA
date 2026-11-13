@@ -275,11 +275,11 @@ Se añadió la base persistente de outbox para impedir que un timeout provoque r
 - La idempotencia de la solicitud solo se garantiza dentro de la misma conversación y para el mismo `clientRequestId`; reutilizar la clave con otro cuerpo da conflicto.
 - Tests en `tests/integration/channel-outbox.test.ts` cubren idempotencia, claim concurrente, confirmación atómica, cuarentena y aislamiento de tenant.
 
-**Límite explícito:** esto NO habilita envíos. No hay todavía dispatcher/adaptadores canónicos ni endpoint que procese el outbox; el envío de keys `cc:` permanece bloqueado en UI y servidor. Antes de conectar Meta Graph hay que confirmar formato real de credenciales por provider, IDs de destinatario, versión/API permissions y comportamiento de timeout. No asumir que WhatsApp Cloud e Instagram comparten exactamente el mismo contrato solo porque ambos usan Meta Graph.
+**Límite explícito:** la existencia de outbox, dispatcher y adaptadores NO significa que el envío esté activado. La bandeja canónica ahora puede crear intenciones idempotentes, pero el worker está protegido por secreto dedicado y por la bandera `CHANNEL_OUTBOUND_DISPATCH_ENABLED=true`, que permanece sin habilitar. No existe scheduler registrado. Los envíos legacy continúan separados; nunca se usa fallback legacy para una key `cc:`.
 
 **Hallazgo corregido:** el parser devuelve `channel: null` para keys `cc:`; el canal canónico se deriva de `ChannelConversation` y su conexión. No inferir WhatsApp para todas las conversaciones canónicas.
 
-## Dispatcher canónico: siguiente fase (2026-11-13)
+## Dispatcher y salida canónica (2026-11-13)
 
 Antes de conectar proveedores se implementará un dispatcher aislado con adaptadores inyectables:
 
@@ -304,7 +304,7 @@ Antes de conectar proveedores se implementará un dispatcher aislado con adaptad
 - Se añadió `src/lib/meta-channel-adapters.ts` con adaptadores separados `meta_cloud:whatsapp` y `meta_graph:instagram`, seleccionados por la pareja exacta provider/canal.
 - WhatsApp usa el phone-number ID de la conexión en `/{phone-number-id}/messages`; Instagram usa el ID de cuenta profesional de la conexión y el IGSID del contacto. Los tokens viajan solo en Authorization, nunca en query strings ni logs.
 - Los 4xx inequívocos se clasifican como rechazo definitivo; 429/5xx se consideran ambiguos y quedan en cuarentena. Las excepciones de red también se convierten en `unknown` en el dispatcher.
-- La versión Graph se toma de `GRAPH_VERSION` existente del proyecto; no se cambia aquí la configuración global de versión.
+- Los adaptadores nuevos usan `META_CHANNELS_GRAPH_VERSION` (formato validado) y, si no se define, Graph API `v27.0`; no modifican el `GRAPH_VERSION` legacy del resto de integraciones.
 - Pruebas unitarias mockean fetch para comprobar endpoint/cuerpo, ID externo, token en header y clasificación 4xx/5xx. No se hace ninguna petición real.
 - Referencias oficiales: [WhatsApp Business Platform](https://developers.facebook.com/documentation/business-messaging/whatsapp/overview) y [Instagram Messaging](https://developers.facebook.com/documentation/business-messaging/instagram-messaging). Revisar permisos/App Review y ventanas de respuesta antes de activar en producción.
 
@@ -315,3 +315,14 @@ Antes de conectar proveedores se implementará un dispatcher aislado con adaptad
 - HEAD validado: `3ebb15df4b589734df65b404a9fe2b527e2d4057`.
 - Run `43433127349`: escáner de secretos, Prisma, migraciones SQLite limpias, TypeScript, lint, 71 archivos de tests (611 tests) y build completados con éxito.
 - Esta validación no activa envíos ni añade worker/endpoint. Los adaptadores Meta están implementados y probados con fetch simulado; el inbox canónico permanece bloqueado hasta revisión de permisos, ventana de mensajería, política de reintentos y activación autorizada.
+
+
+### Inbox → outbox, worker protegido y conciliación (en validación CI)
+
+- `POST /api/inbox/send` reconoce `cc:<conversationId>` y crea una intención de outbox con organización/usuario de la sesión y `clientRequestId` obligatorio. Responde HTTP 202 `queued`; no llama al proveedor ni a `sendInboxMessage` legacy.
+- El cliente usa un ID de idempotencia estable durante el reintento de la misma solicitud y muestra los estados `queued`, `sending`, `failed` y `unknown` en el hilo canónico. El texto de UI aclara que `queued` no significa entregado.
+- `getInboxMessages` incorpora intenciones aún no confirmadas al hilo canónico, manteniendo el aislamiento por organización y la validación de conexión activa.
+- Se añadió `POST /api/internal/channel-outbox`: requiere `CHANNEL_OUTBOX_WORKER_SECRET` de al menos 32 caracteres, comparación constante y `CHANNEL_OUTBOUND_DISPATCH_ENABLED=true`. Procesa lotes máximos de 5 con adaptadores Meta; sin ambos controles responde 401/503. No se registró cron, scheduler ni ejecución automática.
+- Se añadió `POST /api/internal/channel-outbox/reconcile` con el mismo secreto. Exige `providerChecked=true` y resolución explícita `sent|failed`; la conciliación de `unknown` crea mensaje/actualiza preview o marca fallo y genera `ChannelConnectionEvent` de auditoría. Nunca reencola.
+- Las pruebas de integración verifican que los mensajes en cola aparecen solo en el tenant propietario y que la conciliación manual es terminal y auditable.
+- No habilitar la bandera de despacho ni configurar el secreto operativo hasta aprobar permisos Meta, ventanas de mensajería, límites, monitorización, runbook y una prueba controlada autorizada.
