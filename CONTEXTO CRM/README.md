@@ -12,6 +12,7 @@ Memoria documental del repositorio **ALBRA8/CRM-ALBRA**. Esta carpeta pertenece 
 - [Historial](HISTORIAL_CAMBIOS.md)
 - [Auditorías](AUDITORIAS.md)
 - [Pendientes](PENDIENTES.md)
+- [Runbook operativo de canales](RUNBOOK_CANALES.md)
 
 ## Reglas
 1. Diferenciar hechos verificados en código, declaraciones del README, decisiones, propuestas y pendientes.
