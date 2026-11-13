@@ -117,9 +117,9 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 
 - La tabla de eventos evita claims concurrentes y permite recuperar fallos/leases vencidos. El token de fencing impide que un propietario antiguo marque como completado/fallido un claim posterior; no evita por sí solo que un proceso antiguo continúe un efecto externo que ya inició. Un crash después de un efecto externo y antes de marcar `processed` puede repetir ese efecto en una recuperación. Workflows requieren idempotencia/outbox propia; las auto-respuestas de WhatsApp e Instagram ya usan la outbox canónica.
 - Los webhooks propagan `message.id`/`msg.mid` al motor de workflows; la clave única `(automationId, idempotencyKey)` deduplica reentregas del mismo mensaje por automatización.
-- Los envíos externos de workflows y las auto-respuestas tienen opt-in explícito separado. No habilitar estas variables durante pruebas de recepción.
+- Los envíos externos de workflows y las auto-respuestas tienen opt-in explícito separado. El worker workflow requiere además secreto dedicado y no tiene scheduler registrado. No habilitar estas variables durante pruebas de recepción.
 - Las auto-respuestas WhatsApp/Instagram ahora persisten primero en `ChannelOutboundMessage` con clave derivada del ID del proveedor; el webhook no llama directamente a Meta. El worker de outbox sigue apagado por defecto y los reintentos se protegen por clave idempotente.
-- No hay garantía exactly-once de extremo a extremo. La deduplicación de workflows evita crear un segundo run, pero no recupera automáticamente una acción que haya quedado `running` tras un crash a mitad de ejecución; las acciones externas de workflow no están integradas todavía con la outbox canónica.
+- No hay garantía exactly-once de extremo a extremo. La deduplicación de workflows evita crear un segundo run. Las acciones externas workflow persisten en `WorkflowOutboundMessage`, separada de la outbox canónica de WhatsApp/Instagram; resultados inciertos quedan en cuarentena y requieren conciliación manual.
 - No se han validado todavía cuentas reales/sandbox de Meta. Las pruebas de integración usan payloads firmados con secretos sintéticos y cubren ambos canales, outbox y aislamiento; la validación de sandbox sigue pendiente.
 - No hay scheduler, alertas, dashboard de conciliación ni SLO/RPO/RTO aprobados.
 
@@ -130,7 +130,7 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 3. Si se revierte el código, mantener las migraciones aditivas aplicadas: no existe una migración down automática y las tablas/columnas nuevas no deben eliminarse mientras la versión anterior siga operando.
 4. Restaurar backup solo si se verificó el punto de recuperación y se evaluó la pérdida de escrituras posteriores. Nunca usar `migrate reset` en un entorno con datos.
 5. Reconciliar el estado del proveedor antes de volver a habilitar cualquier envío; hacerlo requiere aprobación separada.
-- Messenger, Telegram y TikTok no están conectados al outbox canónico.
+- Messenger y TikTok no están conectados al outbox canónico. Telegram tiene dispatcher propio dentro de la outbox de workflows, no en la outbox canónica.
 
 
 ## Controles adicionales — 2026-11-13
@@ -160,3 +160,21 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 - Un timeout, excepción de transporte o resultado ambiguo queda unknown. Los sending con más de cinco minutos se ponen en cuarentena como unknown; nunca se reencolan automáticamente. Solo un rechazo HTTP 4xx claro del daemon Baileys se marca failed.
 - El worker procesa como máximo cinco por llamada, de forma secuencial. No existe scheduler automático ni se habilita ningún envío por el solo hecho de persistir la intención.
 - No activar el worker en producción ni hacer pruebas de envío sin autorización separada, destinatarios de prueba consentidos y revisión de credenciales.
+
+
+## 10. Prueba controlada de outbox workflow (Baileys / Telegram / SMTP)
+
+Esta prueba requiere un entorno staging aislado, un destinatario de prueba consentido por canal, backup restaurable y autorización operativa separada. No se ejecuta como parte de la validación de recepción ni en producción.
+
+1. Confirmar `WORKFLOW_OUTBOX_DISPATCH_ENABLED=false`, worker detenido y ausencia de scheduler.
+2. Aplicar migraciones en staging y verificar que la tabla `WorkflowOutboundMessage` existe.
+3. Ejecutar un workflow con datos sintéticos y verificar que la fila queda `queued`, que `payloadEnc` está cifrado y que no se produce ninguna llamada de red.
+4. Confirmar que una repetición del mismo run/paso devuelve la misma intención y que un payload distinto para la misma clave se rechaza como conflicto.
+5. Para el canal elegido, validar destinatario de prueba, configuración del tenant y credenciales. Para SMTP, usar un servidor/sink de pruebas; para Telegram, un bot y chat de prueba; para Baileys, una sesión/número de staging.
+6. Solo después de aprobar esos controles, configurar `WORKFLOW_OUTBOX_WORKER_SECRET` (32+ caracteres) y activar `WORKFLOW_OUTBOX_DISPATCH_ENABLED=true` en staging.
+7. Ejecutar una sola llamada autenticada a `POST /api/internal/workflow-outbox` con `limit: 1`; comprobar estado, ID de proveedor cuando exista y que no se haya procesado más de una intención.
+8. Simular un timeout en entorno de prueba. El estado debe pasar a `unknown`; una segunda llamada no debe volver a contactar al proveedor.
+9. Probar `GET /api/internal/workflow-outbox`: solo devuelve contadores agregados y no IDs, destinatarios ni contenido.
+10. Desactivar el flag, retirar el secreto del worker y detener cualquier scheduler al terminar. Documentar la evidencia sin PII ni credenciales.
+
+No habilitar los tres canales a la vez en la primera prueba. La aprobación de un canal no autoriza activar los demás ni producción.
