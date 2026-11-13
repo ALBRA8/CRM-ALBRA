@@ -1,6 +1,9 @@
 import type { ChannelProviderAdapter, ChannelProviderAdapters } from '@/lib/channel-outbound-dispatcher'
 
-const GRAPH_BASE = 'https://graph.facebook.com'\nconst configuredVersion = process.env.META_CHANNELS_GRAPH_VERSION\nexport const META_CHANNELS_GRAPH_VERSION = configuredVersion && /^v\\d+\\.\\d+$/.test(configuredVersion)\n  ? configuredVersion\n  : 'v27.0'
+const GRAPH_BASE = 'https://graph.facebook.com'
+const configuredVersion = process.env.META_CHANNELS_GRAPH_VERSION
+export const META_CHANNELS_GRAPH_VERSION =
+  configuredVersion && /^v\d+\.\d+$/.test(configuredVersion) ? configuredVersion : 'v27.0'
 
 interface MetaSendResponse {
   messages?: Array<{ id?: string }>
@@ -10,20 +13,24 @@ interface MetaSendResponse {
 
 function makeMetaAdapter(
   channel: 'whatsapp' | 'instagram',
+  provider: 'meta_cloud' | 'meta_graph',
   fetchImpl: typeof fetch
 ): ChannelProviderAdapter {
   return async (input) => {
     const validRecipient = channel === 'whatsapp'
       ? /^\d{7,15}$/.test(input.recipientKey)
       : /^\d{5,30}$/.test(input.recipientKey)
-    if (!input.credentials.accessToken || !/^\d{5,30}$/.test(input.externalAccountId) || !validRecipient) {
+    if (
+      input.channel !== channel ||
+      input.provider !== provider ||
+      !input.credentials.accessToken ||
+      !/^\d{5,30}$/.test(input.externalAccountId) ||
+      !validRecipient
+    ) {
       return { ok: false, definitive: true, errorCode: 'INVALID_PROVIDER_INPUT' }
     }
 
-    const endpoint = channel === 'whatsapp'
-      ? `${GRAPH_BASE}/${META_CHANNELS_GRAPH_VERSION}/${encodeURIComponent(input.externalAccountId)}/messages`
-      : `${GRAPH_BASE}/${GRAPH_VERSION}/${encodeURIComponent(input.externalAccountId)}/messages`
-
+    const endpoint = `${GRAPH_BASE}/${META_CHANNELS_GRAPH_VERSION}/${encodeURIComponent(input.externalAccountId)}/messages`
     const payload = channel === 'whatsapp'
       ? {
           messaging_product: 'whatsapp',
