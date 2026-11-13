@@ -212,3 +212,12 @@ No preparar ni abrir los PR todavía. Cerrar B2 primero: el daemon debe recibir 
 - El error del PDF era consecuencia del 401 de la sesión owner B; con rol persistido la prueba de aislamiento y cifras volvió a pasar.
 - Las pruebas de integración del selector Super Admin también están incluidas en la suite aprobada: cambio de contexto a org B, lectura de datos de org B, conservación de la organización base, denegación de usuario normal y rechazo de organización inexistente.
 - **Límite:** esto acredita CI y pruebas automatizadas, no una prueba visual en navegador ni una prueba en staging/producción. PR sigue abierta/en draft; no merge ni despliegue.
+
+
+## Ajuste final de sesión Super Admin (/auth/me) — 2026-11-13
+
+- Se corrigió `src/app/api/auth/me/route.ts`: para superadmin vigente, la consulta ya no exige que la organización base persistida sea igual al contexto activo. La respuesta proyecta `organizationId=auth.orgId` como contexto de sesión sin modificar la membresía/organización base guardada en BD.
+- Se amplió `tests/integration/superadmin-organization-switch.test.ts` para invocar `GET /api/auth/me` con el token emitido y comprobar que devuelve la organización B seleccionada.
+- Head final de PR #3: `5c1e73e0c99c488c843d42aff6fe8cef6928bf23`.
+- CI `43380198626`: **success**; 64/64 archivos, 580/580 pruebas; TypeScript, lint, migraciones, escáner y build aprobados.
+- Estado: cambio de contexto + lectura de sesión + lectura de datos de organización B acreditados por integración automatizada. Sigue pendiente la prueba manual/visual en navegador/staging y el ciclo de retorno al panel Super Admin.
