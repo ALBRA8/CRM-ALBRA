@@ -417,3 +417,6 @@ La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento m
 - WhatsApp solo acepta los estados de entrega Meta documentados (`sent`, `delivered`, `read`, `failed`); estados desconocidos se omiten antes de crear eventos o timeline.
 - Los estados de entrega no retroceden: un callback tardío `failed` no degrada un mensaje con éxito ya observado.
 - Las acciones email de workflow escapan HTML del cuerpo y eliminan CR/LF del asunto antes de llamar SMTP.
+
+
+- Los adaptadores Meta solo confirman `sent` si la respuesta 2xx incluye el ID de mensaje del proveedor. Un 2xx sin ID se marca `unknown` porque no puede correlacionarse con callbacks posteriores; no se reintenta automáticamente.
