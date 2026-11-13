@@ -8,10 +8,10 @@ Estado: guía de staging; **no autoriza activar envíos ni desplegar**.
 
 - `CHANNEL_OUTBOUND_DISPATCH_ENABLED` debe permanecer ausente o distinto de `true`.
 - `CHANNEL_AUTOREPLY_ENABLED` debe permanecer ausente o distinto de `true`; los webhooks no deben responder automáticamente por defecto.
-- Las acciones externas de workflows están **hard-disabled** hasta que exista una outbox durable común para Baileys, Telegram y SMTP. `WORKFLOW_EXTERNAL_SENDS_ENABLED` es un flag legacy ignorado por el motor; aunque esté en `true`, no habilita envíos. Mantenerlo ausente/false para evitar confusión.
+- Las acciones externas de workflows (Baileys, Telegram y SMTP) ahora persisten primero en `WorkflowOutboundMessage`, con payload cifrado, clave idempotente por run/paso y estados `queued/sending/sent/failed/unknown`. El worker `POST /api/internal/workflow-outbox` permanece desactivado por defecto: requiere `WORKFLOW_OUTBOX_DISPATCH_ENABLED=true` y `WORKFLOW_OUTBOX_WORKER_SECRET` (mínimo 32 caracteres). `WORKFLOW_EXTERNAL_SENDS_ENABLED` es un flag legacy ignorado; no habilita envíos.
 - `WHATSPOWER_ENABLED` debe permanecer ausente o distinto de `true`; el bridge inbound puede activar automatizaciones remotas, por lo que también se mantiene apagado durante pruebas de recepción.
-- `CHANNEL_OUTBOX_WORKER_SECRET` no debe configurarse en entornos que no vayan a ejecutar el worker.
-- No hay cron/scheduler registrado por el repositorio; el endpoint POST no se ejecuta solo.
+- `CHANNEL_OUTBOX_WORKER_SECRET` y `WORKFLOW_OUTBOX_WORKER_SECRET` no deben configurarse en entornos que no vayan a ejecutar sus respectivos workers.
+- No hay cron/scheduler registrado por el repositorio; los endpoints POST de ambos workers no se ejecutan solos. La outbox de workflows debe sondearse externamente solo después de autorización y validación en staging.
 - `POST /api/inbox/send` en conversaciones canónicas crea una intención `queued`; HTTP 202 no significa que Meta haya recibido el mensaje.
 - `unknown` significa resultado ambiguo. No volver a encolar ni reenviar hasta comprobar el estado en el proveedor.
 - El envío legacy de las integraciones existentes sigue separado durante la migración expand/contract.
@@ -149,3 +149,14 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 
 
 - Un HTTP 2xx de Meta sin ID de mensaje no se considera confirmación suficiente: la intención queda `unknown` y requiere conciliación manual; nunca se reenvía a ciegas.
+
+
+## 9. Outbox de acciones externas de workflows
+
+- Cada paso send_whatsapp, send_telegram o send_email crea primero una fila en WorkflowOutboundMessage dentro de la organización del run. La clave única corresponde a (organizationId, automationRunId, stepIndex).
+- El payload (destinatario, asunto y contenido) se cifra con APP_ENCRYPTION_KEY/APP_SECRET; no se guarda en claro. La notificación y TimelineEvent solo contienen el estado y el identificador interno.
+- El worker es POST /api/internal/workflow-outbox, autenticado con WORKFLOW_OUTBOX_WORKER_SECRET; requiere además WORKFLOW_OUTBOX_DISPATCH_ENABLED=true. GET devuelve únicamente contadores agregados.
+- Baileys usa el daemon multi-organización con orgId explícito e INTERNAL_API_SECRET; Telegram resuelve el token cifrado de la integración de la misma organización; SMTP usa Settings de esa organización o el fallback global existente.
+- Un timeout, excepción de transporte o resultado ambiguo queda unknown. Los sending con más de cinco minutos se ponen en cuarentena como unknown; nunca se reencolan automáticamente. Solo un rechazo HTTP 4xx claro del daemon Baileys se marca failed.
+- El worker procesa como máximo cinco por llamada, de forma secuencial. No existe scheduler automático ni se habilita ningún envío por el solo hecho de persistir la intención.
+- No activar el worker en producción ni hacer pruebas de envío sin autorización separada, destinatarios de prueba consentidos y revisión de credenciales.
