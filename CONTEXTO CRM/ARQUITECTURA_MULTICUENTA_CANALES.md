@@ -329,3 +329,5 @@ Antes de conectar proveedores se implementará un dispatcher aislado con adaptad
 
 
 **CI de integración inbox/outbox:** commit `7dba61f4227d94d16963274da7ead4eaa3243cf2`, run `43436167818`: 71 archivos y 615 pruebas aprobadas; escáner de secretos, migraciones limpias, TypeScript, lint y build aprobados. El cambio posterior de guardia de teclado requiere CI propio antes de considerarse validado.
+
+**Validación CI del inbox/outbox y worker protegido (HEAD `9497980e515a3ce479ae3d661d2129bdd1d3416e`):** run `43436745851` completado con éxito. Escáner de secretos, migraciones Prisma limpias, TypeScript, lint, 71 archivos de pruebas (615 tests) y build aprobados. La validación no activa el worker ni realiza envíos externos.
