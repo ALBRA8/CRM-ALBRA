@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
+import { markChannelOutboundSent, updateChannelMessageDeliveryStatus } from '@/lib/channel-outbox'
 import { json } from '@/lib/api-helpers'
 import { decryptSecret } from '@/lib/crypto'
 import { safeEqual } from '@/lib/internal-org-auth'
@@ -48,7 +49,7 @@ interface WaValue {
     button?: { text?: string }
     interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } }
   }>
-  statuses?: Array<{ id: string; status: string }>
+  statuses?: Array<{ id: string; status: string; timestamp?: string; biz_opaque_callback_data?: string }>
 }
 
 interface WaWebhookBody {
@@ -214,6 +215,46 @@ export async function POST(req: NextRequest) {
       // aquí (reauditoría ciclo 2): los reintentos de Meta duplicaban el timeline
       // de estados aunque los mensajes ya se filtraran.
       for (const status of value.statuses || []) {
+        // Correlación mediante biz_opaque_callback_data. El callback puede
+        // adelantarse al ACK HTTP y convertir sending/unknown en sent.
+        if (
+          status.id &&
+          status.biz_opaque_callback_data &&
+          /^[A-Za-z0-9_-]{8,128}$/.test(status.biz_opaque_callback_data) &&
+          ['sent', 'delivered', 'read', 'failed'].includes(status.status)
+        ) {
+          const outbound = await db.channelOutboundMessage.findUnique({
+            where: { id: status.biz_opaque_callback_data },
+            include: {
+              conversation: {
+                include: {
+                  connection: { select: { organizationId: true, channel: true, provider: true, externalAccountId: true } },
+                },
+              },
+            },
+          })
+          if (
+            outbound &&
+            outbound.conversation.organizationId === matchedOrgId &&
+            outbound.conversation.connection.organizationId === matchedOrgId &&
+            outbound.conversation.channel === 'whatsapp' &&
+            outbound.conversation.connection.channel === 'whatsapp' &&
+            outbound.conversation.connection.provider === 'meta_cloud' &&
+            outbound.conversation.connection.externalAccountId === matchedPhoneId
+          ) {
+            if (outbound.status === 'sending' || outbound.status === 'unknown') {
+              await markChannelOutboundSent({ id: outbound.id, providerMessageId: status.id })
+            }
+            if (outbound.status === 'sent' || outbound.status === 'sending' || outbound.status === 'unknown') {
+              await updateChannelMessageDeliveryStatus({
+                conversationId: outbound.conversationId,
+                providerMessageId: status.id,
+                status: status.status as 'sent' | 'delivered' | 'read' | 'failed',
+                timestamp: status.timestamp,
+              })
+            }
+          }
+        }
         if (status.id) {
           const seenStatus = await db.timelineEvent.findFirst({
             where: {
