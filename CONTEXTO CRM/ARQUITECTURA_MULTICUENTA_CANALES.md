@@ -409,3 +409,11 @@ La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento m
 - Workflow: los campos `phone`, `email` y `clientName` de un evento sin `clientId` validado se descartan. Solo el registro de cliente resuelto dentro del tenant puede aportar destinatarios para acciones de mensajería.
 - Outbox: los estados de entrega son monotónicos. Un callback `failed` retrasado no degrada un mensaje ya confirmado como `sent`, `delivered` o `read`; `failed` permanece terminal cuando fue el primer resultado registrado.
 - Se añadieron pruebas de regresión para ownership de cuentas Instagram, destinatarios no vinculados y regresión de estados de entrega. La aprobación CI depende del HEAD final tras estos cambios.
+
+
+## Cierre adicional de callbacks y formato — 2026-11-13
+
+- El callback OAuth de Instagram elimina la cookie CSRF tanto en éxito como en error, usando el mismo path `/api/instagram/oauth` de creación; la cookie se marca Secure cuando el origen es HTTPS.
+- WhatsApp solo acepta los estados de entrega Meta documentados (`sent`, `delivered`, `read`, `failed`); estados desconocidos se omiten antes de crear eventos o timeline.
+- Los estados de entrega no retroceden: un callback tardío `failed` no degrada un mensaje con éxito ya observado.
+- Las acciones email de workflow escapan HTML del cuerpo y eliminan CR/LF del asunto antes de llamar SMTP.
