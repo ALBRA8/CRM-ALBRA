@@ -134,7 +134,7 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - Crear, listar, verificar, reconectar, desconectar y revocar por connectionId.
 - Dos organizaciones aisladas y al menos dos cuentas del mismo canal en una organización.
 - Webhook resuelve exactamente la cuenta que recibió el evento.
-- Conversaciones separadas por conexión; mensajes entrantes y salientes usan la conexión seleccionada.
+- [x] Conversaciones nuevas separadas por conexión; mensajes entrantes y salientes canónicos se asocian a la conexión exacta. Los históricos legacy no se reasignan sin evidencia.
 - Renovación/reconexión y fallo de credenciales no afectan las otras cuentas.
 - Pruebas automatizadas con fixtures firmados y sandbox/proveedor real antes de habilitar producción.
 - Para Baileys: auth-state y daemon/session manager por conexión, no solo por organización.
@@ -178,7 +178,7 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 
 La CI `43395332553` validó correctamente schema, migraciones, TypeScript, lint, suite y build para el modelo `ChannelMessage` antes de la última incorporación de escrituras canónicas en los webhooks. La CI `43395622374` terminó con éxito para el commit `402c585d` (migraciones SQLite, TypeScript, lint, suite y build). La CI documental `43395971244` también terminó con éxito para `4b1ba773`.
 
-Esto todavía **no es una funcionalidad de multicuenta operativa de extremo a extremo**. No hay backfill ni dual-read; la bandeja, el historial, la lectura y los envíos siguen consumiendo principalmente las estructuras legacy. La persistencia canónica de mensajes salientes y una deduplicación recuperable de eventos siguen pendientes. No hacer merge, despliegue ni activar mensajería real sin autorización expresa.
+Esto todavía **no es una funcionalidad de multicuenta operativa de extremo a extremo**. La bandeja canónica, el historial, lectura y outbox ya consumen `ChannelConversation`/`ChannelMessage` para conversaciones nuevas, y los webhooks canónicos registran entradas y eventos en el ledger; las estructuras y rutas legacy siguen coexistiendo. No hay backfill ni dual-read general, no se han conciliado históricos ambiguos, y workflows/autorespuestas aún no tienen una outbox idempotente propia. La correlación de callbacks Meta no sustituye pruebas con cuentas reales. No hacer merge, despliegue, scheduler ni activar mensajería real sin autorización expresa.
 
 
 ---
