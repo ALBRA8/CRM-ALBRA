@@ -33,7 +33,8 @@ Estado: plan de ejecución y brechas verificadas; NO equivale a lanzamiento SaaS
 
 - [x] Definir entidad común `ChannelConnection` con tenant, canal/proveedor, identidad externa namespaced, estado, scopes, credenciales cifradas, timestamps y salud.
 - [x] Unicidad global de `providerAccountKey` namespaced y resolución exacta de cuenta; índice tenant/canal/estado. La política de múltiples apps Meta para el mismo objeto externo sigue documentada como decisión pendiente.
-- [ ] Migración expand/contract parcialmente ejecutada: escritura sombra Instagram/WhatsApp Cloud y lectura canónica para conversaciones nuevas; backfill repetible, dual-read/paridad y rollback ensayado siguen pendientes.
+- [x] Script repetible de backfill legacy no-destructivo creado (dry-run por defecto; apply con doble confirmación).
+- [ ] Migración expand/contract parcialmente ejecutada: escritura sombra Instagram/WhatsApp Cloud y lectura canónica para conversaciones nuevas; ejecutar backfill en staging, dual-read/paridad y rollback ensayado siguen pendientes.
 - [~] OAuth Instagram registra conexiones Meta canónicas con credenciales cifradas y selector; revisar formalmente state/PKCE/redirect/scopes, renovación y revocación para todos los proveedores.
 - [~] WhatsApp Cloud e Instagram validan firma y resuelven conexiones exactas; `ChannelWebhookEvent` deduplica por conexión/evento con leases recuperables. Falta outbox de efectos externos, dead-letter operativa y fixtures firmados batch de ruta.
 - [ ] WhatsApp Baileys: sesión/auth-state independiente por conexión, orquestador, concurrencia, reconexión y recuperación probadas.
