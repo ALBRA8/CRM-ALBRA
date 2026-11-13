@@ -220,8 +220,9 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Documentar umbrales de alertas y límites del endpoint de salud en `RUNBOOK_CANALES.md`.
 - [x] Exponer `oldestQueuedAgeSeconds` en la salud agregada sin revelar IDs, cuerpos ni tenants; probar el contrato.
 - [x] CI completo del HEAD `04db615ea35192aa8998e5ec04ddf88d2e8d0661`: push run `43497893649` y pull_request run `43497905739`, ambos success (secret scan, Prisma migrate clean install, TypeScript, lint ratchet, suite completa y build).
-- [ ] Añadir idempotencia/outbox propia para workflows y autorespuestas; fencing no evita repetir un efecto externo ya iniciado por un proceso antiguo.
-- [ ] Incorporar antigüedad de la cola queued y series temporales para que el monitor pueda medir backlog y crecimiento sin inferencias.
+- [x] Persistir auto-respuestas WhatsApp/Instagram en outbox canónica con clave idempotente SHA-256; el webhook no despacha directamente.
+- [ ] Integrar acciones externas de workflows con outbox durable; mantener `WORKFLOW_EXTERNAL_SENDS_ENABLED` apagado hasta cerrar esta brecha.
+- [x] Exponer edad de la intención queued más antigua; el monitor externo debe conservar snapshots para detectar crecimiento.
 - [ ] Revisar el diff completo de PR #3 por módulos y ejecutar pruebas manuales de navegador en staging; PR continúa draft.
 
 
@@ -239,3 +240,12 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Validar las nuevas protecciones con CI del HEAD final.
 - [ ] Probar webhooks con sandbox/cuentas de prueba Meta; no se ha hecho desde este entorno.
 - [ ] Ejecutar dry-run de backfill y ensayo de reversión en staging con backup restaurable; no se ha hecho desde este entorno.
+
+
+## Pruebas adicionales de aislamiento — 2026-11-13
+
+- [x] Añadir batch entrante WhatsApp con dos números/tenants y una conexión desconectada; verificar conversación/mensaje en la conexión correcta y ausencia de conversación para el destino desconectado.
+- [x] Corregir la prueba de auto-respuesta WhatsApp para usar un ID de mensaje único; la deduplicación del ledger había omitido correctamente un replay compartido entre pruebas.
+- [x] Acotar el contexto de clientes y etapas de pipeline de workflows al tenant del run.
+- [ ] Confirmar CI completo en el HEAD actual, incluyendo build de producción.
+- [ ] Añadir integración de acciones externas workflow a outbox antes de habilitar cualquier envío.
