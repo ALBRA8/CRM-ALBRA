@@ -58,6 +58,8 @@ model Organization {
   apiKeys               ApiKey[]
   agentLeadEvents       AgentLeadEvent[]
   whatsappConnections   WhatsAppConnection[]
+  channelConnections    ChannelConnection[]
+  channelConnectionEvents ChannelConnectionEvent[]
 }
 
 model User {
@@ -753,6 +755,50 @@ model WhatsAppConnectionEvent {
   type           String // connected | disconnected | revoked | token_rotated | verified | error | plan_limit_blocked
   detail         String?
   createdAt      DateTime           @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([connectionId, createdAt])
+}
+
+// ---------- Conexiones canónicas multicuenta de canales ----------
+// Fase 0: modelo aditivo. Las tablas legacy (Integration y WhatsAppConnection)
+// permanecen intactas hasta completar backfill, dual-read y pruebas de paridad.
+model ChannelConnection {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  channel           String   // whatsapp | instagram | facebook | telegram | tiktok
+  provider          String   // adaptador/proveedor concreto; no inferirlo del canal
+  providerAccountKey String  @unique // clave externa namespaced, normalizada y no secreta
+  externalAccountId String   // ID de cuenta/página/número/bot en el proveedor
+  displayName       String?
+  status            String   @default("pending") // pending | connected | reconnect_required | disconnected | revoked | error
+  scopes            String?  // JSON serializado; nunca contiene credenciales
+  credentialsEnc    String   // blob cifrado AES-256-GCM; nunca exponer por API/logs
+  metadata          String?  // JSON allowlisted no secreto
+  tokenExpiresAt    DateTime?
+  lastVerifiedAt    DateTime?
+  lastErrorAt       DateTime?
+  lastErrorCode     String?  // código sanitizado; nunca guardar respuesta/token del proveedor
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  events            ChannelConnectionEvent[]
+
+  @@index([organizationId, channel, status])
+  @@index([organizationId, createdAt])
+  @@index([provider, externalAccountId])
+}
+
+model ChannelConnectionEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectionId   String?
+  connection     ChannelConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  type           String   // connected | disconnected | revoked | token_rotated | verified | error
+  detail         String?  // detalle sanitizado, sin tokens ni PII innecesaria
+  createdAt      DateTime @default(now())
 
   @@index([organizationId, createdAt])
   @@index([connectionId, createdAt])
