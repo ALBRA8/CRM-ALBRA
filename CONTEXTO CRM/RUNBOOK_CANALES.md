@@ -46,8 +46,9 @@ Campos:
 - `webhookEvents.processing`, `failed`, `staleProcessing`: eventos en proceso, fallidos o con lease vencido.
 - `workerEnabled`: valor efectivo del feature flag de outbox.
 - `autoReplyEnabled`: estado efectivo de `CHANNEL_AUTOREPLY_ENABLED`.
-- `workflowExternalSendsEnabled`: estado efectivo (actualmente siempre `false`, por bloqueo de código).
-- `workflowExternalSendsFlagRequested`: indica si quedó solicitado el flag legacy; no significa que se puedan enviar mensajes.
+- `workflowExternalSendsEnabled`: estado efectivo de `WORKFLOW_OUTBOX_DISPATCH_ENABLED` para la outbox workflow (debe ser `false` por defecto).
+- `workflowExternalSendsFlagRequested`: indica si quedó solicitado el flag legacy `WORKFLOW_EXTERNAL_SENDS_ENABLED`; no habilita envíos.
+- `workflowOutboxWorkerSecretConfigured`: indica únicamente si el secreto dedicado del worker workflow está configurado; nunca expone su valor.
 - `whatspowerBridgeEnabled`: estado efectivo de `WHATSPOWER_ENABLED`.
 - `connectedMetaConnections`: conexiones WhatsApp/Instagram canónicas conectadas.
 
