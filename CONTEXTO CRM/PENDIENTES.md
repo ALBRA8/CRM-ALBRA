@@ -221,7 +221,7 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Exponer `oldestQueuedAgeSeconds` en la salud agregada sin revelar IDs, cuerpos ni tenants; probar el contrato.
 - [x] CI completo del HEAD `04db615ea35192aa8998e5ec04ddf88d2e8d0661`: push run `43497893649` y pull_request run `43497905739`, ambos success (secret scan, Prisma migrate clean install, TypeScript, lint ratchet, suite completa y build).
 - [x] Persistir auto-respuestas WhatsApp/Instagram en outbox canónica con clave idempotente SHA-256; el webhook no despacha directamente.
-- [ ] Integrar acciones externas de workflows con outbox durable; mantener `WORKFLOW_EXTERNAL_SENDS_ENABLED` apagado hasta cerrar esta brecha.
+- [x] Integrar acciones externas de workflows con `WorkflowOutboundMessage` y dispatcher separado; el flag legacy `WORKFLOW_EXTERNAL_SENDS_ENABLED` se ignora. El nuevo gate `WORKFLOW_OUTBOX_DISPATCH_ENABLED` sigue apagado hasta validar staging.
 - [x] Exponer edad de la intención queued más antigua; el monitor externo debe conservar snapshots para detectar crecimiento.
 - [ ] Revisar el diff completo de PR #3 por módulos y ejecutar pruebas manuales de navegador en staging; PR continúa draft.
 
@@ -236,7 +236,7 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Auto-respuestas WhatsApp/Instagram persistidas primero en `ChannelOutboundMessage` con clave estable SHA-256 de `message.id`/`msg.mid`; el webhook no llama directamente a Meta.
 - [x] Pruebas de integración en ambos webhooks: con opt-in explícito, la respuesta IA se encola con clave estable y estado `queued`, sin despacho directo al proveedor.
 - [x] CI del HEAD previo (`51a7775`) aprobó toda la suite y build; la nueva fase outbox necesita CI final propio.
-- [~] La idempotencia de workflow impide runs duplicados. El sweeper marca `running` huérfanos como `failed` tras 10 minutos, sin reejecutar acciones de resultado incierto. Las acciones externas de workflows aún no están integradas con la outbox canónica; no certificar exactly-once.
+- [~] La idempotencia de workflow impide runs duplicados. El sweeper marca `running` huérfanos como `failed` tras 10 minutos, sin reejecutar acciones de resultado incierto. Las acciones externas workflow ahora persisten en una outbox durable separada; no certificar exactly-once.
 - [ ] Validar las nuevas protecciones con CI del HEAD final.
 - [ ] Probar webhooks con sandbox/cuentas de prueba Meta; no se ha hecho desde este entorno.
 - [ ] Ejecutar dry-run de backfill y ensayo de reversión en staging con backup restaurable; no se ha hecho desde este entorno.
@@ -248,7 +248,7 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Corregir la prueba de auto-respuesta WhatsApp para usar un ID de mensaje único; la deduplicación del ledger había omitido correctamente un replay compartido entre pruebas.
 - [x] Acotar el contexto de clientes y etapas de pipeline de workflows al tenant del run.
 - [ ] Confirmar CI completo en el HEAD actual, incluyendo build de producción.
-- [ ] Añadir integración de acciones externas workflow a outbox antes de habilitar cualquier envío.
+- [x] Añadir integración de acciones externas workflow a outbox durable; falta validación de despacho en staging antes de habilitar envíos.
 
 
 ## Hallazgos de auditoría cerrados — 2026-11-13
@@ -280,7 +280,7 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [x] Ignorar el flag legacy `WORKFLOW_EXTERNAL_SENDS_ENABLED`; incluso con valor `true`, no hay llamadas de red.
 - [x] Reportar `pending: true`, `queued: false` y `WORKFLOW_OUTBOX_NOT_CONFIGURED` para no afirmar que el mensaje está encolado.
 - [x] Endpoint de salud informa envío workflow efectivo deshabilitado y el flag legacy solicitado por separado.
-- [ ] Implementar outbox/dispatcher durable para Baileys, Telegram y SMTP antes de reconsiderar el bloqueo.
+- [x] Implementar outbox/dispatcher durable para Baileys, Telegram y SMTP. El bloqueo efectivo ahora depende del nuevo gate `WORKFLOW_OUTBOX_DISPATCH_ENABLED`, desactivado por defecto.
 
 
 ## Outbox durable de workflows — 2026-11-13 (implementación en rama)
@@ -296,3 +296,12 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Mantener WORKFLOW_OUTBOX_DISPATCH_ENABLED=false y no configurar WORKFLOW_OUTBOX_WORKER_SECRET hasta completar las pruebas y la autorización.
 
 Nota: WORKFLOW_EXTERNAL_SENDS_ENABLED queda como flag legacy ignorado. El nuevo gate operativo es WORKFLOW_OUTBOX_DISPATCH_ENABLED, que no se activa por esta implementación.
+
+ 
+## Corrección de estado documental — 2026-11-13
+
+Las entradas anteriores que indicaban que la outbox de workflows no existía son históricas y quedaron superadas por la implementación de `WorkflowOutboundMessage`:
+- Las acciones workflow WhatsApp/Baileys, Telegram y SMTP ya persisten en outbox cifrada; no hacen envíos directos desde el motor.
+- Telegram tiene dispatcher workflow propio, pero el adaptador/ciclo de vida de `ChannelConnection` para Telegram sigue pendiente. Messenger y TikTok siguen pendientes de adaptadores de canal.
+- El worker workflow `POST /api/internal/workflow-outbox` requiere `WORKFLOW_OUTBOX_DISPATCH_ENABLED=true` y secreto dedicado; no hay scheduler registrado.
+- CI del HEAD `4500b511` aprobó secret scan, migraciones, TypeScript, lint, suite (77 archivos / 655 tests) y build. Las pruebas de despacho usan mocks; no son pruebas de proveedor ni de staging.
