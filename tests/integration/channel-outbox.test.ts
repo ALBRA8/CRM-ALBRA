@@ -166,6 +166,12 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
       providerMessageId: 'wamid-status-callback',
       status: 'delivered',
     })
+    // Un callback de fallo retrasado no puede degradar un mensaje ya leído.
+    await updateChannelMessageDeliveryStatus({
+      conversationId: conversation.id,
+      providerMessageId: 'wamid-status-callback',
+      status: 'failed',
+    })
     const stored = await db.channelMessage.findUnique({ where: { id: message.id } })
     expect(JSON.parse(stored?.metadata || '{}')).toMatchObject({
       deliveryStatus: 'read',
