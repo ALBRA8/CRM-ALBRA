@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 const real = await vi.importActual<typeof import('@/lib/workflow-engine')>('@/lib/workflow-engine')
 import { runDueJobs } from '@/lib/scheduler'
 import { db } from '@/lib/db'
+import { FIX } from '../helpers'
 
 const AUTOMATION_BASE = {
   organizationId: 'org-a',
@@ -60,6 +61,44 @@ describe('idempotencia de runs (webhook re-entregado ≠ doble ejecución)', () 
       expect(again[0]?.status).toBe('deduplicated')
       const runs = await db.automationRun.count({ where: { automationId: auto.id } })
       expect(runs).toBe(1)
+    } finally {
+      await db.automation.delete({ where: { id: auto.id } })
+    }
+  })
+})
+
+describe('aislamiento de contexto en acciones workflow', () => {
+  it('un clientId de otra organización no filtra teléfono, email ni vínculo al timeline', async () => {
+    const auto = await db.automation.create({
+      data: {
+        ...AUTOMATION_BASE,
+        name: 'Workflow foreign client context',
+        triggerType: 'client_created',
+        actions: JSON.stringify([{ type: 'send_whatsapp', config: { body: 'Prueba de aislamiento {{clientName}}' } }]),
+      },
+    })
+    try {
+      const results = await real.runWorkflowsForTrigger({
+        orgId: 'org-a',
+        type: 'client_created',
+        payload: { id: 'foreign-client-context-event', clientId: FIX.clientB1.id },
+      })
+      expect(results[0]?.status).toBe('success')
+      const notification = await db.notification.findFirst({
+        where: { organizationId: 'org-a', title: { contains: 'Mensaje whatsapp PENDIENTE' }, body: { contains: 'Prueba de aislamiento' } },
+        orderBy: { createdAt: 'desc' },
+      })
+      expect(notification).not.toBeNull()
+      const notificationData = JSON.parse(notification!.data || '{}') as Record<string, unknown>
+      expect(notificationData.clientId).toBeNull()
+      expect(notificationData.phone).toBeNull()
+      expect(notificationData.email).toBeNull()
+      const timeline = await db.timelineEvent.findFirst({
+        where: { organizationId: 'org-a', type: 'whatsapp', description: { contains: 'Prueba de aislamiento' } },
+        orderBy: { createdAt: 'desc' },
+      })
+      expect(timeline).not.toBeNull()
+      expect(timeline!.clientId).toBeNull()
     } finally {
       await db.automation.delete({ where: { id: auto.id } })
     }
