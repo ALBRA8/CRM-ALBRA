@@ -1,5 +1,6 @@
 import { db } from './db'
 import { recordTimelineEvent } from './timeline'
+import { enqueueWorkflowOutboundMessage } from './workflow-outbox'
 
 /**
  * Motor de workflows disparado por eventos (feature #1 del plan aprobado,
@@ -147,7 +148,7 @@ async function buildActionContext(orgId: string, payload: Record<string, unknown
   }
 }
 
-async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<string, unknown>, execution: { automationId: string; runId: string; stepIndex: number }): Promise<Record<string, unknown>> {
   const config = action.config || {}
   switch (action.type) {
     case 'create_task_like_notification': {
@@ -185,31 +186,55 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
         if (tpl) body = tpl.body
       }
       const rendered = renderTemplate(body, ctx)
-      // Seguridad: no hay outbox durable común para Baileys, Telegram y SMTP.
-      // Un flag de entorno no puede habilitar envíos directos con una ventana
-      // de crash no reconciliable. Mantener la acción pendiente hasta integrar
-      // persistencia y dispatcher idempotente para cada proveedor.
-      const sent = false
-      const sendError = 'WORKFLOW_OUTBOX_NOT_CONFIGURED'
-      // Registrar el pendiente y su evento de timeline; no afirmar que está queued.
+      let payload: { to: string; text: string } | { chatId: string | number; text: string } | { to: string; subject: string; html: string; text: string }
+      if (channel === 'whatsapp') {
+        const to = typeof ctx.phone === 'string' ? ctx.phone.trim() : ''
+        if (!to) return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
+        payload = { to, text: rendered.slice(0, 4096) }
+      } else if (channel === 'telegram') {
+        const chatId = config.chatId ?? ctx.telegramChatId
+        if ((typeof chatId !== 'string' && typeof chatId !== 'number') || !String(chatId).trim()) {
+          return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
+        }
+        payload = { chatId, text: rendered.slice(0, 4096) }
+      } else {
+        const to = typeof ctx.email === 'string' ? ctx.email.trim() : ''
+        if (!to) return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
+        const subject = renderTemplate(String(config.subject || 'Seguimiento'), ctx).replace(/[\\r\\n]/g, ' ').slice(0, 200)
+        payload = {
+          to,
+          subject,
+          html: '<div>' + escapeWorkflowEmailHtml(rendered).replace(/\\n/g, '<br/>') + '</div>',
+          text: rendered.slice(0, 50000),
+        }
+      }
+
+      const intent = await enqueueWorkflowOutboundMessage({
+        organizationId: orgId,
+        automationId: execution.automationId,
+        automationRunId: execution.runId,
+        stepIndex: execution.stepIndex,
+        channel,
+        payload,
+      })
       await db.notification.create({
         data: {
           organizationId: orgId,
           type: 'automation',
-          title: `Mensaje ${channel} ${sent ? 'enviado' : 'PENDIENTE (outbox workflow no configurada)'}`,
+          title: `Mensaje ${channel} en cola durable`,
           body: rendered.slice(0, 500),
-          data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent, error: sendError ?? null }),
+          data: JSON.stringify({ channel, outboundId: intent.id, status: intent.status, clientId: ctx.clientId ?? null }),
         },
       })
       await recordTimelineEvent({
         orgId,
         clientId: (ctx.clientId as string) || null,
         type: channel,
-        title: `Mensaje ${channel} (automatización)${sent ? '' : ' — pendiente de outbox'}`,
+        title: `Mensaje ${channel} (automatización) — en cola`,
         description: rendered.slice(0, 300),
         source: 'automation',
       })
-      return { queued: false, pending: true, channel, sent, error: sendError }
+      return { queued: true, pending: true, channel, outboundId: intent.id, status: intent.status }
     }
     case 'create_opportunity': {
       const requestedStageId = config.stageId as string | undefined
@@ -321,7 +346,8 @@ async function runActionSteps(
   ctx: Record<string, unknown>,
   startIndex: number,
   prevStates: StepState[],
-  prevOutputs: Record<string, unknown>[]
+  prevOutputs: Record<string, unknown>[],
+  execution: { automationId: string; runId: string }
 ): Promise<
   | { done: true; stepStates: StepState[]; outputs: Record<string, unknown>[] }
   | { done: false; stepStates: StepState[]; outputs: Record<string, unknown>[]; waitMs: number; nextStep: number }
@@ -339,11 +365,11 @@ async function runActionSteps(
     }
 
     try {
-      const out = await executeAction(orgId, action, ctx)
+      const out = await executeAction(orgId, action, ctx, { ...execution, stepIndex: i })
       outputs.push(out)
       // Una acción externa sin outbox no se considera éxito: queda auditable
       // como skipped/pending, sin bloquear los pasos internos posteriores.
-      stepStates[i] = { type: action.type, status: out.pending === true ? 'skipped' : 'success', ms: Date.now() - t0 }
+      stepStates[i] = { type: action.type, status: out.pending === true && out.queued !== true ? 'skipped' : 'success', ms: Date.now() - t0 }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300), ms: Date.now() - t0 }
@@ -401,7 +427,7 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
       }
       const actions = safeParse<WorkflowAction[]>(automation.actions) || []
       const ctx = await buildActionContext(event.orgId, event.payload)
-      const res = await runActionSteps(event.orgId, actions, ctx, 0, [], [])
+      const res = await runActionSteps(event.orgId, actions, ctx, 0, [], [], { automationId: automation.id, runId: run.id })
 
       if (!res.done) {
         // PAUSA durable (patrón DELAY de Twenty): el run queda 'waiting' y el
@@ -494,7 +520,7 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
 
     try {
       const ctx = await buildActionContext(automation.organizationId, payload)
-      const res = await runActionSteps(automation.organizationId, actions, ctx, run.currentStep, prevStates, prevOutputs)
+      const res = await runActionSteps(automation.organizationId, actions, ctx, run.currentStep, prevStates, prevOutputs, { automationId: automation.id, runId: run.id })
       if (!res.done) {
         // Otra espera encadenada: vuelve a pausar (secuencias multi-touch)
         await db.automationRun.update({
