@@ -18,6 +18,13 @@ const base = {
 }
 
 describe('Meta canonical channel adapters (mock fetch only)', () => {
+  it('treats a successful HTTP response without provider message id as ambiguous', async () => {
+    const fetchMock = fakeFetch(200, { messages: [] })
+    const adapter = createMetaChannelAdapters(fetchMock)['meta_cloud:whatsapp']
+    const result = await adapter(base)
+    expect(result).toEqual({ ok: false, definitive: false, errorCode: 'META_RESPONSE_MISSING_MESSAGE_ID' })
+  })
+
   it('sends WhatsApp Cloud text to the exact phone-number connection', async () => {
     const fetchMock = fakeFetch(200, { messages: [{ id: 'wamid.mock' }] })
     const adapter = createMetaChannelAdapters(fetchMock)['meta_cloud:whatsapp']
