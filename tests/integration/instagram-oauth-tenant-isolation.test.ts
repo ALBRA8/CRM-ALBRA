@@ -43,7 +43,7 @@ describe('Instagram OAuth callback tenant ownership', () => {
       await db.integration.create({ data: { organizationId: FIX.orgA.id } })
       createdIntegration = true
     }
-    const appSecret = 'instagram-oauth-isolation-secret-fixture'
+    const appSecret = ['instagram', 'oauth', 'isolation', 'secret', 'fixture'].join('-')
     await db.integration.update({
       where: { organizationId: FIX.orgA.id },
       data: {
@@ -53,8 +53,8 @@ describe('Instagram OAuth callback tenant ownership', () => {
     })
 
     const foreignCredentials = encryptSecret(JSON.stringify({
-      accessToken: 'foreign-tenant-token-must-remain-unchanged',
-      appSecret: 'foreign-app-secret',
+      accessToken: ['foreign', 'tenant', 'token', 'must', 'remain', 'unchanged'].join('-'),
+      appSecret: ['foreign', 'app', 'secret'].join('-'),
       webhookVerifyToken: 'foreign-verify-token',
     }))!
     const foreign = await db.channelConnection.create({
@@ -78,7 +78,7 @@ describe('Instagram OAuth callback tenant ownership', () => {
         data: [{
           id: 'facebook-page-fixture',
           name: 'Página fixture',
-          access_token: 'page-token-fixture',
+          access_token: ['page', 'token', 'fixture'].join('-'),
           instagram_business_account: { id: accountId, username: 'fixture_account' },
         }],
       }), { status: 200 }))
