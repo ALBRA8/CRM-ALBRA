@@ -200,11 +200,11 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
       } else {
         const to = typeof ctx.email === 'string' ? ctx.email.trim() : ''
         if (!to) return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
-        const subject = renderTemplate(String(config.subject || 'Seguimiento'), ctx).replace(/[\\r\\n]/g, ' ').slice(0, 200)
+        const subject = renderTemplate(String(config.subject || 'Seguimiento'), ctx).replace(/[\r\n]/g, ' ').slice(0, 200)
         payload = {
           to,
           subject,
-          html: '<div>' + escapeWorkflowEmailHtml(rendered).replace(/\\n/g, '<br/>') + '</div>',
+          html: '<div>' + escapeWorkflowEmailHtml(rendered).replace(/\n/g, '<br/>') + '</div>',
           text: rendered.slice(0, 50000),
         }
       }
