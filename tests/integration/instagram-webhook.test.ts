@@ -167,4 +167,37 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
       where: { connectionId: { in: [connectionA.id, connectionB.id] } },
     })).toBe(2)
   })
+  it('does not auto-reply to inbound messages unless the explicit flag is enabled', async () => {
+    const previous = process.env.CHANNEL_AUTOREPLY_ENABLED
+    delete process.env.CHANNEL_AUTOREPLY_ENABLED
+    const accountId = '17840000000000991'
+    const connection = await createInstagramConnection(accountId)
+    const payload = {
+      object: 'instagram',
+      entry: [{
+        id: accountId,
+        messaging: [{
+          sender: { id: 'contact-no-auto-reply' },
+          recipient: { id: accountId },
+          message: { mid: 'ig.mid.no-auto-reply', text: 'Mensaje entrante de prueba' },
+        }],
+      }],
+    }
+    try {
+      const response = await POST(signedRequest(JSON.stringify(payload)))
+      expect(response.status).toBe(200)
+      const outbound = await db.channelMessage.findMany({
+        where: { conversation: { connectionId: connection.id }, direction: 'out' },
+      })
+      expect(outbound).toHaveLength(0)
+      const autoReply = await db.timelineEvent.findFirst({
+        where: { organizationId: FIX.orgA.id, title: 'Respuesta automática del agente IA' },
+      })
+      expect(autoReply).toBeNull()
+    } finally {
+      if (previous === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
+      else process.env.CHANNEL_AUTOREPLY_ENABLED = previous
+    }
+  })
+
 })
