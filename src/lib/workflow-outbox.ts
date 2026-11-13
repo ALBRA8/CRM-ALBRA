@@ -60,7 +60,7 @@ export async function dispatchWorkflowOutboundMessage(id: string) {
       if (!to || !text) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'RECIPIENT_OR_BODY_MISSING'); return { status: 'failed' as const } }
       const secret = process.env.INTERNAL_API_SECRET
       if (!secret || secret.length < 24) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'DAEMON_AUTH_NOT_CONFIGURED'); return { status: 'failed' as const } }
-      const base = (process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002').replace(/\\/+$/, '')
+      const base = (process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002').replace(/\/+$/, '')
       const response = await fetch(base + '/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + secret }, body: JSON.stringify({ orgId: item.organizationId, to, text }), signal: AbortSignal.timeout(12_000) })
       const data = await response.json().catch(() => ({})) as { success?: boolean; messageId?: string }
       if (response.ok && data.success && data.messageId) { await finishWorkflowOutboundMessage(id, claimToken, 'sent', undefined, data.messageId); return { status: 'sent' as const } }
@@ -83,7 +83,7 @@ export async function dispatchWorkflowOutboundMessage(id: string) {
       const subject = typeof payload.subject === 'string' ? payload.subject : ''
       const html = typeof payload.html === 'string' ? payload.html : ''
       const text = typeof payload.text === 'string' ? payload.text : undefined
-      if (!to || !subject || !html || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(to)) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'EMAIL_PAYLOAD_INVALID'); return { status: 'failed' as const } }
+      if (!to || !subject || !html || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'EMAIL_PAYLOAD_INVALID'); return { status: 'failed' as const } }
       const config = await getSmtpConfig(item.organizationId)
       if (!config) { await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'SMTP_NOT_CONFIGURED'); return { status: 'failed' as const } }
       const result = await trySendSmtp(config, to, subject, html, text)
