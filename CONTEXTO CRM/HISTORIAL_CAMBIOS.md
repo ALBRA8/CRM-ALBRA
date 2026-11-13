@@ -100,3 +100,12 @@ Ambas líneas de trabajo se conservan en el historial:
 - CI run `43379605573`: **success**, 64 archivos / 580 pruebas aprobadas; TypeScript, lint, migraciones, escáner y build aprobados.
 - Pruebas automatizadas del selector Super Admin pasaron dentro de la suite.
 - No se hizo merge ni despliegue. La validación visual del selector en navegador/staging y la comprobación integral de aislamiento en un entorno desplegado siguen pendientes.
+
+
+## 2026-11-13 — Cierre de validación automatizada del selector
+
+- Hallazgo adicional en revisión de UI: `/api/auth/me` filtraba siempre por la organización base del usuario, por lo que el superadmin podía cambiar token pero no completar la recarga de sesión en otra organización.
+- Corrección: `src/app/api/auth/me/route.ts` permite que el superadmin consulte su usuario por ID y proyecta el contexto activo del token en `user.organizationId`; no cambia la organización base en BD. Los usuarios normales siguen filtrados por su organización asignada.
+- Prueba añadida: tras cambiar a org B, `/api/auth/me` devuelve org B; se conserva org A como organización base persistida.
+- Head final `5c1e73e0c99c488c843d42aff6fe8cef6928bf23`; CI run `43380198626` **success**, 64 archivos y 580 pruebas aprobadas, build incluido.
+- No merge, no despliegue. Pendiente verificación visual/manual en staging y prueba de regreso al panel Super Admin.
