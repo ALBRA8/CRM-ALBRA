@@ -386,10 +386,18 @@ Se añade un token de fencing por cada reclamación de `ChannelWebhookEvent`. La
 
 La migración 10 agrega `claimToken` de forma aditiva y nullable para preservar filas históricas. Los handlers WhatsApp e Instagram conservan el objeto de claim y lo presentan al completar/fallar. La prueba de integración simula vencimiento, recuperación y finalización tardía del propietario anterior.
 
-**Límite:** fencing protege el estado del ledger; no cancela efectos externos ya iniciados por un handler antiguo. No se declara exactly-once. Workflows/autorespuestas necesitan idempotencia u outbox propia para cerrar su ventana de crash.
+**Límite:** fencing protege el estado del ledger; no cancela efectos externos ya iniciados por un handler antiguo. No se declara exactly-once. Las auto-respuestas WhatsApp/Instagram ya persisten primero en la outbox canónica con claves SHA-256 derivadas del ID de proveedor. Las acciones externas de workflows siguen fuera de esa outbox y requieren integración durable antes de habilitarse.
 
-El runbook ahora define criterios operativos: staleSending > 0 por 5 min (crítica), unknown > 0 (alta inmediata), staleProcessing > 0 por dos sondeos (alta), failed > 0 (alta), y cola queued envejecida > 10 min/creciente (media). El endpoint actual no expone antigüedad de queued ni series temporales; el monitor debe tomar snapshots o se debe ampliar la instrumentación. Estos umbrales están documentados, no desplegados como alertas.
+El runbook ahora define criterios operativos: staleSending > 0 por 5 min (crítica), unknown > 0 (alta inmediata), staleProcessing > 0 por dos sondeos (alta), failed > 0 (alta), y cola queued envejecida > 10 min/creciente (media). El endpoint expone `oldestQueuedAgeSeconds`; el monitor debe conservar snapshots para medir crecimiento sostenido. Estos umbrales están documentados, no desplegados como alertas.
 
 CI completo del HEAD `04db615ea35192aa8998e5ec04ddf88d2e8d0661` aprobado en push run `43497893649` y pull_request run `43497905739`: secret scan, migraciones SQLite limpias, TypeScript, lint ratchet, suite completa y build de producción. El endpoint de salud también expone `oldestQueuedAgeSeconds` para alertar backlog envejecido sin revelar datos de mensajes.
 
-La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento multitenant, conexiones, webhooks, outbox, migraciones, backfill, tests y documentación operativa. El alcance es amplio (271 commits/63 archivos en el último corte). Aún quedan pruebas manuales en staging, validación de proveedores Meta reales/sandbox, idempotencia/outbox de workflows/autorespuestas y revisión funcional por parte del operador. No se declara producción lista ni exactly-once.
+La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento multitenant, conexiones, webhooks, outbox, migraciones, backfill, tests y documentación operativa. El último corte registrado en GitHub es de 313 commits y 66 archivos. La revisión fue amplia, pero no equivale a pruebas manuales de navegador ni a validación de proveedores. Aún quedan pruebas manuales en staging, validación de proveedores Meta reales/sandbox, idempotencia/outbox de workflows/autorespuestas y revisión funcional por parte del operador. No se declara producción lista ni exactly-once.
+
+
+## Endurecimiento de workflows y batch entrante — 2026-11-13
+
+- El contexto de acciones workflow consulta el cliente por `(id, organizationId)`; si no pertenece al tenant del run o falla la lectura, elimina el vínculo y los campos de contacto enriquecidos antes de ejecutar acciones.
+- Las etapas configuradas en `create_opportunity` y `move_opportunity_stage` se validan contra la organización del workflow antes de asociarlas.
+- Se amplía la cobertura WhatsApp con un batch firmado que contiene mensajes entrantes de dos tenants y una cuenta desconectada; verifica conversaciones y mensajes aislados por conexión.
+- El fencing del ledger sigue sin cancelar efectos externos ya iniciados. Las acciones externas de workflows permanecen deshabilitadas y no se deben activar hasta diseñar una outbox durable específica.
