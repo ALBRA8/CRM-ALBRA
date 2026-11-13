@@ -497,7 +497,7 @@ export async function POST(req: NextRequest) {
   
         // Auto-respuesta IA
         const nicho = await db.nichoConfig.findUnique({ where: { organizationId: matchedOrgId }, select: { autoReplyEnabled: true } })
-        if (nicho?.autoReplyEnabled ?? true) {
+        if (process.env.CHANNEL_AUTOREPLY_ENABLED === 'true' && (nicho?.autoReplyEnabled ?? true)) {
           await llmReplyOrNotification({
             orgId: matchedOrgId,
             clientId: client?.id || null,
