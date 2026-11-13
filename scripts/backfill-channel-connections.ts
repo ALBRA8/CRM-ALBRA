@@ -4,6 +4,7 @@
  * Por defecto SOLO diagnostica. Para escribir se requieren ambos:
  *   bun run scripts/backfill-channel-connections.ts --apply
  *   BACKFILL_CHANNEL_CONNECTIONS_CONFIRM=1
+ * En NODE_ENV=production también exige BACKFILL_CHANNEL_CONNECTIONS_ALLOW_PRODUCTION=1.
  *
  * Nunca actualiza ni borra Integration/WhatsAppConnection. Los conflictos
  * (misma clave de proveedor asociada a otro tenant o datos incompatibles) se
