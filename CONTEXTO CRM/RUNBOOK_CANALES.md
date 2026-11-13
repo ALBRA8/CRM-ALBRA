@@ -35,6 +35,7 @@ Requiere `Authorization: Bearer <CHANNEL_OUTBOX_WORKER_SECRET>` con secreto de a
 
 Campos:
 - `outbox.queued`: intenciones esperando worker.
+- `outbox.oldestQueuedAgeSeconds`: edad en segundos de la intención queued más antigua; cero cuando no hay cola.
 - `outbox.sending`: llamadas en curso.
 - `outbox.staleSending`: `sending` con más de cinco minutos.
 - `outbox.unknown`: resultado ambiguo que exige conciliación humana.
@@ -54,7 +55,7 @@ No se ha configurado un sistema de alertas en este repositorio; los umbrales sig
 | `outbox.queued` | edad del más antiguo `> 10 min` o crecimiento 3 sondeos | Media: comprobar worker apagado/cola acumulada |
 | `connectedMetaConnections` | cae inesperadamente | Media: verificar revocación/token/estado con operador |
 
-Sondear cada minuto en staging y cada 1–2 minutos en producción cuando exista aprobación para operar. Mantener ventana de evaluación de 5 minutos para señales de edad; `unknown` y fallos no se silencian por ser pocos. El endpoint actual solo entrega contadores, no antigüedad del queued más antiguo ni series temporales: para esos dos criterios el monitor debe derivar edad/crecimiento con snapshots o ampliar la instrumentación antes de automatizar alertas. No alertar por `queued > 0` aislado: el worker está intencionalmente apagado en el estado actual.
+Sondear cada minuto en staging y cada 1–2 minutos en producción cuando exista aprobación para operar. Mantener ventana de evaluación de 5 minutos para señales de edad; `unknown` y fallos no se silencian por ser pocos. El endpoint entrega el contador y la edad de la intención queued más antigua. El monitor debe conservar snapshots para medir crecimiento sostenido; no se exponen IDs ni marcas temporales por mensaje. No alertar por `queued > 0` aislado: el worker está intencionalmente apagado en el estado actual.
 
 La reclamación usa un `claimToken` de fencing. Completar/fallar solo actualiza el evento si conserva el token vigente; un handler antiguo no puede cerrar el claim de quien recuperó el lease. Esto protege el estado del ledger, pero no cancela un efecto externo que el handler antiguo ya hubiera iniciado.
 
