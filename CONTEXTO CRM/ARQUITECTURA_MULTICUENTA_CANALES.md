@@ -307,3 +307,5 @@ Antes de conectar proveedores se implementará un dispatcher aislado con adaptad
 - La versión Graph se toma de `GRAPH_VERSION` existente del proyecto; no se cambia aquí la configuración global de versión.
 - Pruebas unitarias mockean fetch para comprobar endpoint/cuerpo, ID externo, token en header y clasificación 4xx/5xx. No se hace ninguna petición real.
 - Referencias oficiales: [WhatsApp Business Platform](https://developers.facebook.com/documentation/business-messaging/whatsapp/overview) y [Instagram Messaging](https://developers.facebook.com/documentation/business-messaging/instagram-messaging). Revisar permisos/App Review y ventanas de respuesta antes de activar en producción.
+
+- Los adaptadores nuevos usan `META_CHANNELS_GRAPH_VERSION` (formato validado) y, si no se define, Graph API `v27.0`; no modifican el `GRAPH_VERSION` legacy del resto de integraciones.
