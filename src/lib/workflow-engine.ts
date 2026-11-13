@@ -148,6 +148,26 @@ async function buildActionContext(orgId: string, payload: Record<string, unknown
   }
 }
 
+async function recordWorkflowOutboundPending(orgId: string, channel: string, ctx: Record<string, unknown>, rendered: string, error: string) {
+  await db.notification.create({
+    data: {
+      organizationId: orgId,
+      type: 'automation',
+      title: `Mensaje ${channel} PENDIENTE (destinatario no disponible)`,
+      body: rendered.slice(0, 500),
+      data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent: false, queued: false, error }),
+    },
+  })
+  await recordTimelineEvent({
+    orgId,
+    clientId: (ctx.clientId as string) || null,
+    type: channel,
+    title: `Mensaje ${channel} (automatización) — pendiente: destinatario no disponible`,
+    description: rendered.slice(0, 300),
+    source: 'automation',
+  })
+}
+
 async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<string, unknown>, execution: { automationId: string; runId: string; stepIndex: number }): Promise<Record<string, unknown>> {
   const config = action.config || {}
   switch (action.type) {
@@ -189,11 +209,12 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
       let payload: { to: string; text: string } | { chatId: string | number; text: string } | { to: string; subject: string; html: string; text: string }
       if (channel === 'whatsapp') {
         const to = typeof ctx.phone === 'string' ? ctx.phone.trim() : ''
-        if (!to) return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
+        if (!to) { await recordWorkflowOutboundPending(orgId, channel, ctx, rendered, 'WORKFLOW_RECIPIENT_NOT_AVAILABLE'); return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' } }
         payload = { to, text: rendered.slice(0, 4096) }
       } else if (channel === 'telegram') {
         const chatId = config.chatId
         if ((typeof chatId !== 'string' && typeof chatId !== 'number') || !String(chatId).trim()) {
+          await recordWorkflowOutboundPending(orgId, channel, ctx, rendered, 'WORKFLOW_RECIPIENT_NOT_AVAILABLE')
           return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
         }
         payload = { chatId, text: rendered.slice(0, 4096) }
