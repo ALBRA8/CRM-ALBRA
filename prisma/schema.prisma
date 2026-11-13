@@ -62,6 +62,7 @@ model Organization {
   channelConnectionEvents ChannelConnectionEvent[]
   channelWebhookEvents ChannelWebhookEvent[]
   channelConversations ChannelConversation[]
+  workflowOutboundMessages WorkflowOutboundMessage[]
 }
 
 model User {
@@ -997,4 +998,34 @@ model Knowledge {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, isActive])
+}
+
+
+// Outbox durable para acciones externas originadas en workflows.
+// El payload se cifra porque contiene destinatarios y contenido del mensaje.
+model WorkflowOutboundMessage {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  automationId      String?
+  automationRunId   String
+  stepIndex         Int
+  idempotencyKey    String
+  channel           String   // whatsapp | telegram | email
+  payloadEnc        String
+  status            String   @default("queued") // queued | sending | sent | failed | unknown
+  attemptCount      Int      @default(0)
+  claimToken        String?
+  providerMessageId String?
+  providerErrorCode String?
+  startedAt         DateTime?
+  sentAt            DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([automationRunId, stepIndex])
 }
