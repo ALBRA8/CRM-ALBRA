@@ -341,7 +341,9 @@ async function runActionSteps(
     try {
       const out = await executeAction(orgId, action, ctx)
       outputs.push(out)
-      stepStates[i] = { type: action.type, status: 'success', ms: Date.now() - t0 }
+      // Una acción externa sin outbox no se considera éxito: queda auditable
+      // como skipped/pending, sin bloquear los pasos internos posteriores.
+      stepStates[i] = { type: action.type, status: out.pending === true ? 'skipped' : 'success', ms: Date.now() - t0 }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300), ms: Date.now() - t0 }
