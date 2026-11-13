@@ -61,6 +61,7 @@ model Organization {
   channelConnections    ChannelConnection[]
   channelConnectionEvents ChannelConnectionEvent[]
   channelConversations ChannelConversation[]
+  channelMessages ChannelMessage[]
 }
 
 model User {
@@ -786,6 +787,7 @@ model ChannelConnection {
 
   events            ChannelConnectionEvent[]
   conversations     ChannelConversation[]
+  messages          ChannelMessage[]
 
   @@index([organizationId, channel, status])
   @@index([organizationId, createdAt])
@@ -825,10 +827,36 @@ model ChannelConversation {
   status              String   @default("active")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+  messages            ChannelMessage[]
 
   @@unique([connectionId, externalContactKey])
   @@index([organizationId, channel, lastMessageAt])
   @@index([connectionId, lastMessageAt])
+}
+
+
+// Mensajes canónicos: conservan el hilo y la cuenta exacta del proveedor.
+// Se añaden en paralelo a WhatsAppMessage/TimelineEvent durante expand.
+model ChannelMessage {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectionId      String
+  connection        ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  conversationId    String
+  conversation      ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  externalMessageId String?
+  direction         String   // in | out
+  senderType        String   // contact | agent | user
+  body              String
+  messageType       String   @default("text")
+  metadata          String?  // JSON no secreto, allowlisted
+  createdAt         DateTime @default(now())
+
+  @@unique([connectionId, externalMessageId])
+  @@index([conversationId, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([connectionId, createdAt])
 }
 
 // ---------- AGENTE-LEADS (webhook de eventos de prospección) ----------
