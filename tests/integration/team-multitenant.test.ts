@@ -30,7 +30,7 @@ describe('multiusuario: límites de organización y ciclo de sesión', () => {
     expect(user.role).toBe('member')
   })
 
-  it('un usuario normal no puede invitar miembros', async () => {
+  it('rechaza contraseñas de menos de 8 caracteres al invitar miembros', async () => {\n    const email = uniqueEmail()\n    const res = await teamPOST(req('/api/team', {\n      method: 'POST', token: tokenA(),\n      body: { name: 'Clave corta', email, password: '1234567' },\n    }))\n    expect(res.status).toBe(400)\n    expect(await db.user.findUnique({ where: { email } })).toBeNull()\n  })\n\n  it('un usuario normal no puede invitar miembros', async () => {
     const email = uniqueEmail()
     createdEmails.push(email)
     const res = await teamPOST(req('/api/team', {
