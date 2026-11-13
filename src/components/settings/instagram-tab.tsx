@@ -69,8 +69,9 @@ function InstagramConnectionsCard() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (!response.ok) throw new Error('No se pudieron cargar las cuentas')
-      const data = await response.json() as { connections?: InstagramConnection[] }
+      const data = await response.json() as { connections?: InstagramConnection[]; selectedConnectionId?: string | null }
       setConnections(data.connections ?? [])
+      setSelectedId(data.selectedConnectionId || '')
     } catch {
       toast.error('No se pudieron cargar las cuentas Instagram')
     } finally {
