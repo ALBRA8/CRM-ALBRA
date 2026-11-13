@@ -110,6 +110,7 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 
 **Avance parcial (2026-11-13):**
 - [x] El callback OAuth de Instagram registra la cuenta elegida también en `ChannelConnection` (provider `meta_graph`, canal `instagram`) mediante escritura sombra.
+- [x] Las nuevas conexiones WhatsApp Cloud se reflejan en `ChannelConnection` (provider `meta_cloud`); desconexión/revocación sincroniza estado y destruye credenciales canónicas dentro de la misma transacción.
 - [x] Credenciales del registro canónico cifradas con AES-256-GCM; metadata limitada a IDs/nombres no secretos.
 - [x] La escritura canónica, su evento de auditoría y la actualización legacy `Integration` ocurren en una transacción.
 - [x] Se rechaza vincular a otro tenant una cuenta Instagram ya reclamada en el inventario canónico.
