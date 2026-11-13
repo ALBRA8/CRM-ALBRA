@@ -3,7 +3,7 @@
 Fecha: 2026-11-13  
 Repositorio: `ALBRA8/CRM-ALBRA`  
 Rama: `fix/migration-safety-audit`  
-Estado: Fase 0 implementada y validada por CI; Fase 1 iniciada con escritura sombra de Instagram OAuth. La lectura y el enrutamiento siguen en legacy.
+Estado: Fase 0 implementada; Fase 1 en transición expand. Se añadió almacenamiento de conversaciones por conexión y un resolver canónico, pero los webhooks y pantallas legacy todavía no consumen el servicio.
 
 ## Objetivo y alcance
 
@@ -115,7 +115,7 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - [x] La escritura canónica, su evento de auditoría y la actualización legacy `Integration` ocurren en una transacción.
 - [x] Se rechaza vincular a otro tenant una cuenta Instagram ya reclamada en el inventario canónico.
 - [ ] El callback aún selecciona la primera página con Instagram vinculado; todavía no permite elegir ni conectar varias cuentas en una misma autorización.
-- [ ] Los webhooks, envíos y lecturas de Instagram siguen usando `Integration`; aún no existe dual-read ni enrutamiento por `connectionId`.
+- [ ] Los webhooks, envíos y pantallas de Instagram siguen usando `Integration`; la selección de varias cuentas en UI aún no está terminada.\n- [x] Se añadió `ChannelConversation`, con unicidad `[connectionId, externalContactKey]`, para separar conversaciones nuevas sin tocar históricos legacy.\n- [x] Se añadió `src/lib/channel-conversations.ts`: resuelve por `providerAccountKey` exacta y rechaza canal/estado incompatibles; crea conversación dentro de la conexión resuelta.\n- [x] Se añadió migración aditiva `6_channel_conversations` y pruebas de aislamiento para el mismo contacto en dos conexiones.\n- [ ] Adaptar los handlers de webhook y envíos a este servicio; hasta entonces el almacenamiento canónico no es el flujo de producción.
 - [ ] Esta escritura sombra requiere CI propio sobre el nuevo commit antes de considerarse validada.
 
 - Varias conexiones del mismo canal por organización.
