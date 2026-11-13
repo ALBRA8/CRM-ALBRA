@@ -11,7 +11,7 @@ import {
   metaGraphBase,
   META_GRAPH_VERSION,
 } from '@/lib/integrations'
-import { decryptSecret } from '@/lib/crypto'
+import { decryptSecret, encryptSecret } from '@/lib/crypto'
 
 /**
  * GET /api/instagram/oauth/callback — retorno de Meta tras autorizar.
@@ -111,15 +111,69 @@ export async function GET(req: NextRequest) {
     const igAccount = hit.instagram_business_account!
     const pageToken = hit.access_token || longToken
 
-    // 4) guardar cifrado y activar
+    // 4) registrar la cuenta en el inventario canónico (shadow-write).
+    // La clave está namespaced por proveedor/canal y nunca contiene credenciales.
+    // Una cuenta Meta no puede quedar vinculada simultáneamente a dos tenants.
+    const providerAccountKey = `meta:instagram:${igAccount.id}`
+    const existingCanonical = await db.channelConnection.findUnique({
+      where: { providerAccountKey },
+      select: { id: true, organizationId: true },
+    })
+    if (existingCanonical && existingCanonical.organizationId !== auth.orgId) {
+      return fail('instagram_account_in_use')
+    }
+
     const next = encodeInstagramState({ ...ig, token: pageToken })
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: {
-        instagramTokenEnc: next,
-        instagramAccountId: igAccount.id,
-        enableInstagram: true,
-      },
+    const credentialsEnc = encryptSecret(JSON.stringify({
+      accessToken: pageToken,
+      appSecret,
+      webhookVerifyToken: ig.webhookVerifyToken || null,
+    }))
+    if (!credentialsEnc) return fail('credential_encryption_failed')
+
+    // La escritura canónica y el espejo legacy son atómicos. El webhook seguirá
+    // leyendo Integration durante esta fase; el dual-read llegará tras paridad.
+    await db.$transaction(async (tx) => {
+      const connection = await tx.channelConnection.upsert({
+        where: { providerAccountKey },
+        create: {
+          organizationId: auth.orgId,
+          channel: 'instagram',
+          provider: 'meta_graph',
+          providerAccountKey,
+          externalAccountId: igAccount.id,
+          displayName: igAccount.username || hit.name || null,
+          status: 'connected',
+          credentialsEnc,
+          metadata: JSON.stringify({ pageId: hit.id, pageName: hit.name || null, username: igAccount.username || null }),
+          lastVerifiedAt: new Date(),
+        },
+        update: {
+          displayName: igAccount.username || hit.name || null,
+          status: 'connected',
+          credentialsEnc,
+          metadata: JSON.stringify({ pageId: hit.id, pageName: hit.name || null, username: igAccount.username || null }),
+          lastVerifiedAt: new Date(),
+          lastErrorAt: null,
+          lastErrorCode: null,
+        },
+      })
+      await tx.channelConnectionEvent.create({
+        data: {
+          organizationId: auth.orgId,
+          connectionId: connection.id,
+          type: 'connected',
+          detail: 'instagram_oauth_connected',
+        },
+      })
+      await tx.integration.update({
+        where: { organizationId: auth.orgId },
+        data: {
+          instagramTokenEnc: next,
+          instagramAccountId: igAccount.id,
+          enableInstagram: true,
+        },
+      })
     })
 
     // 5) best-effort: suscribir la cuenta IG a los webhooks de la app
