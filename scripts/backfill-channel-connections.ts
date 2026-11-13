@@ -50,11 +50,11 @@ function encryptedCredentials(value: unknown) {
   return encrypted || null
 }
 
-function safeParseState<T>(parser: (value: string | null | undefined) => T, value: string | null | undefined): T | Record<string, never> {
+function safeParseState<T extends object>(parser: (value: string | null | undefined) => T, value: string | null | undefined): T {
   try {
     return parser(value)
   } catch {
-    return {}
+    return {} as T
   }
 }
 
