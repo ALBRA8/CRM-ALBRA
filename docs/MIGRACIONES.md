@@ -59,7 +59,7 @@ cp db/custom.db "db/custom.db.bak-$(date +%Y%m%d-%H%M%S)"
 DATABASE_URL="file:./db/custom.db" npx prisma migrate resolve --applied 0_baseline
 
 # 3. Aplicar la migración 1 (aditiva + dedup):
-DATABASE_URL="file:./db/custom.db" npx prisma migrate deploy
+DATABASE_URL="file:../db/custom.db" npx prisma migrate deploy
 ```
 
 Validado contra una BD sembrada con dos cotizaciones `COT-0001` de la misma
@@ -74,7 +74,7 @@ la base local de pruebas con la secuencia versionada de Prisma:
 
 ```bash
 mkdir -p db
-DATABASE_URL="file:./db/custom.db" npm run db:reset
+DATABASE_URL="file:../db/custom.db" npm run db:reset
 npx prisma generate
 ```
 
