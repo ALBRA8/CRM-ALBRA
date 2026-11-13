@@ -401,3 +401,11 @@ La revisión del diff de PR #3 cubrió los cambios de Super Admin, aislamiento m
 - Las etapas configuradas en `create_opportunity` y `move_opportunity_stage` se validan contra la organización del workflow antes de asociarlas.
 - Se amplía la cobertura WhatsApp con un batch firmado que contiene mensajes entrantes de dos tenants y una cuenta desconectada; verifica conversaciones y mensajes aislados por conexión.
 - El fencing del ledger sigue sin cancelar efectos externos ya iniciados. Las acciones externas de workflows permanecen deshabilitadas y no se deben activar hasta diseñar una outbox durable específica.
+
+
+## Endurecimiento adicional — OAuth y destinatarios workflow (2026-11-13)
+
+- Callback OAuth Instagram: no usar `upsert` por la clave global de cuenta tras un chequeo de ownership separado. La actualización ahora requiere encontrar la conexión con `providerAccountKey + organizationId + channel + provider`; si otra organización la reclama entre el pre-chequeo y la transacción, el `create` colisiona y la transacción aborta sin sobrescribir credenciales ajenas.
+- Workflow: los campos `phone`, `email` y `clientName` de un evento sin `clientId` validado se descartan. Solo el registro de cliente resuelto dentro del tenant puede aportar destinatarios para acciones de mensajería.
+- Outbox: los estados de entrega son monotónicos. Un callback `failed` retrasado no degrada un mensaje ya confirmado como `sent`, `delivered` o `read`; `failed` permanece terminal cuando fue el primer resultado registrado.
+- Se añadieron pruebas de regresión para ownership de cuentas Instagram, destinatarios no vinculados y regresión de estados de entrega. La aprobación CI depende del HEAD final tras estos cambios.
