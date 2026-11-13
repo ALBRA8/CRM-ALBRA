@@ -13,7 +13,7 @@ let legacyOrganizationId: string | null = null
 afterEach(async () => {
   if (connectionIds.length) {
     await db.channelWebhookEvent.deleteMany({ where: { connectionId: { in: connectionIds } } })
-    await db.channelMessage.deleteMany({ where: { conversation: { connectionId: { in: connectionIds } } } })
+    await db.channelMessage.deleteMany({ where: { conversation: { is: { connectionId: { in: connectionIds } } } } })
     await db.channelConversation.deleteMany({ where: { connectionId: { in: connectionIds } } })
     await db.channelConnectionEvent.deleteMany({ where: { connectionId: { in: connectionIds } } })
     await db.channelConnection.deleteMany({ where: { id: { in: connectionIds } } })
