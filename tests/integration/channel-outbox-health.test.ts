@@ -20,13 +20,13 @@ function request(secret?: string) {
 
 describe('GET /api/internal/channel-outbox — aggregate health', () => {
   it('requires the dedicated worker secret', async () => {
-    process.env.CHANNEL_OUTBOX_WORKER_SECRET = 'a-valid-test-secret-that-is-longer-than-32'
+    process.env.CHANNEL_OUTBOX_WORKER_SECRET = 'x'.repeat(40)
     const response = await GET(request())
     expect(response.status).toBe(401)
   })
 
   it('returns only aggregate counts and reports disabled dispatch without exposing records', async () => {
-    const secret = 'a-valid-test-secret-that-is-longer-than-32'
+    const secret = 'x'.repeat(40)
     process.env.CHANNEL_OUTBOX_WORKER_SECRET = secret
     process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED = 'false'
     const response = await GET(request(secret))
