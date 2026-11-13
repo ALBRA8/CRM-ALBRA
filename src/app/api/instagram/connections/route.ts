@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { handle } from '@/lib/api-helpers'
-import { decryptSecret, encryptSecret } from '@/lib/crypto'
+import { decryptSecret } from '@/lib/crypto'
 import { encodeInstagramState, getIntegration, parseInstagramState } from '@/lib/integrations'
 
 /** Lista las cuentas Instagram conectadas al tenant autenticado, sin credenciales. */
