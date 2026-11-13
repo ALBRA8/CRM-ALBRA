@@ -60,7 +60,12 @@ function makeMetaAdapter(
     const data = await response.json().catch(() => ({})) as MetaSendResponse
     if (response.ok) {
       const providerMessageId = channel === 'whatsapp' ? data.messages?.[0]?.id : data.message_id
-      return { ok: true, providerMessageId: providerMessageId ?? null }
+      // A 2xx without the provider's message ID cannot be reconciled against
+      // later delivery callbacks. Treat it as ambiguous, never as confirmed.
+      if (typeof providerMessageId !== 'string' || !providerMessageId) {
+        return { ok: false, definitive: false, errorCode: 'META_RESPONSE_MISSING_MESSAGE_ID' }
+      }
+      return { ok: true, providerMessageId }
     }
 
     // 5xx and rate limiting may occur after provider-side processing; quarantine.
