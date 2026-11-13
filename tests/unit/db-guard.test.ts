@@ -11,8 +11,8 @@ describe('scripts/db-guard.mjs — Protección contra operaciones destructivas',
       encoding: 'utf8',
     })
     expect(res.status).toBe(1)
-    expect(res.stderr).toContain('BLOQUEO DE SEGURIDAD DE BASE DE DATOS')
-    expect(res.stderr).toContain("operación destructiva 'reset'")
+    expect(res.stderr).toContain('Operación de base de datos bloqueada en entorno protegido.')
+    expect(res.stderr).toContain('Acción: reset; NODE_ENV=production')
   })
 
   it('bloquea cuando la URL de base de datos apunta a un cluster de producción', () => {
@@ -21,6 +21,7 @@ describe('scripts/db-guard.mjs — Protección contra operaciones destructivas',
       encoding: 'utf8',
     })
     expect(res.status).toBe(1)
-    expect(res.stderr).toContain('BLOQUEO DE SEGURIDAD DE BASE DE DATOS')
+    expect(res.stderr).toContain('Operación de base de datos bloqueada en entorno protegido.')
+    expect(res.stderr).toContain('Acción: push;')
   })
 })
