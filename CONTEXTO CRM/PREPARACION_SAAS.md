@@ -75,3 +75,14 @@ Estado: plan de ejecución y brechas verificadas; NO equivale a lanzamiento SaaS
 ## Regla de liberación
 
 No llamar al producto “SaaS listo para producción” hasta que los bloques A–D tengan evidencia verificable. Código en rama, mocks, documentación y CI aislado no equivalen a staging, producción ni validación con proveedores reales. No hacer merge, despliegue, activar envíos reales ni cobrar sin autorización expresa.
+
+
+## Evidencia de cierre de la tanda multiusuario — 2026-11-13
+
+- Se corrigió la prueba cross-tenant para autenticar como admin de org B antes de probar modificación/desactivación de un miembro de org A. El 403 anterior era la respuesta correcta para un member sin permisos; no era un bypass del aislamiento.
+- Se unificó el mínimo de contraseña en la invitación de equipo a 8 caracteres, alineado con el registro.
+- Se añadió prueba de rechazo de contraseña de 7 caracteres.
+- Commit de código: `268a124ce8ee2d3a06d33978d3cc31a509efa8a8`.
+- CI run `43384116466`: **success**. 65/65 archivos y 587/587 pruebas; escáner de secretos, Prisma/migraciones, TypeScript, lint y build de producción aprobados.
+- PR #3 sigue abierta/en draft y sin merge ni despliegue.
+- El resultado cubre los endpoints de equipo probados; no certifica todavía el flujo visual de invitación, email de invitación, verificación de correo, ni la multicuenta de todos los canales.
