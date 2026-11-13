@@ -7,6 +7,8 @@ import { GET as signupGet, POST as signupPost } from '@/app/api/whatsapp/embedde
 import { GET as internalCredentialsGet } from '@/app/api/internal/whatsapp/credentials/route'
 import { GET as webhookGet, POST as webhookPost } from '@/app/api/whatsapp/webhook/route'
 import { db } from '@/lib/db'
+import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
+import { claimChannelOutboundMessage, createChannelOutboundIntent } from '@/lib/channel-outbox'
 import { FIX, jsonBody, req, routeParams, tokenA, tokenB, tokenFor } from '../helpers'
 
 /**
@@ -448,6 +450,108 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     })
     expect(timeline.length).toBeGreaterThan(0)
     expect(JSON.stringify(timeline)).toContain('Contacto Webhook')
+  })
+
+  it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
+    const connA = await seedConnection('org-a', '121000201')
+    const connB = await seedConnection('org-b', '121000202')
+    const conversationA = await getOrCreateChannelConversation({
+      providerAccountKey: 'meta:whatsapp:121000201',
+      channel: 'whatsapp',
+      externalContactKey: '5215512345601',
+    })
+    const conversationB = await getOrCreateChannelConversation({
+      providerAccountKey: 'meta:whatsapp:121000202',
+      channel: 'whatsapp',
+      externalContactKey: '5215512345602',
+    })
+    expect(conversationA).not.toBeNull()
+    expect(conversationB).not.toBeNull()
+    const outboundA = await createChannelOutboundIntent({
+      organizationId: 'org-a',
+      conversationId: conversationA!.id,
+      clientRequestId: 'request-batch-status-a',
+      body: 'Mensaje de prueba A',
+    })
+    const outboundB = await createChannelOutboundIntent({
+      organizationId: 'org-b',
+      conversationId: conversationB!.id,
+      clientRequestId: 'request-batch-status-b',
+      body: 'Mensaje de prueba B',
+    })
+    await claimChannelOutboundMessage(outboundA.id)
+    await claimChannelOutboundMessage(outboundB.id)
+
+    const batchBody = {
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          id: 'waba-a',
+          changes: [{
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: { display_phone_number: '15550201', phone_number_id: '121000201' },
+              statuses: [{
+                id: 'wamid.batch-a',
+                status: 'delivered',
+                timestamp: '1794500001',
+                biz_opaque_callback_data: outboundA.id,
+              }],
+            },
+          }],
+        },
+        {
+          id: 'waba-b',
+          changes: [{
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: { display_phone_number: '15550202', phone_number_id: '121000202' },
+              statuses: [{
+                id: 'wamid.batch-b',
+                status: 'read',
+                timestamp: '1794500002',
+                biz_opaque_callback_data: outboundB.id,
+              }],
+            },
+          }],
+        },
+      ],
+    }
+    const raw = JSON.stringify(batchBody)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(raw).digest('hex')
+    const NextRequest = (await import('next/server')).NextRequest
+    const response = await webhookPost(new NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body: raw,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    }))
+    expect(response.status).toBe(200)
+
+    const [storedA, storedB] = await Promise.all([
+      db.channelOutboundMessage.findUnique({ where: { id: outboundA.id } }),
+      db.channelOutboundMessage.findUnique({ where: { id: outboundB.id } }),
+    ])
+    expect(storedA?.status).toBe('sent')
+    expect(storedB?.status).toBe('sent')
+    const [messageA, messageB] = await Promise.all([
+      db.channelMessage.findUnique({ where: { conversationId_externalMessageId: { conversationId: conversationA!.id, externalMessageId: 'wamid.batch-a' } } }),
+      db.channelMessage.findUnique({ where: { conversationId_externalMessageId: { conversationId: conversationB!.id, externalMessageId: 'wamid.batch-b' } } }),
+    ])
+    expect(JSON.parse(messageA?.metadata || '{}').deliveryStatus).toBe('delivered')
+    expect(JSON.parse(messageB?.metadata || '{}').deliveryStatus).toBe('read')
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [connA!.id, connB!.id] }, status: 'processed' } })).toBe(2)
+
+    // Repetir exactamente el mismo batch no duplica los eventos ni mensajes.
+    const duplicate = await webhookPost(new NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body: raw,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    }))
+    expect(duplicate.status).toBe(200)
+    expect(await db.channelMessage.count({ where: { conversationId: { in: [conversationA!.id, conversationB!.id] } } })).toBe(2)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [connA!.id, connB!.id] } } })).toBe(2)
   })
 
   it('un phoneNumberId sin conexión conectada → 401 (ni fallback a org "dicha" por el body)', async () => {
