@@ -10,6 +10,7 @@ import { db } from '@/lib/db'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
 import { claimChannelOutboundMessage, createChannelOutboundIntent } from '@/lib/channel-outbox'
 import { FIX, jsonBody, req, routeParams, tokenA, tokenB, tokenFor } from '../helpers'
+import * as autoResponder from '@/lib/channel-autoresponder'
 
 /**
  * OLEADA 2 — CONEXIONES WHATSAPP POR ORGANIZACIÓN (decisión de negocio 2026-11-11).
@@ -79,6 +80,7 @@ afterEach(async () => {
   delete process.env.META_APP_ID
   delete process.env.META_APP_SECRET
   delete process.env.META_APP_SECRET_test
+  delete process.env.CHANNEL_AUTOREPLY_ENABLED
   vi.unstubAllGlobals()
 })
 
@@ -450,6 +452,40 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     })
     expect(timeline.length).toBeGreaterThan(0)
     expect(JSON.stringify(timeline)).toContain('Contacto Webhook')
+  })
+
+
+  it('encola la auto-respuesta WhatsApp en la outbox y no llama al proveedor desde el webhook', async () => {
+    await seedConnection('org-a', '121000121')
+    process.env.CHANNEL_AUTOREPLY_ENABLED = 'true'
+    const sendSpy = vi.spyOn(autoResponder, 'llmReplyOrNotification').mockImplementation(async (opts) => {
+      await opts.send('Respuesta WhatsApp en cola')
+      return { replied: true, handoff: false, reply: 'Respuesta WhatsApp en cola' }
+    })
+    const { body, signature } = signedBody()
+    const request = new (await import('next/server')).NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    })
+
+    try {
+      const response = await webhookPost(request)
+      expect(response.status).toBe(200)
+      const conversation = await db.channelConversation.findFirst({
+        where: { channel: 'whatsapp', externalContactKey: '5215512345678' },
+      })
+      expect(conversation).not.toBeNull()
+      const intents = await db.channelOutboundMessage.findMany({
+        where: { conversationId: conversation!.id },
+      })
+      expect(intents).toHaveLength(1)
+      expect(intents[0].status).toBe('queued')
+      expect(intents[0].body).toBe('Respuesta WhatsApp en cola')
+      expect(intents[0].clientRequestId).toMatch(/^autoreply:[a-f0-9]{64}$/)
+    } finally {
+      sendSpy.mockRestore()
+    }
   })
 
   it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
