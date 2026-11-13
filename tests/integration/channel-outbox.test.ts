@@ -164,4 +164,55 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     expect(stored?.status).toBe('unknown')
     expect(await claimChannelOutboundMessage(intent.id)).toBeNull()
   })
+ 
+  it('dispatches through the exact provider/channel adapter and persists success', async () => {
+    const conversation = await createConversation()
+    const token = 'test-access-token-never-real'
+    await db.channelConnection.update({
+      where: { id: conversation.connectionId },
+      data: { credentialsEnc: encryptSecret(JSON.stringify({ accessToken: token, appSecret: 'test-app-secret' }))! },
+    })
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'request-dispatch01',
+      body: 'Mensaje simulado',
+    })
+    let observed: { provider: string; channel: string; externalAccountId: string; recipientKey: string; accessToken: string } | null = null
+    const result = await dispatchChannelOutboundMessage(intent.id, {
+      'meta_graph:instagram': async (input) => {
+        observed = { provider: input.provider, channel: input.channel, externalAccountId: input.externalAccountId, recipientKey: input.recipientKey, accessToken: input.credentials.accessToken }
+        return { ok: true, providerMessageId: 'mock-provider-message' }
+      },
+    })
+    expect(result.status).toBe('sent')
+    expect(observed).toMatchObject({ provider: 'meta_graph', channel: 'instagram', externalAccountId: expect.any(String), recipientKey: conversation.externalContactKey, accessToken: token })
+    const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
+    expect(stored?.status).toBe('sent')
+    expect(await db.channelMessage.count({ where: { outboundId: intent.id } })).toBe(1)
+  })
+
+  it('quarantines thrown provider errors and does not call the adapter again', async () => {
+    const conversation = await createConversation()
+    await db.channelConnection.update({
+      where: { id: conversation.connectionId },
+      data: { credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'test-access-token' }))! },
+    })
+    const intent = await createChannelOutboundIntent({ organizationId: FIX.orgA.id, conversationId: conversation.id, clientRequestId: 'request-dispatch02', body: 'Resultado ambiguo' })
+    let calls = 0
+    const adapters = { 'meta_graph:instagram': async () => { calls += 1; throw new Error('simulated timeout') } }
+    expect((await dispatchChannelOutboundMessage(intent.id, adapters)).status).toBe('unknown')
+    expect((await dispatchChannelOutboundMessage(intent.id, adapters)).status).toBe('not_claimed')
+    expect(calls).toBe(1)
+    const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
+    expect(stored?.status).toBe('unknown')
+  })
+
+  it('fails closed when the exact provider/channel adapter is absent', async () => {
+    const conversation = await createConversation()
+    const intent = await createChannelOutboundIntent({ organizationId: FIX.orgA.id, conversationId: conversation.id, clientRequestId: 'request-dispatch03', body: 'No adapter' })
+    const result = await dispatchChannelOutboundMessage(intent.id, {})
+    expect(result).toMatchObject({ status: 'failed', errorCode: 'ADAPTER_UNAVAILABLE' })
+  })
+
 })
