@@ -15,12 +15,12 @@ afterEach(async () => {
   }
 })
 
-async function createConnection() {
+async function createConnection(organizationId = FIX.orgA.id) {
   const id = `webhook-event-connection-${suffix()}`
   const connection = await db.channelConnection.create({
     data: {
       id,
-      organizationId: FIX.orgA.id,
+      organizationId,
       channel: 'whatsapp',
       provider: 'meta_cloud',
       providerAccountKey: `meta:whatsapp:webhook-event:${id}`,
@@ -69,6 +69,20 @@ describe('Channel webhook event ledger', () => {
     expect(await getChannelWebhookEventStatus(connection.id, input.eventKey)).toBe('processing')
     await completeChannelWebhookEvent(first!)
     expect(await getChannelWebhookEventStatus(connection.id, input.eventKey)).toBe('processed')
+  })
+
+  it('isolates identical event keys across organizations and connections', async () => {
+    const a = await createConnection(FIX.orgA.id)
+    const b = await createConnection(FIX.orgB.id)
+    const eventKey = 'message:wamid_same_id_two_tenants'
+    const [claimA, claimB] = await Promise.all([
+      claimChannelWebhookEvent({ organizationId: FIX.orgA.id, connectionId: a.id, eventKey, eventType: 'whatsapp.message' }),
+      claimChannelWebhookEvent({ organizationId: FIX.orgB.id, connectionId: b.id, eventKey, eventType: 'whatsapp.message' }),
+    ])
+    expect(claimA).not.toBeNull()
+    expect(claimB).not.toBeNull()
+    expect(claimA?.id).not.toBe(claimB?.id)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [a.id, b.id] }, eventKey } })).toBe(2)
   })
 
   it('rejects a tenant that does not own the connection', async () => {
