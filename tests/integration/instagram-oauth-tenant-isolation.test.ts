@@ -10,6 +10,7 @@ const accountId = '17840000000999123'
 const providerAccountKey = `meta:instagram:${accountId}`
 let createdConnectionId: string | null = null
 let originalIntegration: { instagramTokenEnc: string | null; metaAppSecretEnc: string | null } | null = null
+let createdIntegration = false
 
 afterEach(async () => {
   if (createdConnectionId) {
@@ -17,22 +18,30 @@ afterEach(async () => {
     await db.channelConnection.deleteMany({ where: { id: createdConnectionId } })
     createdConnectionId = null
   }
-  if (originalIntegration) {
+  if (createdIntegration) {
+    await db.integration.deleteMany({ where: { organizationId: FIX.orgA.id } })
+    createdIntegration = false
+  } else if (originalIntegration) {
     await db.integration.update({
       where: { organizationId: FIX.orgA.id },
       data: originalIntegration,
     })
-    originalIntegration = null
   }
+  originalIntegration = null
   vi.unstubAllGlobals()
 })
 
 describe('Instagram OAuth callback tenant ownership', () => {
   it('never overwrites another organization credentials for a globally unique account key', async () => {
-    const integration = await db.integration.findUniqueOrThrow({ where: { organizationId: FIX.orgA.id } })
-    originalIntegration = {
-      instagramTokenEnc: integration.instagramTokenEnc,
-      metaAppSecretEnc: integration.metaAppSecretEnc,
+    const existingIntegration = await db.integration.findUnique({ where: { organizationId: FIX.orgA.id } })
+    if (existingIntegration) {
+      originalIntegration = {
+        instagramTokenEnc: existingIntegration.instagramTokenEnc,
+        metaAppSecretEnc: existingIntegration.metaAppSecretEnc,
+      }
+    } else {
+      await db.integration.create({ data: { organizationId: FIX.orgA.id } })
+      createdIntegration = true
     }
     const appSecret = 'instagram-oauth-isolation-secret-fixture'
     await db.integration.update({
