@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
 import { json } from '@/lib/api-helpers'
 import { decryptSecret } from '@/lib/crypto'
 import { safeEqual } from '@/lib/internal-org-auth'
@@ -198,6 +199,31 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
+    // La conexión canónica es la lectura primaria de credenciales cuando
+    // existe. WhatsAppConnection se conserva como autoridad de atribución y
+    // fallback durante la migración gradual.
+    if (matchedPhoneId) {
+      const providerAccountKey = `meta:whatsapp:${matchedPhoneId}`
+      const canonical = await db.channelConnection.findUnique({
+        where: { providerAccountKey },
+        select: { organizationId: true, channel: true, status: true, credentialsEnc: true },
+      })
+      if (canonical) {
+        if (canonical.organizationId !== matchedOrgId || canonical.channel !== 'whatsapp' || canonical.status !== 'connected') {
+          return json({ error: 'Conexión WhatsApp no disponible' }, { status: 401 })
+        }
+        const plaintext = decryptSecret(canonical.credentialsEnc)
+        if (!plaintext) return json({ error: 'Credenciales WhatsApp no disponibles' }, { status: 401 })
+        try {
+          const credentials = JSON.parse(plaintext) as { accessToken?: string }
+          if (!credentials.accessToken) return json({ error: 'Token WhatsApp no disponible' }, { status: 401 })
+          matchedCloudToken = credentials.accessToken
+        } catch {
+          return json({ error: 'Credenciales WhatsApp inválidas' }, { status: 401 })
+        }
+      }
+    }
+
     // (A1-09, auditoría 2026-11-11) Meta puede agrupar VARIAS entry/changes
     // en un solo POST: se procesan TODAS las ocurrencias del número de la org
     // autenticada. Antes solo se leía entry[0].changes[0] y el resto se
@@ -307,6 +333,27 @@ export async function POST(req: NextRequest) {
       const phone = normalizePhone(message.from)
       if (!phone) continue
       const profileName = value.contacts?.find((c) => c.wa_id === message.from)?.profile?.name || null
+
+      // Conversación canónica: particionada por el phone_number_id exacto
+      // (conexión) y el teléfono externo del contacto.
+      const channelConversation = matchedPhoneId
+        ? await getOrCreateChannelConversation({
+            providerAccountKey: `meta:whatsapp:${matchedPhoneId}`,
+            channel: 'whatsapp',
+            externalContactKey: phone,
+            contactName: profileName,
+          })
+        : null
+      if (channelConversation) {
+        await db.channelConversation.update({
+          where: { id: channelConversation.id },
+          data: {
+            lastMessage: text.slice(0, 500),
+            lastMessageAt: new Date(),
+            unreadCount: { increment: 1 },
+          },
+        })
+      }
 
       // find-or-create Client por teléfono (aislado por org)
       const client = await findOrCreateChannelClient({ orgId: matchedOrgId, platformKey: phone, name: profileName, source: 'whatsapp' })
