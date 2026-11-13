@@ -48,7 +48,8 @@ export async function GET(req: NextRequest) {
   return json({
     workerEnabled: process.env.CHANNEL_OUTBOUND_DISPATCH_ENABLED === 'true',
     autoReplyEnabled: process.env.CHANNEL_AUTOREPLY_ENABLED === 'true',
-    workflowExternalSendsEnabled: process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED === 'true',
+    workflowExternalSendsEnabled: false,
+    workflowExternalSendsFlagRequested: process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED === 'true',
     whatspowerBridgeEnabled: process.env.WHATSPOWER_ENABLED === 'true',
     outbox: { queued, oldestQueuedAgeSeconds: oldestQueued ? Math.max(0, Math.floor((Date.now() - oldestQueued.createdAt.getTime()) / 1000)) : 0, sending, sent, failed, unknown, staleSending },
     webhookEvents: { processing: webhookProcessing, failed: webhookFailed, staleProcessing: staleWebhookEvents },
