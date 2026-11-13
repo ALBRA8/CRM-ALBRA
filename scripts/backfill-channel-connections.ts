@@ -188,7 +188,7 @@ async function main() {
   for (const legacy of integrations) {
     const appSecret = safeDecrypt(legacy.metaAppSecretEnc) || process.env.META_APP_SECRET || null
 
-    if (legacy.instagramAccountId && legacy.instagramTokenEnc) {
+    if (legacy.instagramAccountId && legacy.instagramTokenEnc && legacy.enableInstagram) {
       const state = safeParseState(parseInstagramState, legacy.instagramTokenEnc)
       if (state.token) {
         const credentialsEnc = encryptedCredentials({
@@ -213,7 +213,7 @@ async function main() {
       } else count('instagram', 'skipped')
     }
 
-    if (legacy.whatsappPhoneId && legacy.whatsappCloudTokenEnc) {
+    if (legacy.whatsappPhoneId && legacy.whatsappCloudTokenEnc && legacy.enableWhatsApp) {
       const accessToken = safeDecrypt(legacy.whatsappCloudTokenEnc)
       const credentialsEnc = accessToken ? encryptedCredentials({
         accessToken,
@@ -236,7 +236,7 @@ async function main() {
       } else count('whatsapp', 'skipped')
     }
 
-    if (legacy.facebookTokenEnc) {
+    if (legacy.facebookTokenEnc && legacy.enableFacebook) {
       const state = safeParseState(parseFacebookState, legacy.facebookTokenEnc)
       const pageId = state.pageId || legacy.facebookPageId
       if (pageId && state.pageToken) {
@@ -262,7 +262,7 @@ async function main() {
       } else count('messenger', 'skipped')
     }
 
-    if (legacy.telegramBotTokenEnc) {
+    if (legacy.telegramBotTokenEnc && legacy.enableTelegram) {
       const botToken = safeDecrypt(legacy.telegramBotTokenEnc)
       const botId = botToken?.match(/^(\d+):/)?.[1]
       if (botToken && botId) {
@@ -287,7 +287,7 @@ async function main() {
       } else count('telegram', 'skipped')
     }
 
-    if (legacy.tiktokTokenEnc) {
+    if (legacy.tiktokTokenEnc && legacy.enableTikTok) {
       const state = safeParseState(parseTikTokState, legacy.tiktokTokenEnc)
       if (state.openId && state.accessToken) {
         const credentialsEnc = encryptedCredentials(state)
