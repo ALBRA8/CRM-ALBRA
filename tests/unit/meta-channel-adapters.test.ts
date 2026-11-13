@@ -1,0 +1,61 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createMetaChannelAdapters } from '@/lib/meta-channel-adapters'
+
+function fakeFetch(status: number, payload: unknown) {
+  return vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+    new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } })
+  ) as unknown as typeof fetch
+}
+
+const base = {
+  provider: 'meta_cloud',
+  channel: 'whatsapp',
+  externalAccountId: '123456789012345',
+  recipientKey: '573001234567',
+  body: 'Hola desde pruebas',
+  credentials: { accessToken: 'mock-secret-token' },
+}
+
+describe('Meta canonical channel adapters (mock fetch only)', () => {
+  it('sends WhatsApp Cloud text to the exact phone-number connection', async () => {
+    const fetchMock = fakeFetch(200, { messages: [{ id: 'wamid.mock' }] })
+    const adapter = createMetaChannelAdapters(fetchMock)['meta_cloud:whatsapp']
+    const result = await adapter(base)
+    expect(result).toEqual({ ok: true, providerMessageId: 'wamid.mock' })
+    const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/123456789012345/messages')
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer mock-secret-token' })
+    expect(init.body).toBe(JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: '573001234567',
+      type: 'text',
+      text: { preview_url: false, body: 'Hola desde pruebas' },
+    }))
+    expect(url).not.toContain('mock-secret-token')
+  })
+
+  it('sends Instagram text using the exact Instagram account and IGSID', async () => {
+    const fetchMock = fakeFetch(200, { message_id: 'ig.mock' })
+    const adapter = createMetaChannelAdapters(fetchMock)['meta_graph:instagram']
+    const result = await adapter({ ...base, provider: 'meta_graph', channel: 'instagram', recipientKey: '17840000000000000' })
+    expect(result).toEqual({ ok: true, providerMessageId: 'ig.mock' })
+    const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/123456789012345/messages')
+    expect(JSON.parse(String(init.body))).toEqual({
+      recipient: { id: '17840000000000000' },
+      messaging_type: 'RESPONSE',
+      message: { text: 'Hola desde pruebas' },
+    })
+  })
+
+  it('marks Meta 5xx responses as ambiguous, not definitive failure', async () => {
+    const adapter = createMetaChannelAdapters(fakeFetch(503, { error: { code: 2 } }))['meta_cloud:whatsapp']
+    expect(await adapter(base)).toEqual({ ok: false, definitive: false, errorCode: 'META_HTTP_503' })
+  })
+
+  it('marks an explicit Meta 4xx rejection as definitive', async () => {
+    const adapter = createMetaChannelAdapters(fakeFetch(400, { error: { code: 100 } }))['meta_cloud:whatsapp']
+    expect(await adapter(base)).toEqual({ ok: false, definitive: true, errorCode: 'META_ERROR_100' })
+  })
+})
