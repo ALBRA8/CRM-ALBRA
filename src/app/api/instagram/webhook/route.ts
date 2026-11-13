@@ -123,6 +123,19 @@ export async function POST(req: NextRequest) {
         select: { organizationId: true, instagramTokenEnc: true, instagramAccountId: true },
       })
       for (const candidate of legacyCandidates) {
+        // Una conexión canónica existente es autoritativa incluso si está
+        // desconectada o su firma no valida: nunca degradar a Integration.
+        const canonicalAccount = candidate.instagramAccountId
+          ? await db.channelConnection.findFirst({
+              where: {
+                channel: 'instagram',
+                provider: 'meta_graph',
+                externalAccountId: candidate.instagramAccountId,
+              },
+              select: { id: true },
+            })
+          : null
+        if (canonicalAccount) continue
         const state = parseInstagramState(candidate.instagramTokenEnc)
         if (!state.webhookSecret || !candidate.instagramAccountId) continue
         if (!verifyMetaSignature(rawBody, state.webhookSecret, signature)) continue
