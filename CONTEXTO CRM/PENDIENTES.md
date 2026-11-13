@@ -272,3 +272,12 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 
 
 - [x] Reforzar el aislamiento de la bandeja canónica: listado, lectura y marcado como leído exigen que `ChannelConversation.organizationId` coincida con `connection.organizationId`; prueba negativa con fila inconsistente.
+
+
+## Bloqueo seguro de envíos workflow — 2026-11-13
+
+- [x] Eliminar envíos directos WhatsApp/Telegram/email desde el motor workflow mientras no exista outbox durable común.
+- [x] Ignorar el flag legacy `WORKFLOW_EXTERNAL_SENDS_ENABLED`; incluso con valor `true`, no hay llamadas de red.
+- [x] Reportar `pending: true`, `queued: false` y `WORKFLOW_OUTBOX_NOT_CONFIGURED` para no afirmar que el mensaje está encolado.
+- [x] Endpoint de salud informa envío workflow efectivo deshabilitado y el flag legacy solicitado por separado.
+- [ ] Implementar outbox/dispatcher durable para Baileys, Telegram y SMTP antes de reconsiderar el bloqueo.
