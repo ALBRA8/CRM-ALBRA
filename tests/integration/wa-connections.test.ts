@@ -65,7 +65,7 @@ async function seedConnection(orgId: string, phoneNumberId: string, opts: { stat
 
 beforeEach(async () => {
   // Limpieza determinista del área bajo prueba (las demás tablas quedan intactas).
-  await db.channelConnectionEvent.deleteMany({ where: { connection: { provider: 'meta_cloud' } } })
+  await db.channelConnectionEvent.deleteMany()
   await db.channelConnection.deleteMany({ where: { provider: 'meta_cloud' } })
   await db.whatsAppConnectionEvent.deleteMany()
   await db.whatsAppConnection.deleteMany()
