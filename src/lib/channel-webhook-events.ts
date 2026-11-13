@@ -87,3 +87,11 @@ export async function failChannelWebhookEvent(id: string, errorCode: string) {
     data: { status: 'failed', lastErrorCode: safeCode },
   })
 }
+
+export async function getChannelWebhookEventStatus(connectionId: string, eventKey: string) {
+  const event = await db.channelWebhookEvent.findUnique({
+    where: { connectionId_eventKey: { connectionId, eventKey } },
+    select: { status: true },
+  })
+  return event?.status ?? null
+}
