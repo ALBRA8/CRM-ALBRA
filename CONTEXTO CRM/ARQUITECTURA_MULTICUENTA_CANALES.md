@@ -378,3 +378,16 @@ Este bloque no cambia el alcance operativo: el worker sigue deshabilitado, no ha
 - Deduplica fuentes superpuestas (por ejemplo WhatsAppConnection + Integration), no sobrescribe conexiones canónicas existentes y reporta como conflicto una clave de proveedor ya asociada a otro tenant.
 - Messenger, Telegram y TikTok se crean en estado `pending` porque sus adaptadores/outbox no están habilitados en el contrato canónico actual.
 - No ejecutar hasta probar el dry-run y la restauración de backup en staging; no se ejecutó durante esta tarea.
+
+
+## Fencing de claims y operación — actualización 2026-11-13
+
+Se añade un token de fencing por cada reclamación de `ChannelWebhookEvent`. La creación inicial y cada recuperación asignan un UUID distinto; las transiciones a `processed` o `failed` usan actualización condicional por `id`, estado y token. Esto cierra la carrera donde un handler cuyo lease venció podía marcar el evento recuperado por otro proceso como procesado/fallido.
+
+La migración 10 agrega `claimToken` de forma aditiva y nullable para preservar filas históricas. Los handlers WhatsApp e Instagram conservan el objeto de claim y lo presentan al completar/fallar. La prueba de integración simula vencimiento, recuperación y finalización tardía del propietario anterior.
+
+**Límite:** fencing protege el estado del ledger; no cancela efectos externos ya iniciados por un handler antiguo. No se declara exactly-once. Workflows/autorespuestas necesitan idempotencia u outbox propia para cerrar su ventana de crash.
+
+El runbook ahora define criterios operativos: staleSending > 0 por 5 min (crítica), unknown > 0 (alta inmediata), staleProcessing > 0 por dos sondeos (alta), failed > 0 (alta), y cola queued envejecida > 10 min/creciente (media). El endpoint actual no expone antigüedad de queued ni series temporales; el monitor debe tomar snapshots o se debe ampliar la instrumentación. Estos umbrales están documentados, no desplegados como alertas.
+
+No se marca como terminada la auditoría integral del PR: quedan la validación de CI sobre el HEAD final, revisión de módulos restantes y pruebas manuales en staging.
