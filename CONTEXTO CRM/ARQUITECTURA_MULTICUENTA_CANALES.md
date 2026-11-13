@@ -278,3 +278,15 @@ Se añadió la base persistente de outbox para impedir que un timeout provoque r
 **Límite explícito:** esto NO habilita envíos. No hay todavía dispatcher/adaptadores canónicos ni endpoint que procese el outbox; el envío de keys `cc:` permanece bloqueado en UI y servidor. Antes de conectar Meta Graph hay que confirmar formato real de credenciales por provider, IDs de destinatario, versión/API permissions y comportamiento de timeout. No asumir que WhatsApp Cloud e Instagram comparten exactamente el mismo contrato solo porque ambos usan Meta Graph.
 
 **Hallazgo corregido:** el parser devuelve `channel: null` para keys `cc:`; el canal canónico se deriva de `ChannelConversation` y su conexión. No inferir WhatsApp para todas las conversaciones canónicas.
+
+## Dispatcher canónico: siguiente fase (2026-11-13)
+
+Antes de conectar proveedores se implementará un dispatcher aislado con adaptadores inyectables:
+
+- El dispatcher solo procesa una intención ya persistida y reclamada atómicamente; no crea intenciones ni acepta IDs de conexión del cliente.
+- Relee la conversación y conexión desde la relación de la intención, valida organización, estado, canal y provider exactos, y solo después descifra credenciales.
+- La clave del adaptador es la pareja provider/canal; nunca se infiere proveedor solo por el canal.
+- Los adaptadores reciben únicamente el destinatario canónico, cuerpo y credenciales de esa conexión. En tests se inyectan adaptadores simulados.
+- Excepciones/timeout se consideran resultado incierto y pasan a `unknown`; solo un rechazo inequívoco se marca `failed`; una respuesta aceptada se confirma con `markChannelOutboundSent`.
+- No habrá endpoint público/cron ni adaptador real habilitado hasta que cada proveedor tenga revisión específica y pruebas. El dispatcher inicial no hace llamadas de red por sí mismo.
+- No se promete exactly-once: sin idempotencia del proveedor, el estado `unknown` requiere conciliación manual.
