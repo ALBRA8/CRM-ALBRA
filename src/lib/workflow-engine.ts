@@ -224,8 +224,9 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
           if (!cfg) {
             sendError = 'SMTP no configurado (Configuración → Email)'
           } else {
-            const subject = String(config.subject || `Mensaje de ${cfg.from}`)
-            const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${rendered.replace(/\n/g, '<br>')}</div>`
+            const subject = String(config.subject || `Mensaje de ${cfg.from}`).replace(/[\\r\\n]+/g, ' ').slice(0, 200)
+            const safeHtmlBody = escapeWorkflowEmailHtml(rendered).replace(/\\r?\\n/g, '<br>')
+            const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${safeHtmlBody}</div>
             const result = await trySendSmtp(cfg, String(ctx.email), subject, html, rendered)
             sent = result.ok
             if (!result.ok) sendError = (result.error || 'fallo SMTP').slice(0, 120)
@@ -354,6 +355,17 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
     default:
       return { skipped: `acción desconocida: ${action.type}` }
   }
+}
+
+/** Escapa contenido plano antes de insertarlo en el HTML de correo. */
+export function escapeWorkflowEmailHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character]!)
 }
 
 function renderTemplate(body: string, ctx: Record<string, unknown>): string {
