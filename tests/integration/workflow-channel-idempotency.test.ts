@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/lib/db'
+vi.mock('@/lib/workflow-engine', async (importOriginal) => (await importOriginal<typeof import('@/lib/workflow-engine')>()) as typeof import('@/lib/workflow-engine'))
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { FIX } from '../setup/seed-data'
 
