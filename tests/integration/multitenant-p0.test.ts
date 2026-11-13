@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GET as clientsGet } from '@/app/api/clients/[id]/route'
 import { PUT as clientsPut } from '@/app/api/clients/[id]/route'
 import { GET as oppsGet } from '@/app/api/opportunities/[id]/route'
@@ -21,7 +21,16 @@ import { FIX, jsonBody, req, routeParams, tokenA, tokenB, tokenFor } from '../he
  * documentos y manipulación de IDs.
  */
 
-const ownerB = (): string => tokenFor({ ...FIX.userB, role: 'owner' })
+async function ownerB(): Promise<string> {
+  // La autenticación compara el rol del JWT con el rol persistido.
+  // Elevar el fixture en BD evita probar con un rol falsificado en el token.
+  await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'owner' } })
+  return tokenFor({ ...FIX.userB, role: 'owner' })
+}
+
+afterEach(async () => {
+  await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'member' } })
+})
 
 describe('MULTI-TENANT P0 — lectura cruzada de entidades', () => {
   it('cliente de A invisible para B (GET directo por id → 404)', async () => {
@@ -57,14 +66,14 @@ describe('MULTI-TENANT P0 — lectura cruzada de entidades', () => {
   })
 
   it('equipo de B solo muestra usuarios de B', async () => {
-    const res = await teamGet(req('/api/team', { token: ownerB() }))
+    const res = await teamGet(req('/api/team', { token: await ownerB() }))
     const body = await jsonBody(res)
     const users = (body.users ?? body.team ?? []) as Array<{ id: string }>
     expect(users.every((u) => !u.id.startsWith('user-a'))).toBe(true)
   })
 
   it('settings de B no revelan datos de A', async () => {
-    const res = await settingsGet(req('/api/settings', { token: ownerB() }))
+    const res = await settingsGet(req('/api/settings', { token: await ownerB() }))
     expect(res.status).toBe(200)
     const text = JSON.stringify(await jsonBody(res))
     expect(text).not.toContain('org-a')
@@ -73,13 +82,13 @@ describe('MULTI-TENANT P0 — lectura cruzada de entidades', () => {
 
 describe('MULTI-TENANT P0 — memoria y automatizaciones', () => {
   it('B no puede crear memoria apuntando a cliente de A (404)', async () => {
-    const res = await memoryPost(req('/api/memory', { token: ownerB(), method: 'POST', body: { clientId: 'client-a1', content: 'memoria pirata' } }))
+    const res = await memoryPost(req('/api/memory', { token: await ownerB(), method: 'POST', body: { clientId: 'client-a1', content: 'memoria pirata' } }))
     expect(res.status).toBe(404)
   })
 
   it('B no ve memorias de A (listado filtrado por org+clientId)', async () => {
     await db.agentMemory.create({ data: { organizationId: 'org-a', clientId: 'client-a1', content: 'prefiere pagar contraentrega', type: 'preference', source: 'manual', importance: 3 } })
-    const res = await memoryGet(req('/api/memory?clientId=client-a1', { token: ownerB() }))
+    const res = await memoryGet(req('/api/memory?clientId=client-a1', { token: await ownerB() }))
     const body = await jsonBody(res)
     const memories = (body.memories ?? []) as Array<{ content: string }>
     expect(memories.every((m) => !m.content.includes('contraentrega'))).toBe(true)
@@ -88,7 +97,7 @@ describe('MULTI-TENANT P0 — memoria y automatizaciones', () => {
   it('automatización de A no modificable por B (PUT → 404)', async () => {
     const auto = await db.automation.create({ data: { organizationId: 'org-a', name: 'Auto A', triggerType: 'client_created', conditions: '[]', actions: '[]', isActive: true } })
     try {
-      const res = await autosPut(req(`/api/automations/${auto.id}`, { token: ownerB(), method: 'PUT', body: { name: 'SECUESTRADA' } }), routeParams(auto.id))
+      const res = await autosPut(req(`/api/automations/${auto.id}`, { token: await ownerB(), method: 'PUT', body: { name: 'SECUESTRADA' } }), routeParams(auto.id))
       expect(res.status).toBe(404)
       const still = await db.automation.findUnique({ where: { id: auto.id } })
       expect(still?.name).toBe('Auto A')
@@ -142,7 +151,7 @@ describe('MULTI-TENANT P0 — WhatsApp (proxy al daemon compartido)', () => {
 
 describe('MULTI-TENANT P0 — documentos/exportaciones', () => {
   it('el backup JSON de B no contiene datos de A', async () => {
-    const res = await backupGet(req('/api/backup', { token: ownerB() }))
+    const res = await backupGet(req('/api/backup', { token: await ownerB() }))
     expect(res.status).toBe(200)
     const text = await res.text()
     expect(text).not.toContain('Cliente Alpha')
