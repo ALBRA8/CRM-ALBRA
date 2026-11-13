@@ -154,7 +154,7 @@ async function recordWorkflowOutboundPending(orgId: string, channel: string, ctx
       organizationId: orgId,
       type: 'automation',
       title: `Mensaje ${channel} PENDIENTE (destinatario no disponible)`,
-      body: rendered.slice(0, 500),
+      body: 'No se pudo encolar el mensaje porque falta un destinatario válido.',
       data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent: false, queued: false, error }),
     },
   })
@@ -163,7 +163,7 @@ async function recordWorkflowOutboundPending(orgId: string, channel: string, ctx
     clientId: (ctx.clientId as string) || null,
     type: channel,
     title: `Mensaje ${channel} (automatización) — pendiente: destinatario no disponible`,
-    description: rendered.slice(0, 300),
+    description: 'No se pudo encolar: destinatario no disponible.',
     source: 'automation',
   })
 }
@@ -243,7 +243,7 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
           organizationId: orgId,
           type: 'automation',
           title: `Mensaje ${channel} en cola durable`,
-          body: rendered.slice(0, 500),
+          body: 'Intención persistida en outbox para despacho.',
           data: JSON.stringify({ channel, outboundId: intent.id, status: intent.status, clientId: ctx.clientId ?? null }),
         },
       })
@@ -252,7 +252,7 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
         clientId: (ctx.clientId as string) || null,
         type: channel,
         title: `Mensaje ${channel} (automatización) — en cola`,
-        description: rendered.slice(0, 300),
+        description: 'Intención ' + intent.id + ' persistida en outbox.',
         source: 'automation',
       })
       return { queued: true, pending: true, channel, outboundId: intent.id, status: intent.status }
