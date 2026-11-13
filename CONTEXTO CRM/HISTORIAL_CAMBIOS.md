@@ -89,3 +89,14 @@ Ambas líneas de trabajo se conservan en el historial:
 - **Estado de validación:** build y pruebas de esta versión aún no verificados de forma reproducible en esta sesión. No declarar funcionalidad al 100 %.
 - **Estado de entrega:** cambios publicados en la rama y contenidos en la PR; no integrados en `main`, no desplegados en producción. No se modificó producción.
 - Siguiente paso: verificar el head actual de la PR, ejecutar CI/build/pruebas, corregir fallos y revisar aislamiento positivo/negativo antes de integrar. No hacer merge ni despliegue sin validación y autorización.
+
+
+## 2026-11-13 — Corrección de los nueve fallos de CI
+
+- Inspeccionado el run fallido `43378623273`: 9 fallos en pruebas multi-tenant, conexiones WhatsApp/Embedded Signup y reporte PDF.
+- Causa común de 8 fallos: JWT de pruebas con rol `owner` que no coincidía con el rol `member` persistido para user B. Se mantuvo la comprobación de rol en servidor y se corrigieron los fixtures de `tests/integration/multitenant-p0.test.ts`, `tests/integration/wa-connections.test.ts` y `tests/integration/reports-pdf.test.ts` para cambiar el rol en BD durante el escenario y restaurarlo al terminar.
+- El noveno fallo del PDF era secundario al 401: el test intentaba extraer cifras de un PDF no generado por la autenticación rechazada.
+- Commit final de la corrección/validación: `040d8875ff9b10b5179313bbc374a5e7795af8ed`.
+- CI run `43379605573`: **success**, 64 archivos / 580 pruebas aprobadas; TypeScript, lint, migraciones, escáner y build aprobados.
+- Pruebas automatizadas del selector Super Admin pasaron dentro de la suite.
+- No se hizo merge ni despliegue. La validación visual del selector en navegador/staging y la comprobación integral de aislamiento en un entorno desplegado siguen pendientes.
