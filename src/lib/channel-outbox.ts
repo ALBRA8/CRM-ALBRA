@@ -35,16 +35,21 @@ export async function createChannelOutboundIntent(input: {
     where: { id: input.conversationId, organizationId: input.organizationId },
     select: {
       id: true,
+      organizationId: true,
       status: true,
       channel: true,
-      connection: { select: { status: true, channel: true } },
+      connection: { select: { organizationId: true, status: true, channel: true, provider: true } },
     },
   })
   if (!conversation) throw new ChannelOutboundError('Conversación no encontrada', 'NOT_FOUND')
   if (
+    conversation.organizationId !== input.organizationId ||
+    conversation.connection.organizationId !== input.organizationId ||
     conversation.status !== 'active' ||
     conversation.connection.status !== 'connected' ||
-    conversation.channel !== conversation.connection.channel
+    conversation.channel !== conversation.connection.channel ||
+    !((conversation.channel === 'whatsapp' && conversation.connection.provider === 'meta_cloud') ||
+      (conversation.channel === 'instagram' && conversation.connection.provider === 'meta_graph'))
   ) {
     throw new ChannelOutboundError('La conexión no está disponible para enviar', 'NOT_SENDABLE')
   }
@@ -82,12 +87,13 @@ export async function claimChannelOutboundMessage(id: string) {
     where: { id },
     select: {
       conversation: {
-        select: { status: true, channel: true, connection: { select: { status: true, channel: true } } },
+        select: { organizationId: true, status: true, channel: true, connection: { select: { organizationId: true, status: true, channel: true } } },
       },
     },
   })
   if (
     !current ||
+    current.conversation.organizationId !== current.conversation.connection.organizationId ||
     current.conversation.status !== 'active' ||
     current.conversation.connection.status !== 'connected' ||
     current.conversation.channel !== current.conversation.connection.channel
