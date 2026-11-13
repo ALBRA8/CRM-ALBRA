@@ -36,6 +36,9 @@ const apply = process.argv.includes('--apply')
 if (apply && process.env.BACKFILL_CHANNEL_CONNECTIONS_CONFIRM !== '1') {
   throw new Error('Para aplicar, define BACKFILL_CHANNEL_CONNECTIONS_CONFIRM=1 además de --apply')
 }
+if (apply && process.env.NODE_ENV === 'production' && process.env.BACKFILL_CHANNEL_CONNECTIONS_ALLOW_PRODUCTION !== '1') {
+  throw new Error('Backfill bloqueado en producción: requiere BACKFILL_CHANNEL_CONNECTIONS_ALLOW_PRODUCTION=1')
+}
 
 function safeDecrypt(value: string | null | undefined) {
   try {
