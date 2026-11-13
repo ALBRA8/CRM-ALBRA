@@ -41,8 +41,10 @@ const AUTO_ID = 'auto-flujo-comercial'
 const NEW_CLIENT_NAME = 'Comercial E2E Cliente'
 let newClientId = ''
 let runId = ''
+const previousWorkflowExternalSendFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
 
 beforeAll(async () => {
+  process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = 'true'
   mockedLlm.mockReset()
   // Automatización EXACTA del flujo comercial del dueño
   await db.automation.create({
@@ -71,6 +73,8 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  if (previousWorkflowExternalSendFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+  else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = previousWorkflowExternalSendFlag
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
