@@ -785,6 +785,7 @@ model ChannelConnection {
   updatedAt         DateTime @updatedAt
 
   events            ChannelConnectionEvent[]
+  webhookEvents     ChannelWebhookEvent[]
   conversations     ChannelConversation[]
 
   @@index([organizationId, channel, status])
@@ -806,6 +807,28 @@ model ChannelConnectionEvent {
   @@index([connectionId, createdAt])
 }
 
+
+
+ // Registro durable de recepción por conexión. No almacena payloads ni secretos.
+model ChannelWebhookEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  connectionId   String
+  connection     ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  eventKey       String
+  eventType      String
+  status         String   @default("processing") // processing | processed | failed
+  attemptCount   Int      @default(1)
+  lastErrorCode  String?
+  receivedAt     DateTime @default(now())
+  processedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([connectionId, eventKey])
+  @@index([organizationId, receivedAt])
+  @@index([status, updatedAt])
+}
 
 // Conversación canónica aislada por conexión. Se introduce en paralelo a
 // WhatsAppConversation para permitir migración expand/contract sin reasignar
