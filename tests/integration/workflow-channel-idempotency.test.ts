@@ -10,6 +10,7 @@ const notificationIds: string[] = []
 const previousExternalSendFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   if (previousExternalSendFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
   else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = previousExternalSendFlag
   if (notificationIds.length) {
