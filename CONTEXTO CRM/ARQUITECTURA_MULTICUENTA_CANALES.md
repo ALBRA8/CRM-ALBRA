@@ -121,10 +121,12 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - [x] Se añadió `ChannelConversation`, con unicidad `[connectionId, externalContactKey]`, para separar conversaciones nuevas sin tocar históricos legacy.
 - [x] Se añadió `src/lib/channel-conversations.ts`: resuelve por `providerAccountKey` exacta y rechaza canal/estado incompatibles; crea conversación dentro de la conexión resuelta.
 - [x] Se añadió migración aditiva `6_channel_conversations` y pruebas de aislamiento para el mismo contacto en dos conexiones.
-- [x] Webhook de Instagram y WhatsApp Cloud escriben conversaciones entrantes en `ChannelConversation`, aisladas por `connectionId` y contacto externo.
+- [x] Se añadió `ChannelMessage` y la migración aditiva `7_channel_messages`; los mensajes pertenecen a una conversación concreta y su unicidad por `[conversationId, externalMessageId]` permite IDs externos iguales en cuentas distintas.
+- [x] Webhooks de Instagram y WhatsApp Cloud escriben mensajes entrantes en `ChannelMessage` y actualizan `ChannelConversation`, sin eliminar las escrituras legacy de timeline/mensajes.
 - [x] Webhook de WhatsApp Cloud prefiere credenciales de `ChannelConnection` tras atribuir la cuenta exacta por `phone_number_id` en `WhatsAppConnection`; mantiene fallback legacy cuando no existe el registro canónico.
-- [ ] Adaptar listados de bandeja, historial, lecturas y rutas de envío para que consuman `ChannelConversation`/`connectionId` de extremo a extremo.
-- [ ] La integración de webhooks/selector requiere CI completo sobre el HEAD más reciente; no declarar validación hasta que pasen TypeScript, lint, suite y build.
+- [ ] Adaptar listados de bandeja, historial, lecturas y rutas de envío para que consuman `ChannelConversation`/`ChannelMessage` de extremo a extremo.
+- [ ] Añadir persistencia canónica de mensajes salientes y deduplicación transaccional/recuperable de eventos de webhook.
+- [ ] La integración de webhooks/selector y el nuevo modelo de mensajes requieren CI completo sobre el HEAD más reciente.
 
 - Varias conexiones del mismo canal por organización.
 - Crear, listar, verificar, reconectar, desconectar y revocar por connectionId.
@@ -161,6 +163,8 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 
 ## Estado de implementación
 
-**Actualización 2026-11-13:** Fase 0 está parcialmente implementada en la rama: se añadieron `ChannelConnection`, `ChannelConnectionEvent`, la migración aditiva SQLite y pruebas de esquema. La ejecución CI `43386995186` ya completó correctamente generación Prisma, migraciones SQLite y TypeScript; lint, suite y build seguían en ejecución en la última consulta. La prueba nueva de esquema se añadió después de que esa ejecución comenzara, por lo que necesita CI sobre el HEAD actual.
+**Actualización 2026-11-13:** Fase 0 y parte de la fase 1 están implementadas en la rama. Se añadieron `ChannelConnection`, `ChannelConnectionEvent`, `ChannelConversation` y `ChannelMessage`, con migraciones SQLite aditivas 5, 6 y 7. Instagram dispone de selector multicuenta; los webhooks de Instagram y WhatsApp Cloud resuelven cuentas por identificador externo exacto y escriben mensajes entrantes en la estructura canónica, manteniendo las escrituras legacy durante la transición. El webhook WhatsApp procesa múltiples números por POST y aísla fallos de configuración por destino para no abortar otros destinos válidos.
 
-Esto todavía **no es una funcionalidad de multicuenta operativa**. No hay backfill ni dual-read, no hay endpoints canónicos ni adaptadores de Instagram, y los webhooks/envíos aún usan los modelos/rutas legacy. WhatsApp Cloud sigue usando `WhatsAppConnection`. No hacer merge, despliegue ni activar mensajería real sin autorización expresa.
+La CI `43395332553` validó correctamente schema, migraciones, TypeScript, lint, suite y build para el modelo `ChannelMessage` antes de la última incorporación de escrituras canónicas en los webhooks. La CI `43395622374` está validando el HEAD actual `402c585d`; todavía no se debe declarar validado hasta que termine.
+
+Esto todavía **no es una funcionalidad de multicuenta operativa de extremo a extremo**. No hay backfill ni dual-read; la bandeja, el historial, la lectura y los envíos siguen consumiendo principalmente las estructuras legacy. La persistencia canónica de mensajes salientes y una deduplicación recuperable de eventos siguen pendientes. No hacer merge, despliegue ni activar mensajería real sin autorización expresa.
