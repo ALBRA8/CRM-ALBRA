@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { POST as switchOrganization } from '@/app/api/super/switch-organization/route'
+import { GET as authMe } from '@/app/api/auth/me/route'
 import { GET as clientsGET } from '@/app/api/clients/route'
 import { db } from '@/lib/db'
 import { FIX, jsonBody, req, tokenFor, tokenB } from '../helpers'
@@ -20,6 +21,11 @@ describe('superadmin: cambio de contexto entre organizaciones', () => {
       const payload = await jsonBody(switched)
       expect(payload.organization).toMatchObject({ id: FIX.orgB.id, name: FIX.orgB.name })
       expect(typeof payload.token).toBe('string')
+
+      const session = await authMe(req('/api/auth/me', { token: payload.token as string }))
+      expect(session.status).toBe(200)
+      const sessionBody = await jsonBody(session)
+      expect((sessionBody.user as { organizationId: string }).organizationId).toBe(FIX.orgB.id)
 
       const clients = await clientsGET(req('/api/clients', { token: payload.token as string }))
       expect(clients.status).toBe(200)
