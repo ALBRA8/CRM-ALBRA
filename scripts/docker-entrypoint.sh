@@ -37,15 +37,12 @@ if [ "$ROLE" = "daemon" ]; then
 fi
 
 # ---------------- Rol app (default) ----------------
-# Sincroniza el esquema con la BD (idempotente: no-op si ya está en sync).
-#
-# SEGURO POR DEFECTO (auditoría pre-venta, revisión de migraciones):
-#   Sin datos que perder, `prisma db push` aplica cambios aditivos sin ruido.
-#   Si un cambio de esquema exige destruir datos, push FALLA RUIDOSO en vez
-#   de aceptarlos: primero HAZ BACKUP y decide. Solo con ALLOW_DATA_LOSS=1
-#   se añade --accept-data-loss (misma conducta que antes de este hardening).
-#   Desactiva por completo con SKIP_DB_PUSH=1 (BD ya en producción):
-#     docker compose exec app npx prisma db push
+# Aplica exclusivamente las migraciones versionadas pendientes.
+# migrate deploy no crea migraciones ni sincroniza cambios fuera del historial.
+# En NODE_ENV=production, db-guard exige ALLOW_DESTRUCTIVE_DB_OPERATION=true.
+# Para omitir el paso, usa SKIP_DB_MIGRATE=1 solo si un operador aplica
+# las migraciones manualmente. Las BD antiguas sin _prisma_migrations
+# requieren backup + comparación del baseline + migrate resolve documentado.
 if [ "${SKIP_DB_MIGRATE:-0}" != "1" ]; then
   echo "[entrypoint] Aplicando migraciones Prisma pendientes (migrate deploy)..."
   if ! node scripts/db-guard.mjs migrate; then
