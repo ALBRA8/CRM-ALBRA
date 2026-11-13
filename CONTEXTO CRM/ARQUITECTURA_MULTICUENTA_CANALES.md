@@ -99,10 +99,12 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 ## Entrega por fases y criterios de aceptación
 
 ### Fase 0 — Fundaciones
-- Modelo canónico y migración aditiva.
-- Pruebas de unicidad, tenant ownership, cifrado y no exposición de secretos.
-- Backfill repetible e idempotente con reporte de conflictos.
-- Política explícita para conexiones legacy ambiguas.
+- [x] Modelo canónico `ChannelConnection` y auditoría `ChannelConnectionEvent` añadidos al esquema Prisma.
+- [x] Migración SQLite aditiva `5_channel_connections`; conserva intactas `Integration` y `WhatsAppConnection`.
+- [x] Pruebas de esquema añadidas para dos cuentas del mismo canal, unicidad de identidad externa, separación por tenant y registro de auditoría.
+- [ ] Confirmar CI completo sobre el HEAD que incluye también las nuevas pruebas.
+- [ ] Completar backfill repetible e idempotente con reporte de conflictos.
+- [ ] Política explícita para conexiones legacy ambiguas.
 
 ### Fase 1 — WhatsApp e Instagram
 - Varias conexiones del mismo canal por organización.
@@ -140,4 +142,6 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 
 ## Estado de implementación
 
-A la fecha de este documento, este es un **diseño**, no una funcionalidad terminada. WhatsApp Cloud ya dispone de `WhatsAppConnection`; la abstracción común, la multicuenta de Instagram y la generalización para Facebook, Telegram y TikTok todavía requieren implementación y pruebas. No hacer merge, despliegue ni activar mensajería real sin autorización expresa.
+**Actualización 2026-11-13:** Fase 0 está parcialmente implementada en la rama: se añadieron `ChannelConnection`, `ChannelConnectionEvent`, la migración aditiva SQLite y pruebas de esquema. La ejecución CI `43386995186` ya completó correctamente generación Prisma, migraciones SQLite y TypeScript; lint, suite y build seguían en ejecución en la última consulta. La prueba nueva de esquema se añadió después de que esa ejecución comenzara, por lo que necesita CI sobre el HEAD actual.
+
+Esto todavía **no es una funcionalidad de multicuenta operativa**. No hay backfill ni dual-read, no hay endpoints canónicos ni adaptadores de Instagram, y los webhooks/envíos aún usan los modelos/rutas legacy. WhatsApp Cloud sigue usando `WhatsAppConnection`. No hacer merge, despliegue ni activar mensajería real sin autorización expresa.
