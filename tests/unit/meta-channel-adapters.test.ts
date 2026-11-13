@@ -13,6 +13,7 @@ const base = {
   externalAccountId: '123456789012345',
   recipientKey: '573001234567',
   body: 'Hola desde pruebas',
+  outboundId: 'outbound_test_123',
   credentials: { accessToken: ['mock', 'credential', 'fixture'].join('-') },
 }
 
@@ -31,6 +32,7 @@ describe('Meta canonical channel adapters (mock fetch only)', () => {
       to: '573001234567',
       type: 'text',
       text: { preview_url: false, body: 'Hola desde pruebas' },
+      biz_opaque_callback_data: 'outbound_test_123',
     }))
     expect(url).not.toContain(base.credentials.accessToken)
   })
