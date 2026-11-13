@@ -5,7 +5,7 @@ import { decryptSecret } from '@/lib/crypto'
 import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
 import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
 import { json } from '@/lib/api-helpers'
-import { verifyMetaSignature, parseInstagramState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords } from '@/lib/integrations'
+import { verifyMetaSignature, parseInstagramState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
@@ -48,6 +48,8 @@ export async function GET(req: NextRequest) {
   if (!mode || !token || !challenge) {
     return NextResponse.json({ error: 'Faltan parámetros de verificación (hub.mode, hub.verify_token, hub.challenge)' }, { status: 400 })
   }
+  if (mode !== 'subscribe') return new Response('Forbidden', { status: 403 })
+
   const connections = await db.channelConnection.findMany({
     where: { channel: 'instagram', provider: 'meta_graph', status: 'connected' },
     select: { credentialsEnc: true },
@@ -57,7 +59,7 @@ export async function GET(req: NextRequest) {
     if (!plaintext) continue
     try {
       const credentials = JSON.parse(plaintext) as { webhookVerifyToken?: string | null }
-      if (credentials.webhookVerifyToken && credentials.webhookVerifyToken === token) {
+      if (credentials.webhookVerifyToken && safeEquals(credentials.webhookVerifyToken, token)) {
         return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
       }
     } catch { /* no autorizar credenciales corruptas */ }
@@ -70,7 +72,7 @@ export async function GET(req: NextRequest) {
   })
   for (const integration of integrations) {
     const state = parseInstagramState(integration.instagramTokenEnc)
-    if (state.webhookVerifyToken && token === state.webhookVerifyToken) {
+    if (state.webhookVerifyToken && safeEquals(token, state.webhookVerifyToken)) {
       return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
     }
   }
