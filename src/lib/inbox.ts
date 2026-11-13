@@ -433,6 +433,8 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
     }))
   }
 
+  if (!parsed.channel) return []
+
   if (parsed.channel === 'whatsapp') {
     const rows = await db.whatsAppMessage.findMany({
       where: { organizationId: orgId, conversationId: parsed.id },
@@ -481,6 +483,7 @@ export async function markInboxRead(orgId: string, key: string): Promise<void> {
       })
       return
     }
+    if (!parsed.channel) return
     if (parsed.channel === 'whatsapp') {
       await db.whatsAppConversation.updateMany({
         where: { organizationId: orgId, id: parsed.id },
@@ -617,7 +620,7 @@ export async function sendInboxMessage(opts: {
 
   if (opts.key.startsWith('cc:')) return { ok: false, error: 'El envío desde conversaciones canónicas aún está deshabilitado; no se usará una cuenta legacy por fallback.' }
   const parsed = parseInboxKey(opts.key)
-  if (!parsed) return { ok: false, error: 'Conversación inválida' }
+  if (!parsed || !parsed.channel) return { ok: false, error: 'Conversación inválida' }
   const text = opts.text.trim().slice(0, 4000)
   if (!text) return { ok: false, error: 'El mensaje está vacío' }
 
