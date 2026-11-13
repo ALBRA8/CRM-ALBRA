@@ -331,3 +331,18 @@ Antes de conectar proveedores se implementará un dispatcher aislado con adaptad
 **CI de integración inbox/outbox:** commit `7dba61f4227d94d16963274da7ead4eaa3243cf2`, run `43436167818`: 71 archivos y 615 pruebas aprobadas; escáner de secretos, migraciones limpias, TypeScript, lint y build aprobados. El cambio posterior de guardia de teclado requiere CI propio antes de considerarse validado.
 
 **Validación CI del inbox/outbox y worker protegido (HEAD `9497980e515a3ce479ae3d661d2129bdd1d3416e`):** run `43436745851` completado con éxito. Escáner de secretos, migraciones Prisma limpias, TypeScript, lint, 71 archivos de pruebas (615 tests) y build aprobados. La validación no activa el worker ni realiza envíos externos.
+
+
+## Pruebas de la ruta HTTP inbox → outbox (2026-11-13)
+
+Sobre el estado descrito en las secciones anteriores, se amplió `tests/integration/inbox.test.ts` para probar el contrato HTTP real de `POST /api/inbox/send` con claves canónicas:
+
+- HTTP 202 crea una intención `queued`, devuelve `sent:false` y no realiza llamadas de red al proveedor.
+- Falta de `clientRequestId` devuelve 400 y no crea intención.
+- Un usuario de otra organización recibe 404 y no puede encolar la conversación ajena.
+- Una pareja provider/canal incompatible devuelve 409, sin intención y sin fallback al envío legacy.
+- Repetir la misma solicitud con el mismo requestId devuelve la misma intención; reutilizarlo con otro cuerpo devuelve 409 y no duplica filas.
+
+**Validación pendiente al registrar este cambio:** commit `98fee6991df657ad564530e2dd1e0643d639f269`; CI run `43466211765` está en ejecución. No marcar estos nuevos escenarios como aprobados hasta que ese run termine exitosamente. Las validaciones CI de commits anteriores que aparecen arriba son evidencia histórica, no sustituyen la ejecución del HEAD actual.
+
+Este bloque no cambia el alcance operativo: el worker sigue deshabilitado, no hay scheduler y no se ha autorizado envío real, merge ni despliegue.
