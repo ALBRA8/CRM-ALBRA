@@ -152,3 +152,65 @@ ALTER TABLE "User" DROP COLUMN "twoFactorRecovery";
 ALTER TABLE "User" DROP COLUMN "twoFactorEnabled";
 ALTER TABLE "User" DROP COLUMN "twoFactorSecret";
 ```
+
+
+## Auditoría de seguridad — migración 4 y ejecución
+
+### Migración 4: deduplicación sin cascadas destructivas
+
+La deduplicación usa el cliente con menor `id` como ficha canónica por
+(`organizationId`, `phone`). Antes de borrar fichas duplicadas, la migración
+respalda las filas duplicadas de `Client` y `ClientPreferences`, consolida
+campos vacíos de preferencias y reasigna a la ficha canónica las relaciones
+de historial, oportunidades, reservas, cotizaciones, transacciones, memoria,
+sugerencias, correcciones, embeddings y conversaciones. También actualiza
+los `clientId` de `TimelineEvent` y `AgentLeadEvent`.
+
+**Importante:** la modificación de una migración ya publicada solo es válida
+si se confirma que la migración 4 NO fue aplicada en ninguna base de datos
+compartida o productiva. Prisma valida checksums; si ya fue aplicada, no se
+debe editar ni volver a ejecutar esta versión. En ese caso hay que restaurar
+desde backup si hubo pérdida y preparar una migración correctiva nueva basada
+en el estado real de esa base. No ejecutar hasta verificar
+`_prisma_migrations` y el checksum en cada entorno.
+
+### Migración 1 y baseline en bases existentes
+
+Antes de usar `migrate resolve --applied 0_baseline`, comparar el esquema real
+de la base objetivo con el SQL de `0_baseline/migration.sql` (tablas,
+columnas, índices y claves foráneas). El comando solo registra el baseline;
+no crea ni adapta tablas. Si la base no coincide exactamente con el baseline,
+detenerse y preparar una migración de reconciliación. Hacer backup físico,
+probar restauración y validar conteos/duplicados antes de aplicar
+`migrate deploy`. La deduplicación de cotizaciones de la migración 1 renombra
+números repetidos; guardar un reporte previo de los valores que cambiarán.
+
+### Comando de migración
+
+`npm run db:migrate` ejecuta `prisma migrate deploy`, que aplica migraciones
+pendientes sin crear migraciones de desarrollo. No usar `prisma migrate dev`
+contra producción. El guard sigue exigiendo autorización explícita en
+entornos identificados como protegidos. La detección por URL es heurística:
+configurar siempre `NODE_ENV=production` correctamente y no tratar el guard
+como sustituto de backups, revisión del SQL o aprobación operativa.
+
+### Pruebas obligatorias antes de integrar
+
+1. Ejecutar la secuencia completa en SQLite temporal y en una copia saneada de
+   cada esquema real soportado.
+2. Sembrar dos clientes de la misma organización y teléfono, cada uno con
+   historial, preferencias, oportunidad, reserva, cotización, transacción,
+   memoria y conversación; comprobar que todos los registros quedan asociados
+   al cliente canónico y que no hay filas hijas perdidas.
+3. Probar preferencias en los dos escenarios: solo el duplicado tiene
+   preferencias y ambos tienen preferencias.
+4. Verificar unicidad de teléfono por organización y de
+   `(organizationId, waMessageId)` sin alterar mensajes preexistentes.
+5. Para migración 1, probar baseline coincidente, baseline divergente,
+   cotizaciones duplicadas y restauración efectiva del backup.
+6. Repetir las pruebas de las migraciones 2 y 3 y verificar que la conexión
+   WhatsApp legado sigue funcionando y que usuarios existentes mantienen
+   `twoFactorEnabled=false`.
+
+No considerar la migración aprobada hasta conservar evidencia de estas
+pruebas y del ensayo de restauración.
