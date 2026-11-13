@@ -237,6 +237,21 @@ export async function POST(req: NextRequest) {
           throw new Error('WEBHOOK_EVENT_BUSY')
         }
         activeWebhookEventId = claim.id
+        // Recuperación de crash: si el timeline ya recibió el mid, no repetir
+        // workflows/autorespuesta; cerrar el ledger reclamado y omitir el evento.
+        const seen = await db.timelineEvent.findFirst({
+          where: {
+            organizationId: orgId,
+            type: 'instagram',
+            metadata: { contains: `"mid":"${msg.mid}"` },
+          },
+          select: { id: true },
+        })
+        if (seen) {
+          await completeChannelWebhookEvent(activeWebhookEventId)
+          activeWebhookEventId = null
+          continue
+        }
       }
 
       const conversation = await getOrCreateChannelConversation({
