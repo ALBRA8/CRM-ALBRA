@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createHmac } from 'node:crypto'
 import { NextRequest } from 'next/server'
-import { POST } from '@/app/api/instagram/webhook/route'
+import { GET, POST } from '@/app/api/instagram/webhook/route'
 import { db } from '@/lib/db'
 import { encryptSecret } from '@/lib/crypto'
 import { FIX } from '../setup/seed-data'
@@ -56,6 +56,16 @@ function signedRequest(raw: string) {
     headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
   })
 }
+
+
+describe('GET /api/instagram/webhook — subscription verification', () => {
+  it('rejects a non-subscribe mode before checking configured tokens', async () => {
+    const response = await GET(new NextRequest(
+      'http://localhost:3000/api/instagram/webhook?hub.mode=unsubscribe&hub.verify_token=fixture&hub.challenge=123'
+    ))
+    expect(response.status).toBe(403)
+  })
+})
 
 describe('POST /api/instagram/webhook — multi-account batch and durable echo ledger', () => {
   it('does not fall back to legacy Integration when the same canonical account is disconnected', async () => {
