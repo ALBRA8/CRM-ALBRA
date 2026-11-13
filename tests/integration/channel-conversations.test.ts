@@ -56,6 +56,53 @@ describe('ChannelConversation — aislamiento por conexión', () => {
     expect(b!.connectionId).toBe(second.id)
   })
 
+  it('aísla contactos iguales en dos números WhatsApp de la misma organización', async () => {
+    const key = suffix()
+    const first = await db.channelConnection.create({
+      data: {
+        id: `wa-conversation-${suffix()}`,
+        organizationId: FIX.orgA.id,
+        channel: 'whatsapp',
+        provider: 'meta_cloud',
+        providerAccountKey: `meta:whatsapp:${key}:one`,
+        externalAccountId: `${key}-one`,
+        credentialsEnc: 'v1:test-ciphertext',
+        status: 'connected',
+      },
+    })
+    connectionIds.push(first.id)
+    const second = await db.channelConnection.create({
+      data: {
+        id: `wa-conversation-${suffix()}`,
+        organizationId: FIX.orgA.id,
+        channel: 'whatsapp',
+        provider: 'meta_cloud',
+        providerAccountKey: `meta:whatsapp:${key}:two`,
+        externalAccountId: `${key}-two`,
+        credentialsEnc: 'v1:test-ciphertext',
+        status: 'connected',
+      },
+    })
+    connectionIds.push(second.id)
+
+    const a = await getOrCreateChannelConversation({
+      providerAccountKey: first.providerAccountKey,
+      channel: 'whatsapp',
+      externalContactKey: '+573001112233',
+    })
+    const b = await getOrCreateChannelConversation({
+      providerAccountKey: second.providerAccountKey,
+      channel: 'whatsapp',
+      externalContactKey: '+573001112233',
+    })
+
+    expect(a).not.toBeNull()
+    expect(b).not.toBeNull()
+    expect(a!.id).not.toBe(b!.id)
+    expect(a!.connectionId).toBe(first.id)
+    expect(b!.connectionId).toBe(second.id)
+  })
+
   it('no resuelve una cuenta si la clave o el canal no coinciden o está desconectada', async () => {
     const connection = await createInstagramConnection(`meta:instagram:${suffix()}`)
     expect(await resolveActiveChannelConnection('meta:instagram:unknown', 'instagram')).toBeNull()
