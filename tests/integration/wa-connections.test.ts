@@ -455,7 +455,17 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
   it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
     await seedConnection('org-a', '121000201')
     await seedConnection('org-b', '121000202')
-    await seedConnection('org-a', '121000203', { status: 'disconnected' })
+    await db.whatsAppConnection.create({
+      data: {
+        organizationId: 'org-a',
+        phoneNumberId: '121000203',
+        phoneNumber: '+15550203',
+        displayName: 'Cuenta desconectada de prueba',
+        accessTokenEnc: 'v1:fixture-disconnected-token',
+        webhookVerifyToken: 'fixture-disconnected-verify-token',
+        status: 'disconnected',
+      },
+    })
     const canonicalA = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000201' }, select: { id: true } })
     const canonicalB = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000202' }, select: { id: true } })
     expect(canonicalA).not.toBeNull()
