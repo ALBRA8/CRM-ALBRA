@@ -327,6 +327,7 @@ export function InboxPage() {
               </div>
 
               <div className="p-3 border-t border-slate-100 bg-white">
+                {selected.key.startsWith('cc:') && <p className="text-[11px] text-amber-700 mb-2">Esta conversación ya usa el historial y la cuenta canónicos. El envío permanece bloqueado hasta validar y habilitar el adaptador por conexión; no se enviará por una cuenta legacy.</p>}
                 <div className="flex gap-2 items-end">
                   <Textarea
                     value={draft}
@@ -337,11 +338,11 @@ export function InboxPage() {
                         handleSend()
                       }
                     }}
-                    placeholder={`Responder por ${selected.channelLabel}…`}
+                    placeholder={selected.key.startsWith('cc:') ? 'Envío por esta conexión estará disponible tras habilitar el adaptador seguro…' : `Responder por ${selected.channelLabel}…`}
                     className="min-h-[42px] max-h-32 resize-none text-[13px]"
                     rows={1}
                   />
-                  <Button onClick={handleSend} disabled={sending || !draft.trim()} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
+                  <Button onClick={handleSend} disabled={sending || !draft.trim() || selected.key.startsWith('cc:')} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
                     {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <SendIcon className="w-4 h-4" />}
                     <span className="hidden sm:inline">Enviar</span>
                   </Button>
