@@ -164,6 +164,30 @@ export async function POST(req: NextRequest) {
           data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
         })
       }
+      if (conversation) {
+        const messageData = {
+          conversationId: conversation.id,
+          direction: 'in',
+          senderType: 'contact',
+          body: text,
+          messageType: 'text',
+          metadata: JSON.stringify({ senderId }),
+        }
+        if (msg.mid) {
+          await db.channelMessage.upsert({
+            where: {
+              conversationId_externalMessageId: {
+                conversationId: conversation.id,
+                externalMessageId: msg.mid,
+              },
+            },
+            create: { ...messageData, externalMessageId: msg.mid },
+            update: {},
+          })
+        } else {
+          await db.channelMessage.create({ data: messageData })
+        }
+      }
 
       // find-or-create Client (phone = "ig:<senderId>" para deduplicar por canal)
       const client = await findOrCreateChannelClient({ orgId, platformKey: `ig:${senderId}`, name: null, source: 'instagram' })
