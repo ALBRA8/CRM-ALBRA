@@ -4,11 +4,16 @@ import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { FIX } from '../setup/seed-data'
 
 const automationIds: string[] = []
+const notificationIds: string[] = []
 const previousExternalSendFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
 
 afterEach(async () => {
   if (previousExternalSendFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
   else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = previousExternalSendFlag
+  if (notificationIds.length) {
+    await db.notification.deleteMany({ where: { id: { in: notificationIds } } })
+    notificationIds.length = 0
+  }
   if (automationIds.length) {
     await db.automationRun.deleteMany({ where: { automationId: { in: automationIds } } })
     await db.automation.deleteMany({ where: { id: { in: automationIds } } })
@@ -85,6 +90,7 @@ describe('workflow trigger idempotency for channel messages', () => {
       orderBy: { createdAt: 'desc' },
     })
     expect(notification).not.toBeNull()
+    if (notification) notificationIds.push(notification.id)
     expect(notification?.data).toContain('"sent":false')
     expect(notification?.data).toContain('WORKFLOW_EXTERNAL_SENDS_ENABLED')
   })
