@@ -461,7 +461,7 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
         phoneNumberId: '121000203',
         phoneNumber: '+15550203',
         displayName: 'Cuenta desconectada de prueba',
-        accessTokenEnc: 'v1:fixture-disconnected-token',
+        accessTokenEnc: 'not-a-real-ciphertext',
         webhookVerifyToken: 'fixture-disconnected-verify-token',
         status: 'disconnected',
       },
