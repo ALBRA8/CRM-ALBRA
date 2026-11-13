@@ -8,6 +8,7 @@ import {
   markChannelOutboundUnknown,
   quarantineStaleChannelOutboundMessages,
   reconcileUnknownChannelOutboundMessage,
+  updateChannelMessageDeliveryStatus,
 } from '@/lib/channel-outbox'
 import { FIX } from '../setup/seed-data'
 import { encryptSecret } from '@/lib/crypto'
@@ -134,6 +135,40 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     })).toBe(1)
     expect((await db.channelMessage.findUnique({ where: { id: echo.id } }))?.outboundId).toBe(intent.id)
     expect((await db.channelOutboundMessage.findUnique({ where: { id: intent.id } }))?.status).toBe('sent')
+  })
+
+  it('confirma desde el webhook de estado aunque el worker haya quedado unknown y conserva el estado de entrega', async () => {
+    const conversation = await createConversation()
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'request-status-callback',
+      body: 'Confirmación por webhook',
+    })
+    await claimChannelOutboundMessage(intent.id)
+    await markChannelOutboundUnknown(intent.id, 'HTTP_TIMEOUT')
+    const message = await markChannelOutboundSent({
+      id: intent.id,
+      providerMessageId: 'wamid-status-callback',
+    })
+    expect((await db.channelOutboundMessage.findUnique({ where: { id: intent.id } }))?.status).toBe('sent')
+
+    await updateChannelMessageDeliveryStatus({
+      conversationId: conversation.id,
+      providerMessageId: 'wamid-status-callback',
+      status: 'read',
+      timestamp: '1794500000',
+    })
+    await updateChannelMessageDeliveryStatus({
+      conversationId: conversation.id,
+      providerMessageId: 'wamid-status-callback',
+      status: 'delivered',
+    })
+    const stored = await db.channelMessage.findUnique({ where: { id: message.id } })
+    expect(JSON.parse(stored?.metadata || '{}')).toMatchObject({
+      deliveryStatus: 'read',
+      deliveryStatusAt: '1794500000',
+    })
   })
 
   it('pone un resultado incierto en cuarentena y nunca lo reencola', async () => {
