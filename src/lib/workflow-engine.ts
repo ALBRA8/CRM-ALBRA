@@ -168,6 +168,7 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
       // Los fallos quedan registrados como notificación en cola para revisión.
       let sent = false
       let sendError: string | undefined
+      if (process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED === 'true') {
       if (channel === 'whatsapp' && ctx.phone) {
         try {
           const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
@@ -227,6 +228,9 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         } catch (err) {
           sendError = err instanceof Error ? err.message.slice(0, 120) : 'error de telegram'
         }
+      }
+      } else {
+        sendError = 'WORKFLOW_EXTERNAL_SENDS_ENABLED no está habilitado'
       }
       // Registro del intento + evento de timeline (auditable). El título deja claro
       // si el mensaje SALIÓ de verdad o quedó pendiente — nada de engaños.
