@@ -48,15 +48,16 @@
 - [ ] Contratos versionados entre productos ALBRA.
 - [ ] Confirmar estado de ramas de evolución.
 
-## Continuación outbox y webhook echo — 2026-11-13
+## Continuación outbox y webhook echo — 2026-11-13 (histórico consolidado)
 
 - [x] Confirmación de outbox enlaza un echo de Instagram preexistente por `conversationId + externalMessageId`, con validación de dirección/cuerpo y sin crear duplicado.
 - [x] Conciliación manual `unknown → sent` reutiliza el mensaje echo preexistente si coincide.
 - [x] Webhook Instagram persiste `is_echo` como mensaje saliente en la conversación de la cuenta exacta.
 - [x] Prueba de integración para el orden echo-antes-de-ACK añadida.
-- [ ] CI completa para HEAD `4c47c9bd08b6e55dc7090c7755ba190da38701ad` (push y pull_request) — en ejecución; no marcar como validado hasta resultado final.
-- [ ] Revisar y probar carrera equivalente para WhatsApp Cloud; agregar fixtures de webhook batch firmados para Instagram y WhatsApp.
-- [ ] Persistencia/deduplicación durable de eventos webhook antes de ejecutar workflows y auto-respuestas; evitar afirmar exactly-once mientras exista check-then-act.
+- [x] Carrera WhatsApp Cloud cubierta mediante `biz_opaque_callback_data` y conciliación de status callbacks antes/después del ACK.
+- [x] Fixtures firmados de POST batch para WhatsApp (dos tenants + destino desconectado) e Instagram (dos cuentas + cuenta desconectada), con replay deduplicado.
+- [x] Persistencia/deduplicación durable por conexión mediante `ChannelWebhookEvent`; los handlers reclaman eventos y responden 500 cuando un evento sigue ocupado o falla para permitir reintento.
+- [ ] CI completa del HEAD vigente (push y pull_request); no marcar como validado hasta conclusión exitosa.
 
 ## Continuación multicanal — estado técnico 2026-11-13
 
