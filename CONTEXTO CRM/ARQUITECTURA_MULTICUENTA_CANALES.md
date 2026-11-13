@@ -3,7 +3,7 @@
 Fecha: 2026-11-13  
 Repositorio: `ALBRA8/CRM-ALBRA`  
 Rama: `fix/migration-safety-audit`  
-Estado: Fase 0 implementada; Fase 1 en transición expand. Se añadió almacenamiento de conversaciones por conexión y un resolver canónico, pero los webhooks y pantallas legacy todavía no consumen el servicio.
+Estado: Fase 0 implementada; Fase 1 en transición expand. Instagram ya tiene selector y webhook resuelto por cuenta canónica; WhatsApp Cloud lee credenciales canónicas y particiona conversaciones nuevas. La bandeja de entrada/envíos e históricos legacy aún no están migrados.
 
 ## Objetivo y alcance
 
@@ -116,13 +116,15 @@ La migración no debe copiar secretos a archivos temporales, fixtures, logs o do
 - [x] Se rechaza vincular a otro tenant una cuenta Instagram ya reclamada en el inventario canónico.
 - [x] El callback registra todas las páginas devueltas por Meta que tengan Instagram Business vinculado; mantiene la primera como selección legacy provisional.
 - [x] Se añadió `GET /api/instagram/connections` (listado por tenant sin secretos) y `POST /api/instagram/connections` (selección validada por `connectionId`, solo dentro de la organización autenticada).
-- [ ] La pantalla de ajustes aún debe consumir el listado y el endpoint de selección para que el usuario elija visualmente la cuenta activa.
-- [ ] Los webhooks y envíos de Instagram siguen usando `Integration`; el endpoint de selección mantiene compatibilidad legacy pero todavía no cambia el enrutamiento por mensaje.
+- [x] La pantalla de ajustes consume el listado y el endpoint de selección; muestra las cuentas y conserva la selección activa.
+- [x] El webhook de Instagram resuelve por `entry[].id` contra `ChannelConnection`, valida la firma con el secreto cifrado de esa cuenta y utiliza el token de esa misma conexión para la respuesta automática. Mantiene fallback legacy para cuentas sin registro canónico.
 - [x] Se añadió `ChannelConversation`, con unicidad `[connectionId, externalContactKey]`, para separar conversaciones nuevas sin tocar históricos legacy.
 - [x] Se añadió `src/lib/channel-conversations.ts`: resuelve por `providerAccountKey` exacta y rechaza canal/estado incompatibles; crea conversación dentro de la conexión resuelta.
 - [x] Se añadió migración aditiva `6_channel_conversations` y pruebas de aislamiento para el mismo contacto en dos conexiones.
-- [ ] Adaptar los handlers de webhook y envíos a este servicio; hasta entonces el almacenamiento canónico no es el flujo de producción.
-- [ ] Esta escritura sombra requiere CI propio sobre el nuevo commit antes de considerarse validada.
+- [x] Webhook de Instagram y WhatsApp Cloud escriben conversaciones entrantes en `ChannelConversation`, aisladas por `connectionId` y contacto externo.
+- [x] Webhook de WhatsApp Cloud prefiere credenciales de `ChannelConnection` tras atribuir la cuenta exacta por `phone_number_id` en `WhatsAppConnection`; mantiene fallback legacy cuando no existe el registro canónico.
+- [ ] Adaptar listados de bandeja, historial, lecturas y rutas de envío para que consuman `ChannelConversation`/`connectionId` de extremo a extremo.
+- [ ] La integración de webhooks/selector requiere CI completo sobre el HEAD más reciente; no declarar validación hasta que pasen TypeScript, lint, suite y build.
 
 - Varias conexiones del mismo canal por organización.
 - Crear, listar, verificar, reconectar, desconectar y revocar por connectionId.
