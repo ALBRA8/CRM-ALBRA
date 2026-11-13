@@ -26,10 +26,21 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
     const url = new URL(req.url)
+    const clearCsrfCookie = (response: NextResponse) => {
+      const forwardedProto = req.headers.get('x-forwarded-proto')?.split(',')[0].trim()
+      response.cookies.set('ig_oauth_csrf', '', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: forwardedProto === 'https' || url.protocol === 'https:',
+        path: '/api/instagram/oauth',
+        maxAge: 0,
+      })
+      return response
+    }
     const fail = (code: string) => {
       const u = new URL('/settings?tab=instagram', req.url)
       u.searchParams.set('ig_error', code)
-      return NextResponse.redirect(u)
+      return clearCsrfCookie(NextResponse.redirect(u))
     }
 
     const qState = url.searchParams.get('state') || ''
@@ -221,8 +232,7 @@ export async function GET(req: NextRequest) {
     const ok = new URL('/settings?tab=instagram', req.url)
     ok.searchParams.set('ig_connected', selectedAccount.username || selectedAccount.id)
     const res = NextResponse.redirect(ok)
-    res.cookies.delete('ig_oauth_csrf')
-    return res
+    return clearCsrfCookie(res)
   })
 }
 
