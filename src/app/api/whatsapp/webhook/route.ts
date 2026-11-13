@@ -129,7 +129,8 @@ export async function POST(req: NextRequest) {
         where: { phoneNumberId: phoneId },
         select: { organizationId: true, status: true, accessTokenEnc: true, metaAppSecretEnc: true },
       })
-      if (connection?.status === 'connected') {
+      if (connection) {
+        if (connection.status !== 'connected') continue
         const secrets = [decryptSecret(connection.metaAppSecretEnc), process.env.META_APP_SECRET].filter((secret): secret is string => !!secret)
         const validSignature = secrets.some((secret) => verifyMetaSignature(rawBody, secret, signature))
         if (validSignature) {
@@ -141,9 +142,11 @@ export async function POST(req: NextRequest) {
               cloudToken: decryptSecret(connection.accessTokenEnc),
               fallbackValue: matchingValue,
             })
-            continue
           }
         }
+        // Una conexión canónica existente es autoritativa: nunca degradar a
+        // Integration ante firma inválida o estado desconectado.
+        continue
       }
 
       // Compatibilidad con organizaciones aún no migradas a WhatsAppConnection.
