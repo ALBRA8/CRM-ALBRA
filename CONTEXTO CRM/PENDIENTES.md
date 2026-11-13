@@ -113,3 +113,20 @@ La base multiusuario y multiempresa está implementada según el contexto y las 
 - [ ] Desplegar en staging/producción solo después de integración, pruebas de humo, respaldo y autorización expresa.
 
 **Nota de estado:** los checks marcados [x] documentan cambios de código y publicación en la rama/PR; no certifican build, pruebas aprobadas, merge ni despliegue. La PR agrupa 15 archivos y commits anteriores de la misma rama, por lo que la revisión debe cubrir el diff completo.
+
+
+## Actualización 2026-11-13 — CI corregido
+
+- [x] Corregir los nueve fallos de la ejecución CI anterior sin quitar validaciones de seguridad.
+- [x] Alinear el rol de los JWT de prueba con el rol persistido en BD durante los escenarios owner B; restaurar el rol al terminar cada prueba.
+- [x] TypeScript y lint aprobados en el nuevo CI.
+- [x] Migraciones Prisma, escáner de secretos y build de producción aprobados.
+- [x] Suite completa aprobada: 64/64 archivos y 580/580 pruebas.
+- [x] Pruebas de integración del cambio de organización Super Admin incluidas en la suite verde.
+- [ ] Hacer prueba visual/manual del botón **Ingresar** en navegador con dos organizaciones en staging.
+- [ ] Verificar retorno al panel Super Admin y comportamiento de sesión/expiración en navegador.
+- [ ] Repetir pruebas de aislamiento cross-tenant en entorno staging con datos representativos.
+- [ ] Integrar PR #3 en `main` solo con autorización expresa.
+- [ ] Desplegar solo después de integración, smoke tests, backup y autorización expresa.
+
+**Evidencia:** PR #3, head `040d8875ff9b10b5179313bbc374a5e7795af8ed`; CI run `43379605573` aprobado. Esto no equivale a merge ni despliegue.
