@@ -4,12 +4,12 @@ Este roadmap resume el plan maestro SaaS. No representa fechas comprometidas ni 
 
 | Orden | Etapa | Resultado esperado | Estado |
 |---:|---|---|---|
-| 0 | Línea base y releases | Versión estable reproducible, pruebas y rollback | Pendiente de revalidación |
-| 1 | Aislamiento multi-tenant | Pruebas negativas completas entre organizaciones | Pendiente |
-| 2 | Conexiones multi-cuenta | Varias cuentas por canal y organización | Pendiente |
-| 3 | Webhooks y eventos | Resolución exacta, firma, idempotencia y reintentos | Pendiente |
-| 4 | WhatsApp multicuenta | Sesiones Baileys independientes y concurrentes | Pendiente |
-| 5 | Instagram, Messenger y otros canales | OAuth y ciclo de vida multi-cuenta | Pendiente |
+| 0 | Línea base y releases | Versión estable reproducible, pruebas y rollback | Parcial; HEAD/CI de PR #3 en verificación |
+| 1 | Aislamiento multi-tenant | Pruebas negativas completas entre organizaciones | Base existente con pruebas; falta staging real |
+| 2 | Conexiones multi-cuenta | Varias cuentas por canal y organización | Parcial: modelo canónico y dos canales en transición |
+| 3 | Webhooks y eventos | Resolución exacta, firma, idempotencia y reintentos | Parcial: ledger/recibos WhatsApp e Instagram; falta outbox de workflows |
+| 4 | WhatsApp multicuenta | Sesiones Baileys independientes y concurrentes | Parcial: Cloud por conexión; Baileys sigue siendo por organización |
+| 5 | Instagram, Messenger y otros canales | OAuth y ciclo de vida multi-cuenta | Instagram parcial; Messenger/Telegram/TikTok pendientes |
 | 6 | SaaS comercial | Onboarding, planes, cuotas y facturación | Pendiente |
 | 7 | Operación y escala | Observabilidad, backups, SLO/RPO/RTO y carga | Pendiente |
 | 8 | Ecosistema ALBRA | Contratos desacoplados entre productos | Dirección definida; ejecución pendiente |
