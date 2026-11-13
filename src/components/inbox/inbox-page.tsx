@@ -282,7 +282,7 @@ export function InboxPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-slate-900 truncate">{selected.contactName}</p>
                   <p className="text-[11px] text-slate-400 truncate">
-                    vía {selected.channelLabel} · {selected.contactHandle || 'sin handle'}
+                    vía {selected.channelLabel}{selected.connectionName ? ` · ${selected.connectionName}` : ''} · {selected.contactHandle || 'sin handle'}
                   </p>
                 </div>
                 {selected.isAutoReply && (
