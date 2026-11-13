@@ -61,7 +61,7 @@ function makeMetaAdapter(
 }
 
 /**
- * Official Meta Graph text adapters. They are intentionally only a factory:
+ * Official Meta Graph text adapters (WhatsApp Cloud / Instagram Messaging).\n * API references: developers.facebook.com/documentation/business-messaging/whatsapp/overview\n * and developers.facebook.com/documentation/business-messaging/instagram-messaging.\n * They are intentionally only a factory:
  * no route/worker registers or invokes them until outbound sending is approved.
  */
 export function createMetaChannelAdapters(fetchImpl: typeof fetch = fetch): ChannelProviderAdapters {
