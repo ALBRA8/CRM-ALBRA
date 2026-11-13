@@ -256,7 +256,27 @@ describe('POST /api/inbox/send — conversaciones canónicas (outbox)', () => {
     })
     expect(fetchMock).not.toHaveBeenCalled()
     expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(1)
-    expect(await db.whatsAppConversation.count({ where: { organizationId: FIX.orgA.id } })).toBeGreaterThanOrEqual(0)
+  })
+
+  it('reintento HTTP con el mismo requestId devuelve la misma intención; cuerpo distinto entra en conflicto', async () => {
+    const { conversation } = await createCanonicalConversation()
+    const request = (text: string) => inboxSendPOST(req('/inbox/send', {
+      method: 'POST',
+      token: tokenA(),
+      body: { key: `cc:${conversation.id}`, clientRequestId: 'route-request-idem-01', text },
+    }))
+
+    const first = await request('Mensaje idempotente')
+    const firstBody = await jsonBody(first)
+    const retry = await request('Mensaje idempotente')
+    const retryBody = await jsonBody(retry)
+    expect(first.status).toBe(202)
+    expect(retry.status).toBe(202)
+    expect(retryBody.outboundId).toBe(firstBody.outboundId)
+
+    const conflict = await request('Texto diferente')
+    expect(conflict.status).toBe(409)
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(1)
   })
 
   it('requiere clientRequestId y no crea una intención incompleta', async () => {
