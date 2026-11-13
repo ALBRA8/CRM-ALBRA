@@ -130,3 +130,10 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 4. Restaurar backup solo si se verificó el punto de recuperación y se evaluó la pérdida de escrituras posteriores. Nunca usar `migrate reset` en un entorno con datos.
 5. Reconciliar el estado del proveedor antes de volver a habilitar cualquier envío; hacerlo requiere aprobación separada.
 - Messenger, Telegram y TikTok no están conectados al outbox canónico.
+
+
+## Controles adicionales — 2026-11-13
+
+- El callback OAuth de Instagram debe actualizar únicamente una conexión cuya clave global pertenezca también a la organización autenticada. Un conflicto concurrente de ownership debe abortar, nunca ejecutar un upsert global que reemplace credenciales.
+- Los workflows no deben usar teléfonos/correos suministrados libremente en el payload del evento; solo datos de un cliente resuelto en la organización del run pueden ser destinatarios.
+- El estado de entrega no debe retroceder: callbacks tardíos de fallo no reemplazan estados de éxito ya observados.
