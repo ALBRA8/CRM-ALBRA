@@ -5,6 +5,32 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/
 
 export type ChannelOutboundStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'unknown'
 
+const DELIVERY_STATUS_RANK: Record<'sent' | 'delivered' | 'read' | 'failed', number> = {
+  sent: 1,
+  delivered: 2,
+  read: 3,
+  failed: 4,
+}
+
+function withDeliveryStatus(metadataValue: string | null, status: 'sent' | 'delivered' | 'read' | 'failed') {
+  let metadata: Record<string, unknown> = {}
+  try {
+    const parsed = metadataValue ? JSON.parse(metadataValue) : {}
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) metadata = parsed
+  } catch {
+    metadata = {}
+  }
+  const current = metadata.deliveryStatus
+  if (
+    current === 'failed' ||
+    (typeof current === 'string' &&
+      Object.prototype.hasOwnProperty.call(DELIVERY_STATUS_RANK, current) &&
+      DELIVERY_STATUS_RANK[current as keyof typeof DELIVERY_STATUS_RANK] >= DELIVERY_STATUS_RANK[status])
+  ) return metadataValue || JSON.stringify(metadata)
+  metadata.deliveryStatus = status
+  return JSON.stringify(metadata)
+}
+
 export class ChannelOutboundError extends Error {
   constructor(
     message: string,
@@ -179,7 +205,7 @@ export async function markChannelOutboundSent(input: {
     const message = echoedMessage
       ? await tx.channelMessage.update({
           where: { id: echoedMessage.id },
-          data: { outboundId: outbound.id },
+          data: { outboundId: outbound.id, metadata: withDeliveryStatus(echoedMessage.metadata, 'sent') },
         })
       : await tx.channelMessage.create({
           data: {
@@ -189,6 +215,7 @@ export async function markChannelOutboundSent(input: {
             direction: 'out',
             senderType: 'user',
             body: outbound.body,
+            metadata: JSON.stringify({ deliveryStatus: 'sent' }),
           },
         })
     await tx.channelOutboundMessage.update({
@@ -302,7 +329,7 @@ export async function reconcileUnknownChannelOutboundMessage(input: {
       const message = echoedMessage
         ? await tx.channelMessage.update({
             where: { id: echoedMessage.id },
-            data: { outboundId: outbound.id },
+            data: { outboundId: outbound.id, metadata: withDeliveryStatus(echoedMessage.metadata, 'sent') },
           })
         : await tx.channelMessage.create({
             data: {
@@ -312,6 +339,7 @@ export async function reconcileUnknownChannelOutboundMessage(input: {
               direction: 'out',
               senderType: 'user',
               body: outbound.body,
+              metadata: JSON.stringify({ deliveryStatus: 'sent' }),
             },
           })
       await tx.channelOutboundMessage.update({
