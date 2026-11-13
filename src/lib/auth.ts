@@ -207,8 +207,8 @@ export class HttpError extends Error {
  *  2. debe estar activo (la desactivación de un empleado corta su sesión al instante);
  *  3. la `tv` del JWT debe coincidir con `tokenVersion` vigente (revocación por
  *     reset de contraseña, cambio de rol o logout global);
- *  4. la organización del token debe seguir siendo la del usuario (el JWT no
- *     puede "viajar" entre organizaciones).
+ *  4. los usuarios normales solo pueden usar su organización asignada; el
+ *     superadmin vigente puede usar un contexto de organización activa distinto.
  *
  * FAIL-CLOSED: cualquier fallo de BD NO autoriza — la excepción sube y la ruta
  * responde 500 sin ejecutar la operación de negocio.
