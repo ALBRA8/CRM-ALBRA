@@ -710,6 +710,41 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [canonicalA!.id, canonicalB!.id] } } })).toBe(2)
   })
 
+  it('ignora estados de entrega desconocidos sin persistirlos en ledger ni timeline', async () => {
+    await seedConnection('org-a', '121000204')
+    const connection = await db.channelConnection.findUnique({
+      where: { providerAccountKey: 'meta:whatsapp:121000204' },
+      select: { id: true },
+    })
+    const payload = {
+      object: 'whatsapp_business_account',
+      entry: [{
+        id: 'waba-unknown-status',
+        changes: [{
+          field: 'messages',
+          value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550204', phone_number_id: '121000204' },
+            statuses: [{ id: 'wamid.unknown-status', status: 'queued', timestamp: '1794500004' }],
+          },
+        }],
+      }],
+    }
+    const raw = JSON.stringify(payload)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(raw).digest('hex')
+    const request = new (await import('next/server')).NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body: raw,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    })
+    const response = await webhookPost(request)
+    expect(response.status).toBe(200)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: connection!.id } })).toBe(0)
+    expect(await db.timelineEvent.count({
+      where: { organizationId: 'org-a', type: 'whatsapp', metadata: { contains: 'wamid.unknown-status' } },
+    })).toBe(0)
+  })
+
   it('un phoneNumberId sin conexión conectada → 401 (ni fallback a org "dicha" por el body)', async () => {
     await seedConnection('org-a', '121000122', { status: 'disconnected' })
     const { body, signature } = signedBody()
