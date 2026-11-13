@@ -19,8 +19,8 @@ prisma/migrations/
 ├── 4_audit_indexes/migration.sql
 └── migration_lock.toml
 
-La secuencia 0–4 es la que debe aplicar `prisma migrate deploy` en una
-instalación nueva. El baseline crea el esquema previo; las migraciones 1–4
+La secuencia 0–5 es la que debe aplicar `prisma migrate deploy` en una
+instalación nueva. El baseline crea el esquema previo; las migraciones 1–5
 añaden cambios posteriores. No se debe marcar el baseline como aplicado en
 una base existente sin comparar antes su esquema real con el baseline.
 ```
@@ -181,6 +181,33 @@ debe editar ni volver a ejecutar esta versión. En ese caso hay que restaurar
 desde backup si hubo pérdida y preparar una migración correctiva nueva basada
 en el estado real de esa base. No ejecutar hasta verificar
 `_prisma_migrations` y el checksum en cada entorno.
+
+
+### Migración 5 — completar datos de clientes consolidados
+
+La migración 4 conserva las fichas absorbidas en
+`Client_dedup_backup_20261111`, pero no fusionaba todos sus campos en la ficha
+canónica. La migración 5 corrige ese faltante sin editar la migración 4 ni
+alterar sus checksums: completa únicamente campos vacíos de la ficha canónica
+con valores no vacíos de los duplicados (correo, cédula, dirección, notas,
+fuente, asignación y creador). Si hay varios valores, elige el primero por
+orden de id. Si el cliente canónico está en estado `prospect`, promueve su
+estado al primer estado no prospect de los duplicados. Conserva la fecha de
+creación más antigua y las fechas de último contacto/actualización más
+recientes. No elimina ni modifica la tabla de respaldo.
+
+**Límite conocido:** esta migración recupera datos de duplicados que la
+migración 4 ya respaldó; no vuelve a deduplicar teléfonos con formatos
+alternativos ni altera números de teléfono. La normalización de teléfonos
+requiere una regla de negocio y una migración separada, porque una
+normalización agresiva podría fusionar personas distintas.
+
+**Compatibilidad:** la migración 5 presupone que la migración 4 se ejecutó y
+creó `Client_dedup_backup_20261111`. Antes de desplegarla en cualquier base,
+verificar `_prisma_migrations`, el estado de la migración 4 y la existencia y
+estructura de esa tabla. Si la migración 4 no se aplicó o la tabla de respaldo
+no existe, detenerse: no marcar migraciones como aplicadas ni crear una tabla
+vacía para saltar el paso.
 
 ### Migración 1 y baseline en bases existentes
 
