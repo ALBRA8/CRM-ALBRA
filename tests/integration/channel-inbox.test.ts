@@ -99,6 +99,22 @@ describe('Inbox canónico — tenant y conexión exacta', () => {
     expect(updated?.unreadCount).toBe(0)
   })
  
+  it('expone recibos sent/delivered/read del proveedor en el hilo', async () => {
+    const own = await createConversation(FIX.orgA.id, 'RECEIPT', 'receipt-contact')
+    const outgoing = await db.channelMessage.create({
+      data: {
+        conversationId: own.conversation.id,
+        externalMessageId: 'wamid-receipt-test',
+        direction: 'out',
+        senderType: 'user',
+        body: 'Mensaje con recibo',
+        metadata: JSON.stringify({ deliveryStatus: 'read', deliveryStatusAt: '1794500000' }),
+      },
+    })
+    const messages = await getInboxMessages(FIX.orgA.id, `cc:${own.conversation.id}`)
+    expect(messages.find((message) => message.id === outgoing.id)?.deliveryStatus).toBe('read')
+  })
+
   it('muestra intenciones queued en el hilo canónico sin exponerlas a otro tenant', async () => {
     const own = await createConversation(FIX.orgA.id, 'QUEUE', 'queue-contact')
     const intent = await createChannelOutboundIntent({
