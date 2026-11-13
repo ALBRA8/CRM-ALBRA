@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { FIX } from '../setup/seed-data'
 import { decryptSecret } from '@/lib/crypto'
+import { enqueueWorkflowOutboundMessage } from '@/lib/workflow-outbox'
 
 vi.mock('@/lib/workflow-engine', async (importOriginal) => (await importOriginal<typeof import('@/lib/workflow-engine')>()) as typeof import('@/lib/workflow-engine'))
 
@@ -104,6 +105,20 @@ describe('workflow trigger idempotency for channel messages', () => {
     expect(outbound?.payloadEnc).toMatch(/^v1:/)
     expect(outbound?.payloadEnc).not.toContain(FIX.clientA1.phone || 'never-match')
     expect(decryptSecret(outbound?.payloadEnc)).toContain(FIX.clientA1.phone || '')
+    const run = await db.automationRun.findFirst({ where: { automationId: automation.id } })
+    expect(run).not.toBeNull()
+    const states = JSON.parse(run?.stepStates || '[]') as Array<{ status: string }>
+    expect(states[0]?.status).toBe('success')
+    const duplicate = await enqueueWorkflowOutboundMessage({
+      organizationId: FIX.orgA.id,
+      automationId: automation.id,
+      automationRunId: run!.id,
+      stepIndex: 0,
+      channel: 'whatsapp',
+      payload: { to: FIX.clientA1.phone || '', text: 'No enviar en pruebas' },
+    })
+    expect(duplicate.id).toBe(outbound?.id)
+    expect(await db.workflowOutboundMessage.count({ where: { automationId: automation.id } })).toBe(1)
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
   })
