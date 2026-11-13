@@ -7,7 +7,7 @@
 #   builder → prisma generate + next build (output standalone) + poda de
 #             devDependencies (typescript/eslint/tailwind/vitest...).
 #   runner  → imagen mínima no-root con el standalone de Next, el daemon
-#             de WhatsApp (Baileys) y el CLI de Prisma para db push.
+#             de WhatsApp (Baileys) y el CLI de Prisma para migrate deploy.
 #
 # El standalone queda en .next/standalone (ver scripts/copy-standalone.mjs):
 #   .next/standalone/server.js          → servidor
@@ -110,11 +110,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 
 # node_modules de producción completo: agrega al standalone lo que Next NO
 # traza — better-sqlite3 compilado (daemon), @whiskeysockets/baileys, qrcode,
-# @hapi/boom y el CLI `prisma` + engines (para `db push` en el arranque).
+# @hapi/boom y el CLI `prisma` + engines (para `migrate deploy` en el arranque).
 # COPY fusiona directorios: gana sobre el node_modules trazado sin borrar nada.
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
 
-# Esquema Prisma (necesario para `prisma db push` del entrypoint)
+# Esquema Prisma (necesario para `prisma migrate deploy` del entrypoint)
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
 # Daemon de WhatsApp (Baileys) — proceso separado, no forma parte del
@@ -135,12 +135,12 @@ RUN chmod +x ./scripts/docker-entrypoint.sh \
 EXPOSE 3000 3002
 
 # Salud de la app: GET público sin auth ({ ok: true, ts }), no toca la BD.
-# start-period cubre el `prisma db push` del arranque.
+# start-period cubre la aplicación de migraciones al arranque.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:3000/api/health || exit 1
 
 # ENTRYPOINT con roles (ver scripts/docker-entrypoint.sh):
-#   CMD "app" (default) → prisma db push + node server.js
+#   CMD "app" (default) → prisma migrate deploy + node server.js
 #   CMD "daemon"        → espera esquema + node src/whatsapp-daemon/daemon.mjs
 # No se usa `npm start` (start-standalone.mjs hace spawn sin reenvío de
 # señales): aquí `exec node server.js` recibe SIGTERM de `docker stop`.
