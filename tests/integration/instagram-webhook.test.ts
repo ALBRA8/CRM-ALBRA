@@ -10,6 +10,7 @@ const APP_SECRET = 'test'.repeat(10)
 const connectionIds: string[] = []
 let previousIntegration: { instagramAccountId: string | null; instagramTokenEnc: string | null } | null = null
 let integrationExisted = false
+let integrationSnapshotTaken = false
 
 afterEach(async () => {
   if (connectionIds.length) {
@@ -20,16 +21,17 @@ afterEach(async () => {
     await db.channelConnection.deleteMany({ where: { id: { in: connectionIds } } })
     connectionIds.length = 0
   }
-  if (integrationExisted && previousIntegration) {
+  if (integrationSnapshotTaken && integrationExisted && previousIntegration) {
     await db.integration.update({
       where: { organizationId: FIX.orgB.id },
       data: previousIntegration,
     })
-  } else {
+  } else if (integrationSnapshotTaken) {
     await db.integration.deleteMany({ where: { organizationId: FIX.orgB.id } })
   }
   previousIntegration = null
   integrationExisted = false
+  integrationSnapshotTaken = false
 })
 
 async function createInstagramConnection(accountId: string, status: 'connected' | 'disconnected' = 'connected') {
@@ -73,6 +75,7 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
     })
     integrationExisted = !!previous
     previousIntegration = previous
+    integrationSnapshotTaken = true
     await db.integration.upsert({
       where: { organizationId: FIX.orgB.id },
       create: {
