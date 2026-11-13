@@ -28,6 +28,8 @@ export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram' | 'facebook'
 
 export interface InboxConversation {
   key: string
+  /** Nombre seguro de la cuenta conectada; solo presente en conversaciones canónicas. */
+  connectionName?: string | null
   channel: InboxChannel
   channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Messenger'
   contactName: string
@@ -101,6 +103,7 @@ export function parseInboxKey(key: string): { channel: InboxChannel; id: string 
   const prefix = key.slice(0, idx)
   const id = key.slice(idx + 1)
   if (!id || /[\s]/.test(id)) return null
+  if (prefix === 'cc') return { channel: 'whatsapp', id }
   if (prefix === 'wa') return { channel: 'whatsapp', id }
   if (prefix === 'tg') return { channel: 'telegram', id }
   if (prefix === 'ig') return { channel: 'instagram', id }
@@ -247,15 +250,47 @@ async function listTimelineConversations(
   }
 }
 
-/** Lista unificada, ordenada por actividad reciente. */
+/** Conversaciones nuevas: identidad estable por ChannelConversation y conexión exacta. */
+async function listCanonicalChannelConversations(orgId: string, limit: number): Promise<InboxConversation[]> {
+  try {
+    const rows = await db.channelConversation.findMany({
+      where: { organizationId: orgId, status: 'active' },
+      include: { connection: { select: { displayName: true, status: true, channel: true } } },
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+      take: limit,
+    })
+    return rows
+      .filter((row) => row.connection.status === 'connected' && row.connection.channel === row.channel)
+      .map((row) => ({
+        key: 'cc:' + row.id,
+        channel: row.channel as InboxChannel,
+        channelLabel: CHANNEL_LABELS[row.channel as InboxChannel] || 'WhatsApp',
+        connectionName: row.connection.displayName || null,
+        contactName: row.contactName || row.externalContactKey,
+        contactHandle: row.externalContactKey,
+        clientId: null,
+        lastMessage: row.lastMessage || '',
+        lastMessageAt: row.lastMessageAt?.toISOString() || null,
+        lastMessageFrom: 'in' as const,
+        unreadCount: row.unreadCount,
+        isAutoReply: false,
+      }))
+  } catch (err) {
+    console.error('[inbox] conversaciones canónicas no disponibles', err)
+    return []
+  }
+}
+
+/** Lista unificada, ordenada por actividad reciente. Las fuentes legacy siguen visibles durante expand. */
 export async function listInbox(orgId: string, limit = 100): Promise<InboxConversation[]> {
-  const [wa, tg, ig, fb] = await Promise.all([
+  const [canonical, wa, tg, ig, fb] = await Promise.all([
+    listCanonicalChannelConversations(orgId, limit),
     listWhatsAppConversations(orgId, limit),
     listTimelineConversations(orgId, 'telegram', limit),
     listTimelineConversations(orgId, 'instagram', limit),
     listTimelineConversations(orgId, 'facebook', limit),
   ])
-  return [...wa, ...tg, ...ig, ...fb]
+  return [...canonical, ...wa, ...tg, ...ig, ...fb]
     .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
     .slice(0, limit)
 }
@@ -372,6 +407,28 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
   const parsed = parseInboxKey(key)
   if (!parsed) return []
 
+  if (key.startsWith('cc:')) {
+    const conversation = await db.channelConversation.findFirst({
+      where: { id: parsed.id, organizationId: orgId },
+      select: { id: true, channel: true, connection: { select: { status: true, channel: true } } },
+    })
+    if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return []
+    const rows = await db.channelMessage.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: { id: true, direction: true, senderType: true, body: true, createdAt: true, messageType: true },
+    })
+    return rows.reverse().map((message) => ({
+      id: message.id,
+      direction: message.direction === 'out' ? 'out' as const : 'in' as const,
+      senderType: message.senderType === 'agent' ? 'agent' as const : message.senderType === 'user' ? 'user' as const : 'contact' as const,
+      text: message.body,
+      createdAt: message.createdAt.toISOString(),
+      ...(message.messageType === 'voice' ? { messageType: 'voice' } : {}),
+    }))
+  }
+
   if (parsed.channel === 'whatsapp') {
     const rows = await db.whatsAppMessage.findMany({
       where: { organizationId: orgId, conversationId: parsed.id },
@@ -404,6 +461,17 @@ export async function markInboxRead(orgId: string, key: string): Promise<void> {
   const parsed = parseInboxKey(key)
   if (!parsed) return
   try {
+    if (key.startsWith('cc:')) {
+      await db.channelConversation.updateMany({
+        where: {
+          id: parsed.id,
+          organizationId: orgId,
+          connection: { status: 'connected', channel: parsed.channel },
+        },
+        data: { unreadCount: 0 },
+      })
+      return
+    }
     if (parsed.channel === 'whatsapp') {
       await db.whatsAppConversation.updateMany({
         where: { organizationId: orgId, id: parsed.id },
