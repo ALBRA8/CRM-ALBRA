@@ -18,10 +18,12 @@ Estado: guía de staging; **no autoriza activar envíos ni desplegar**.
 1. Confirmar que el entorno y la base de datos son staging, no producción.
 2. Crear y verificar backup restaurable antes de aplicar migraciones.
 3. Aplicar migraciones Prisma en staging y comprobar que `ChannelWebhookEvent` y las tablas canónicas existen.
-4. Confirmar que cada `ChannelConnection` pertenece a la organización correcta, usa el proveedor/canal esperado y está `connected`.
-5. Verificar en Meta que la app, permisos, número/cuenta, webhook URL, suscripción a campos y política de ventana/plantillas están aprobados.
-6. Confirmar firma HMAC válida con el App Secret de la conexión y probar una firma inválida (debe devolver 401).
-7. Usar contactos de prueba consentidos y mensajes no sensibles. No importar datos de clientes reales en fixtures.
+4. Ejecutar `bun run scripts/backfill-channel-connections.ts` en modo dry-run y revisar conteos/conflictos. El script no escribe por defecto.
+5. Aplicar backfill solo tras backup restaurable y aprobación explícita, usando ambos guardas: `BACKFILL_CHANNEL_CONNECTIONS_CONFIRM=1` y `--apply`. Nunca ejecutar automáticamente ni en producción sin revisión.
+6. Confirmar que cada `ChannelConnection` pertenece a la organización correcta, usa el proveedor/canal esperado y está `connected`.
+7. Verificar en Meta que la app, permisos, número/cuenta, webhook URL, suscripción a campos y política de ventana/plantillas están aprobados.
+8. Confirmar firma HMAC válida con el App Secret de la conexión y probar una firma inválida (debe devolver 401).
+9. Usar contactos de prueba consentidos y mensajes no sensibles. No importar datos de clientes reales en fixtures.
 
 ## 3. Salud agregada del outbox y webhooks
 
