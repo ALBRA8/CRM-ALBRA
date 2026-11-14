@@ -6,13 +6,9 @@ import {
   parseTikTokState,
   verifyTikTokSignature,
   findOrCreateChannelClient,
-  buildNichoContext,
-  getHandoffKeywords,
-  isChannelAutoReplyGloballyEnabled,
 } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
-import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
 import { claimChannelWebhookEvent, completeChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTikTokWebhookConnection } from '@/lib/channel-webhook-events'
 
 /**
@@ -24,7 +20,7 @@ import { claimChannelWebhookEvent, completeChannelWebhookEvent, getChannelWebhoo
  *   App Secret cifrado por organización). Procesa mensajes entrantes del
  *   Business Messaging API (disponible cuando TikTok apruebe la app):
  *   find-or-create Client, timeline tiktok, workflows message_received,
- *   auto-respuesta IA (solo con sendEndpoint configurado).
+ *   sin envío directo: las respuestas requieren la outbox canónica.
  *
  * Esquema de evento: TikTok no documenta públicamente el payload de mensajes
  * (vetado a socios). Parseo defensivo: se extrae remitente/texto de las
@@ -170,35 +166,11 @@ export async function POST(req: NextRequest) {
         console.error('[tiktok webhook] workflows', err)
       }
 
-      // Auto-respuesta IA (solo si TikTok aprobó el envío: sendEndpoint)
-      const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-      const state = parseTikTokState(integration?.tiktokTokenEnc)
-      const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      // Direct TikTok sends are not yet backed by a durable outbound outbox.
-      // Keep them disabled until the adapter/outbox path is implemented and reviewed.
-      if (process.env.TIKTOK_AUTOREPLY_ENABLED === 'true' && isChannelAutoReplyGloballyEnabled() && state.accessToken && state.sendEndpoint && (nicho?.autoReplyEnabled ?? true)) {
-        await llmReplyOrNotification({
-          orgId,
-          clientId: client?.id || null,
-          channelLabel: 'TikTok',
-          incomingText: msg.text,
-          handoffKeywords: await getHandoffKeywords(orgId),
-          nichoContext: await buildNichoContext(orgId),
-          send: async (reply) => {
-            const { sendTikTokBusinessMessage } = await import('@/lib/integrations')
-            const sent = await sendTikTokBusinessMessage({ state, recipientId: msg.senderId, text: reply })
-            await recordTimelineEvent({
-              orgId,
-              clientId: client?.id || null,
-              type: 'tiktok',
-              title: 'Respuesta automática del agente IA',
-              description: reply.slice(0, 500),
-              metadata: { senderId: msg.senderId, direction: 'out', delivered: sent.ok, error: sent.error || null },
-              source: 'agent',
-            })
-          },
-        })
-      }
+      // El envío directo anterior usaba senderId como conversation_id y un
+      // payload no compatible con Business Messaging API v1.3. No se despacha
+      // desde el webhook: la respuesta automática permanece deshabilitada hasta
+      // que el conversation_id documentado se persista en la outbox canónica.
+
     }
 
     const completed = await completeChannelWebhookEvent(claim)
