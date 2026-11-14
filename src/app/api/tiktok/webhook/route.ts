@@ -16,15 +16,15 @@ import { claimChannelWebhookEvent, completeChannelWebhookEvent, getChannelWebhoo
  *
  * GET/POST challenge — verificación de la URL en el portal de desarrolladores:
  *   TikTok envía un desafío que se devuelve tal cual (texto plano).
- * POST eventos — validación ESTRICTA de X-TikTok-Signature (HMAC-SHA256 con el
+ * POST eventos — validación ESTRICTA de TikTok-Signature (HMAC-SHA256 con el
  *   App Secret cifrado por organización). Procesa mensajes entrantes del
  *   Business Messaging API (disponible cuando TikTok apruebe la app):
  *   find-or-create Client, timeline tiktok, workflows message_received,
  *   sin envío directo: las respuestas requieren la outbox canónica.
  *
- * Esquema de evento: TikTok no documenta públicamente el payload de mensajes
- * (vetado a socios). Parseo defensivo: se extrae remitente/texto de las
- * ubicaciones conocidas; cualquier evento se registra en timeline.
+ * El envelope Business Messaging usa client_key, user_openid y content
+ * serializado; el parser admite únicamente campos de mensaje que permiten
+ * recuperar sender, conversation_id y texto sin inventar identificadores.
  */
 
 export interface TikTokEventBody {
@@ -76,7 +76,8 @@ export function extractTikTokMessage(body: TikTokEventBody): { senderId: string;
     content.message as Record<string, unknown> | undefined,
     content,
   ]
-  const rec = candidates.find((candidate) => candidate && typeof candidate === 'object') as Record<string, unknown> | undefined
+  const rec = candidates.find((candidate) => candidate && typeof candidate === 'object' &&
+    (typeof candidate.conversation_id === 'string' || typeof candidate.conversationId === 'string')) as Record<string, unknown> | undefined
   if (!rec) return null
   const sender = rec.sender ?? rec.sender_openid ?? rec.sender_id ?? rec.from
   const senderId =
