@@ -50,20 +50,24 @@ function extractEventId(body: TikTokEventBody): string | null {
   return null
 }
 
-function extractMessage(body: TikTokEventBody): { senderId: string; text: string } | null {
+function extractMessage(body: TikTokEventBody): { senderId: string; conversationId: string | null; text: string } | null {
   const m = body.message || body.data?.message || body.event_data?.message
   if (!m || typeof m !== 'object') return null
   const rec = m as Record<string, unknown>
   const sender = rec.sender
   const senderId =
     typeof sender === 'string'
-      ? sender
+      ? sender.trim()
       : typeof sender === 'object' && sender !== null
-        ? String((sender as Record<string, unknown>).id || (sender as Record<string, unknown>).user_id || '')
-        : String(rec.conversation_id || '')
+        ? String((sender as Record<string, unknown>).id || (sender as Record<string, unknown>).user_id || '').trim()
+        : ''
+  const conversationId = typeof rec.conversation_id === 'string' && rec.conversation_id.trim()
+    ? rec.conversation_id.trim()
+    : null
   const text = typeof rec.text === 'string' ? rec.text : ''
+  // Never substitute conversation_id for sender identity, or synthesize a conversation ID.
   if (!senderId || !text) return null
-  return { senderId, text: text.slice(0, 3000) }
+  return { senderId, conversationId, text: text.slice(0, 3000) }
 }
 
 /** Verificación de la URL (challenge) — TikTok la envía por GET o POST */
@@ -152,7 +156,7 @@ export async function POST(req: NextRequest) {
         type: 'tiktok',
         title: 'Mensaje recibido por TikTok',
         description: msg.text.slice(0, 500),
-        metadata: { senderId: msg.senderId, direction: 'in', event: body.event || null },
+        metadata: { senderId: msg.senderId, conversationId: msg.conversationId, direction: 'in', event: body.event || null },
         source: 'integration',
       })
 
@@ -160,7 +164,7 @@ export async function POST(req: NextRequest) {
         await runWorkflowsForTrigger({
           orgId,
           type: 'message_received',
-          payload: { channel: 'tiktok', from: `tt:${msg.senderId}`, text: msg.text, conversationId: `tt:${msg.senderId}`, clientId: client?.id, messageId: `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}` },
+          payload: { channel: 'tiktok', from: `tt:${msg.senderId}`, text: msg.text, ...(msg.conversationId ? { conversationId: msg.conversationId } : {}), clientId: client?.id, messageId: `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}` },
         })
       } catch (err) {
         console.error('[tiktok webhook] workflows', err)
