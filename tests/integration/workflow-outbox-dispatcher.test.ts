@@ -63,7 +63,33 @@ describe('Telegram webhook auto-reply outbox', () => {
     expect(await db.workflowOutboundMessage.count({
       where: { organizationId: FIX.orgA.id, idempotencyKey: 'telegram-webhook:765432109' },
     })).toBe(1)
+  })  it('keeps a queued Telegram auto-reply unclaimed while the global kill switch is off', async () => {
+    const intent = await enqueueTelegramWebhookReply({
+      organizationId: FIX.orgA.id,
+      updateId: 765432110,
+      chatId: 123456789,
+      text: 'respuesta pendiente',
+    })
+    outboundIds.push(intent.id)
+    const previousFlag = process.env.CHANNEL_AUTOREPLY_ENABLED
+    const existingIntegration = await db.integration.findUnique({
+      where: { organizationId: FIX.orgA.id },
+      select: { id: true },
+    })
+    delete process.env.CHANNEL_AUTOREPLY_ENABLED
+    const fetchSpy = vi.spyOn(global, 'fetch')
+    try {
+      expect(await dispatchWorkflowOutboundMessage(intent.id)).toEqual({ status: 'disabled' })
+      expect(fetchSpy).not.toHaveBeenCalled()
+      const stored = await db.workflowOutboundMessage.findUnique({ where: { id: intent.id } })
+      expect(stored).toMatchObject({ status: 'queued', attemptCount: 0, claimToken: null })
+    } finally {
+      if (previousFlag === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
+      else process.env.CHANNEL_AUTOREPLY_ENABLED = previousFlag
+      if (!existingIntegration) await db.integration.deleteMany({ where: { organizationId: FIX.orgA.id } })
+    }
   })
+
 })
 
 describe('workflow outbound outbox dispatcher', () => {
