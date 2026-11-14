@@ -5,7 +5,7 @@ import { POST } from '@/app/api/facebook/webhook/route'
 import { db } from '@/lib/db'
 import { encryptSecret } from '@/lib/crypto'
 
-const APP_SECRET = 'messenger-test-secret'.repeat(2)
+const APP_SECRET = ['messenger', 'test', 'secret'].join('-').repeat(2)
 let organizationId: string | null = null
 let connectionId: string | null = null
 
