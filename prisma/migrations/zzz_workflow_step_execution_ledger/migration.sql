@@ -17,3 +17,4 @@ CREATE UNIQUE INDEX "WorkflowStepExecution_automationRunId_stepIndex_key"
   ON "WorkflowStepExecution"("automationRunId", "stepIndex");
 CREATE INDEX "WorkflowStepExecution_status_startedAt_idx"
   ON "WorkflowStepExecution"("status", "startedAt");
+ALTER TABLE "AutomationRun" ADD COLUMN "stepLedgerVersion" INTEGER NOT NULL DEFAULT 0;
