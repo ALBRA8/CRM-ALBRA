@@ -19,7 +19,8 @@
     "security:scan": "node scripts/scan-secrets.mjs",
     "security:scan:history": "node scripts/scan-secrets.mjs --history",
     "lint:baseline": "node scripts/lint-baseline.mjs",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "ops:monitor-outbox": "node scripts/monitor-outbox.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
