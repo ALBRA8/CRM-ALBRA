@@ -9,7 +9,7 @@ import { mapStatusToVerdict, type OwnershipVerdict } from '@/lib/whatsapp-sessio
  * Proxy al daemon de WhatsApp (Baileys) en http://localhost:3002 con timeout de 3s.
  * El frontend SIEMPRE pasa por aquí (nunca al puerto 3002 directamente):
  *   GET  /api/whatsapp/daemon-proxy?path=/status|/qr|/conversations|/conversations/:id
- *   POST /api/whatsapp/daemon-proxy  { path: '/connect' | '/disconnect' | '/send', ... }
+ *   POST /api/whatsapp/daemon-proxy  { path: '/connect' | '/disconnect', ... }
  *   PUT  /api/whatsapp/daemon-proxy  { path: '/conversations/:id', ... }
  *
  * SEGURIDAD (auditoría Antigravity, críticos #2/#3/#4 + hardening pre-venta):
@@ -182,6 +182,11 @@ export async function POST(req: NextRequest) {
     const path = String(body.path || '/connect')
     if (!ALLOWED_POST.includes(path)) {
       return json({ error: `path no permitido: ${path}` }, { status: 400 })
+    }
+    // El envío legacy por Baileys evita el pipeline canónico y sus kill-switches.
+    // Mantenerlo autenticado pero fail-closed; los mensajes deben entrar por outbox.
+    if (path === '/send') {
+      return json({ error: 'El envío directo legacy está deshabilitado; usa la outbox canónica.', code: 'LEGACY_SEND_DISABLED' }, { status: 409 })
     }
     // RBAC por operación (contrato rbac-gaps): conectar/desconectar/cerrar la
     // sesión de WhatsApp de la org es integración (admin-only, 'integrations.*')
