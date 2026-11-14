@@ -792,6 +792,12 @@ model ChannelConnection {
   lastVerifiedAt    DateTime?
   lastErrorAt       DateTime?
   lastErrorCode     String?  // código sanitizado; nunca guardar respuesta/token del proveedor
+  // Lease durable para rotación OAuth. "uncertain" requiere recuperación explícita;
+  // un lease vencido en "refreshing" nunca autoriza reutilizar el refresh token viejo.
+  refreshState          String   @default("idle") // idle | refreshing | uncertain
+  refreshLeaseToken     String?
+  refreshLeaseExpiresAt DateTime?
+  refreshFencingVersion Int      @default(0)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -802,6 +808,7 @@ model ChannelConnection {
   @@index([organizationId, channel, status])
   @@index([organizationId, createdAt])
   @@index([provider, externalAccountId])
+  @@index([refreshState, refreshLeaseExpiresAt])
   @@unique([id, organizationId])
 }
 
