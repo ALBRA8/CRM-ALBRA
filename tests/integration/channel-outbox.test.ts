@@ -15,6 +15,7 @@ import { FIX } from '../setup/seed-data'
 import { encryptSecret } from '@/lib/crypto'
 import { dispatchChannelOutboundMessage } from '@/lib/channel-outbound-dispatcher'
 import { createTikTokChannelAdapters } from '@/lib/tiktok-channel-adapter'
+import { getInboxMessages, listInbox } from '@/lib/inbox'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const connectionIds: string[] = []
@@ -374,6 +375,31 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     expect(stored?.status).toBe('sent')
     expect(stored?.providerMessageId).toBe('tiktok-provider-message-123')
     expect(await db.channelMessage.count({ where: { outboundId: intent.id } })).toBe(1)
+  })
+
+  it('exposes TikTok canonical conversations and messages in the unified inbox', async () => {
+    const conversation = await createTikTokConversation()
+    await db.channelMessage.create({
+      data: {
+        conversationId: conversation.id,
+        externalMessageId: 'tiktok-inbound-fixture-123',
+        direction: 'in',
+        senderType: 'contact',
+        body: 'Hola desde TikTok',
+      },
+    })
+    await db.channelConversation.update({
+      where: { id: conversation.id },
+      data: { lastMessage: 'Hola desde TikTok', lastMessageAt: new Date(), unreadCount: 1 },
+    })
+
+    const listed = await listInbox(FIX.orgA.id, 200)
+    const item = listed.find((row) => row.key === `cc:${conversation.id}`)
+    expect(item).toMatchObject({ channel: 'tiktok', contactHandle: 'conversation-provider-id-12345', unreadCount: 1 })
+
+    const messages = await getInboxMessages(FIX.orgA.id, `cc:${conversation.id}`)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({ direction: 'in', senderType: 'contact', text: 'Hola desde TikTok' })
   })
 
   it('quarantines thrown provider errors and does not call the adapter again', async () => {
