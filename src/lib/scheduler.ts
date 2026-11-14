@@ -67,6 +67,7 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
       take: 25,
     })
 
+    let claimed = 0
     for (const automation of due) {
       // CLAIM atómico: solo el worker que logre mover nextRunAt ejecuta.
       // Con dos instancias (Next + cron externo), la segunda recibe count=0
@@ -74,10 +75,11 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
       const intervalMinutes = intervalFromConfig(automation.triggerConfig)
       const next = new Date(Date.now() + intervalMinutes * 60_000)
       const claim = await db.automation.updateMany({
-        where: { id: automation.id, isActive: true, triggerType: 'schedule', nextRunAt: { lte: now } },
+        where: { id: automation.id, organizationId: automation.organizationId, isActive: true, triggerType: 'schedule', nextRunAt: { lte: now } },
         data: { nextRunAt: next },
       })
       if (claim.count === 0) continue
+      claimed++
 
       try {
         const { runWorkflowsForTrigger } = await import('./workflow-engine')
@@ -92,7 +94,7 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
         console.error('[scheduler] fallo ejecutando', automation.id, err)
       }
     }
-    return { processed: due.length + resumed, results }
+    return { processed: claimed + resumed, results }
   } finally {
     running = false
   }
