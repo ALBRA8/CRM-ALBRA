@@ -5,7 +5,7 @@ import { jsonBody, req, tokenA } from '../helpers'
 describe('POST /api/whatsapp/daemon-proxy — legacy send guard', () => {
   it('rechaza /send sin contactar al daemon', async () => {
     const fetchSpy = vi.fn(async (url: string | URL) => {
-      expect(String(url)).toMatch(/\\/status$/)
+      expect(String(url).endsWith('/status')).toBe(true)
       return new Response(JSON.stringify({ status: 'connected', orgLinked: true, linkedOrgId: 'org-a' }), { status: 200 })
     })
     vi.stubGlobal('fetch', fetchSpy)
