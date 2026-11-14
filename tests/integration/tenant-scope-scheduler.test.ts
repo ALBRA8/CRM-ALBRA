@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { runDueJobs } from '@/lib/scheduler'
+import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import type { resumeWaitingRuns as realResumeWaitingRunsType } from '@/lib/workflow-engine'
 import { db } from '@/lib/db'
 import { FIX } from '../helpers'
@@ -75,6 +76,35 @@ afterAll(async () => {
 })
 
 describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
+  it('un disparo schedule con automationId no ejecuta otras automatizaciones del mismo tenant', async () => {
+    const other = await db.automation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        name: 'Tenant-scope — schedule sibling',
+        triggerType: 'schedule',
+        isActive: true,
+        actions: '[]',
+      },
+    })
+    try {
+      const beforeTarget = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+      const beforeOther = await db.automationRun.count({ where: { automationId: other.id } })
+      await runWorkflowsForTrigger({
+        orgId: FIX.orgA.id,
+        type: 'schedule',
+        automationId: autoScheduleA,
+        payload: { automationId: autoScheduleA, scheduledAt: new Date().toISOString() },
+      })
+      const afterTarget = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+      const afterOther = await db.automationRun.count({ where: { automationId: other.id } })
+      expect(afterTarget).toBe(beforeTarget + 1)
+      expect(afterOther).toBe(beforeOther)
+    } finally {
+      await db.automationRun.deleteMany({ where: { automationId: other.id } })
+      await db.automation.delete({ where: { id: other.id } })
+    }
+  })
+
   it('con orgId=A SOLO reclama la automatización vencida de A; la de B sigue vencida', async () => {
     const { processed } = await runDueJobs({ orgId: FIX.orgA.id })
     expect(processed).toBeGreaterThanOrEqual(1)
