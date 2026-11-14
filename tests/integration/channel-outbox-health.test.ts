@@ -73,7 +73,7 @@ describe('GET /api/internal/channel-outbox — aggregate health', () => {
     expect(body).toHaveProperty('webhookEvents')
     expect(body).toHaveProperty('connectedMetaConnections')
     expect(body).toHaveProperty('sampledAt')
-    expect(Object.keys(body).sort()).toEqual(['autoReplyEnabled', 'connectedMetaConnections', 'outbox', 'sampledAt', 'webhookEvents', 'workerEnabled', 'workflowExternalSendsEnabled', 'workflowExternalSendsFlagRequested', 'workflowOutboxWorkerSecretConfigured', 'whatspowerBridgeEnabled'].sort())
+    expect(Object.keys(body).sort()).toEqual(['autoReplyEnabled', 'connectedMetaConnections', 'connectedTikTokConnections', 'outbox', 'sampledAt', 'webhookEvents', 'workerEnabled', 'workflowExternalSendsEnabled', 'workflowExternalSendsFlagRequested', 'workflowOutboxWorkerSecretConfigured', 'whatspowerBridgeEnabled'].sort())
     expect(JSON.stringify(body)).not.toContain(secret)
   })
 })
