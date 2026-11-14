@@ -205,12 +205,12 @@ No habilitar los tres canales a la vez en la primera prueba. La aprobación de u
 | WhatsApp Baileys | WorkflowOutboundMessage cifrada; dispatcher usa daemon con orgId explícito | Cubierto para acciones de workflows; la auto-respuesta del daemon también exige CHANNEL_AUTOREPLY_ENABLED=true y NichoConfig.autoReplyEnabled; no comparte la outbox canónica Meta |
 | Telegram Bot | WorkflowOutboundMessage para acciones de workflows | El webhook histórico también tenía auto-respuesta directa al Bot API. Ahora exige CHANNEL_AUTOREPLY_ENABLED=true además de la preferencia por organización; esa ruta directa aún no es durable ni usa la outbox. El endpoint manual autenticado /api/telegram/send sigue siendo una operación directa iniciada por usuario |
 | Email / SMTP | WorkflowOutboundMessage cifrada; configuración SMTP de la organización o fallback global existente | Cubierto para acciones de workflows; requiere sink SMTP de pruebas antes de validar |
-| Messenger | El backfill puede crear ChannelConnection en estado pending | Sin adaptador/outbox canónica; inventario solamente, no habilitar como canal migrado |
-| TikTok | El backfill puede crear ChannelConnection en estado pending | Sin adaptador/outbox canónica; inventario solamente, no habilitar como canal migrado |
+| Messenger | Webhook legacy valida HMAC y ahora exige coincidencia exacta de Page ID; envío automático legacy directo | Sin adaptador/outbox canónica. La deduplicación por búsqueda en timeline no es un claim atómico; auto-respuesta exige flag global. Inventario solamente, no habilitar como canal migrado |
+| TikTok | Webhook legacy valida HMAC/timestamp; envío automático legacy directo | Sin adaptador/outbox canónica ni ledger durable de deduplicación; auto-respuesta exige flag global. Inventario solamente, no habilitar como canal migrado |
 
 La cobertura de WhatsApp/Instagram en outbox no implica validación de proveedor real. Los tests automatizados usan mocks/fixtures; faltan cuentas sandbox, pruebas de entrega y conciliación externas.
 
-- Los endpoints manuales autenticados de envío (Telegram, Instagram, Facebook/Messenger, TikTok y correo) realizan llamadas directas al proveedor; no son workers de outbox ni quedan bloqueados por CHANNEL_OUTBOUND_DISPATCH_ENABLED. No invocarlos durante pruebas de auditoría ni usar destinatarios reales. El endpoint canónico /api/inbox/send sí persiste intención queued para WhatsApp/Instagram.
+- Los endpoints manuales autenticados de envío (Telegram, Instagram, Facebook/Messenger, TikTok y correo) realizan llamadas directas al proveedor; no son workers de outbox ni quedan bloqueados por CHANNEL_OUTBOUND_DISPATCH_ENABLED. Facebook y TikTok también conservan auto-respuestas legacy directas desde webhook; ambas quedaron detrás de CHANNEL_AUTOREPLY_ENABLED, pero todavía no tienen persistencia previa en outbox. No invocarlos durante pruebas de auditoría ni usar destinatarios reales. El endpoint canónico /api/inbox/send sí persiste intención queued para WhatsApp/Instagram.
 
 ### Backfill legacy: alcance y recuperación
 
