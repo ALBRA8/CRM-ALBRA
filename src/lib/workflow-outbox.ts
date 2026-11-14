@@ -13,7 +13,7 @@ export type WorkflowOutboundPayload =
 const SAFE_ERROR = /^[A-Z0-9_.-]{1,64}$/
 
 /** Persist encrypted recipient/content before the workflow step can finish. */
-export async function enqueueWorkflowOutboundMessage(input: { organizationId: string; automationId: string; automationRunId: string; stepIndex: number; channel: WorkflowOutboundChannel; payload: WorkflowOutboundPayload }) {
+export async function enqueueWorkflowOutboundMessage(input: { organizationId: string; automationId: string; automationRunId: string; stepIndex: number; channel: WorkflowOutboundChannel; payload: WorkflowOutboundPayload; lease?: { runId: string; orgId: string; leaseToken: string; fencingVersion: number } }) {
   if (!input.organizationId || !input.automationId || !input.automationRunId || !Number.isInteger(input.stepIndex) || input.stepIndex < 0) throw new Error('WORKFLOW_OUTBOX_INVALID_INPUT')
   const validRun = await db.automationRun.findFirst({ where: { id: input.automationRunId, organizationId: input.organizationId, automationId: input.automationId, automation: { organizationId: input.organizationId } }, select: { id: true } })
   if (!validRun) throw new Error('WORKFLOW_OUTBOX_RUN_TENANT_MISMATCH')
@@ -22,7 +22,26 @@ export async function enqueueWorkflowOutboundMessage(input: { organizationId: st
   if (!payloadEnc) throw new Error('WORKFLOW_OUTBOX_ENCRYPTION_UNAVAILABLE')
   const idempotencyKey = 'workflow:' + input.automationRunId + ':' + input.stepIndex
   try {
-    return await db.workflowOutboundMessage.create({ data: { organizationId: input.organizationId, automationId: input.automationId, automationRunId: input.automationRunId, stepIndex: input.stepIndex, idempotencyKey, channel: input.channel, payloadEnc } })
+    const data = { organizationId: input.organizationId, automationId: input.automationId, automationRunId: input.automationRunId, stepIndex: input.stepIndex, idempotencyKey, channel: input.channel, payloadEnc }
+    if (input.lease) {
+      return await db.$transaction(async (tx) => {
+        const now = new Date()
+        const owner = await tx.automationRun.updateMany({
+          where: {
+            id: input.lease!.runId,
+            organizationId: input.lease!.orgId,
+            status: 'processing',
+            leaseToken: input.lease!.leaseToken,
+            fencingVersion: input.lease!.fencingVersion,
+            leaseExpiresAt: { gt: now },
+          },
+          data: { leaseExpiresAt: new Date(now.getTime() + 30 * 60_000) },
+        })
+        if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: outbound intent rejected by fencing')
+        return tx.workflowOutboundMessage.create({ data })
+      })
+    }
+    return await db.workflowOutboundMessage.create({ data })
   } catch (error) {
     const existing = await db.workflowOutboundMessage.findUnique({ where: { organizationId_idempotencyKey: { organizationId: input.organizationId, idempotencyKey } } })
     if (!existing) throw error
