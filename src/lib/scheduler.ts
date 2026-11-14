@@ -30,30 +30,83 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
   try {
     const now = new Date()
 
-    // 0) Sweeper: runs 'running' huérfanos (crash/reinicio a mitad de acción)
-    //    → 'failed' determinista. Sin esto quedaban atascados para siempre.
+    // 0) Recuperación conservadora de runs interrumpidos.
+    // Solo se reanuda un run nuevo con ledger habilitado y todos sus pasos
+    // previamente confirmados como succeeded. Un paso started/unknown es
+    // ambiguo; runs históricos (ledgerVersion=0) tampoco se reejecutan.
+    let recovered = 0
     try {
-      const orphaned = await db.automationRun.updateMany({
+      const cutoff = new Date(Date.now() - STALE_RUNNING_MS)
+      const staleRuns = await db.automationRun.findMany({
         where: {
           status: { in: ['running', 'processing'] },
-          startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) },
+          startedAt: { lt: cutoff },
           ...(orgId ? { organizationId: orgId } : {}),
         },
-        data: { status: 'failed', error: 'interrumpido (interrupted): proceso reiniciado a mitad del run (sweeper)', finishedAt: new Date() },
+        take: 50,
       })
-      if (orphaned.count > 0) {
-        const staleRuns = await db.automationRun.findMany({
-          where: { status: 'failed', error: { contains: 'interrumpido (interrupted)' }, finishedAt: { gte: new Date(Date.now() - 60_000) }, ...(orgId ? { organizationId: orgId } : {}) },
-          select: { id: true },
+
+      for (const stale of staleRuns) {
+        const steps = await db.workflowStepExecution.findMany({
+          where: { automationRunId: stale.id },
+          orderBy: { stepIndex: 'asc' },
         })
-        if (staleRuns.length) await db.workflowStepExecution.updateMany({
-          where: { automationRunId: { in: staleRuns.map((r) => r.id) }, status: 'started' },
-          data: { status: 'unknown', error: 'interrupted: resultado no verificable; no reintentar', finishedAt: new Date() },
+        const safeToResume = stale.stepLedgerVersion === 1 && steps.every((step) => step.status === 'succeeded')
+        if (!safeToResume) {
+          if (steps.some((step) => step.status === 'started')) {
+            await db.workflowStepExecution.updateMany({
+              where: { automationRunId: stale.id, status: 'started' },
+              data: { status: 'unknown', error: 'interrupted: resultado no verificable; no reintentar', finishedAt: new Date() },
+            })
+          }
+          await db.automationRun.updateMany({
+            where: { id: stale.id, status: { in: ['running', 'processing'] }, startedAt: { lt: cutoff } },
+            data: {
+              status: 'failed',
+              error: stale.stepLedgerVersion === 1
+                ? 'interrumpido: existe un paso con resultado ambiguo; requiere revisión'
+                : 'interrumpido: run histórico sin ledger de pasos; no se reejecuta automáticamente',
+              finishedAt: new Date(),
+            },
+          })
+          continue
+        }
+
+        const automation = await db.automation.findFirst({
+          where: { id: stale.automationId, organizationId: stale.organizationId, isActive: true },
         })
-        console.warn(`[scheduler] runs huérfanos marcados failed: ${orphaned.count}`)
+        if (!automation) {
+          await db.automationRun.updateMany({
+            where: { id: stale.id, status: { in: ['running', 'processing'] }, startedAt: { lt: cutoff } },
+            data: { status: 'failed', error: 'interrumpido: automatización inactiva; no se reanudó', finishedAt: new Date() },
+          })
+          continue
+        }
+
+        const claim = await db.automationRun.updateMany({
+          where: { id: stale.id, status: { in: ['running', 'processing'] }, startedAt: { lt: cutoff } },
+          data: { status: 'running', startedAt: new Date(), finishedAt: null, error: null },
+        })
+        if (claim.count === 0) continue
+
+        try {
+          const payload = stale.input ? JSON.parse(stale.input) as Record<string, unknown> : {}
+          const { runWorkflowsForTrigger } = await import('./workflow-engine')
+          const out = await runWorkflowsForTrigger({
+            orgId: stale.organizationId,
+            type: automation.triggerType as 'client_created' | 'opportunity_stage_changed' | 'message_received' | 'reservation_created' | 'quote_status_changed' | 'schedule',
+            payload,
+            automationId: automation.id,
+            existingRunId: stale.id,
+          })
+          results.push({ automationId: automation.id, recoveredRunId: stale.id, out })
+          recovered++
+        } catch (err) {
+          console.error('[scheduler] fallo recuperando run', stale.id, err)
+        }
       }
     } catch (err) {
-      console.error('[scheduler] fallo sweeper', err)
+      console.error('[scheduler] fallo recuperación de runs interrumpidos', err)
     }
 
     // 1) Reanudar runs en espera cuyo "Esperar" venció (patrón DELAY de Twenty)
@@ -132,7 +185,7 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
         console.error('[scheduler] fallo ejecutando', automation.id, err)
       }
     }
-    return { processed: claimed + resumed, results }
+    return { processed: claimed + resumed + recovered, results }
   } finally {
     running = false
   }
