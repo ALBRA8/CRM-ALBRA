@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isChannelAutoReplyGloballyEnabled, isTelegramAutoReplyEnabled, sendTelegramBotMessage } from '@/lib/integrations'
+import { isChannelAutoReplyGloballyEnabled, isTelegramAutoReplyEnabled, isTikTokWebhookTimestampFresh, verifyTikTokSignature, sendTelegramBotMessage } from '@/lib/integrations'
 
 const previousApiBase = process.env.TELEGRAM_API_BASE
 
@@ -7,6 +7,32 @@ afterEach(() => {
   vi.restoreAllMocks()
   if (previousApiBase === undefined) delete process.env.TELEGRAM_API_BASE
   else process.env.TELEGRAM_API_BASE = previousApiBase
+})
+
+describe('TikTok webhook signature freshness', () => {
+  it('accepts recent seconds and milliseconds timestamps', () => {
+    const now = 1_800_000_000_000
+    expect(isTikTokWebhookTimestampFresh(String(Math.floor(now / 1000)), now)).toBe(true)
+    expect(isTikTokWebhookTimestampFresh(String(now), now)).toBe(true)
+  })
+
+  it('rejects missing, malformed, stale and future timestamps', () => {
+    const now = 1_800_000_000_000
+    expect(isTikTokWebhookTimestampFresh(null, now)).toBe(false)
+    expect(isTikTokWebhookTimestampFresh('not-a-timestamp', now)).toBe(false)
+    expect(isTikTokWebhookTimestampFresh(String(now - 6 * 60 * 1000), now)).toBe(false)
+    expect(isTikTokWebhookTimestampFresh(String(now + 60 * 1000), now)).toBe(false)
+  })
+
+  it('requires a fresh timestamp even when the body HMAC matches', () => {
+    const { createHmac } = require('crypto')
+    const body = '{"event":"message"}'
+    const secret = 'synthetic-tiktok-secret'
+    const stale = String(Date.now() - 10 * 60 * 1000)
+    const signature = createHmac('sha256', secret).update(body).digest('hex')
+    expect(verifyTikTokSignature(body, secret, signature, stale)).toBe(false)
+    expect(verifyTikTokSignature(body, secret, signature, null)).toBe(false)
+  })
 })
 
 describe('Telegram Bot API outbound adapter', () => {
