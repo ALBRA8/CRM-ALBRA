@@ -338,6 +338,21 @@ export async function reconcileUnknownChannelOutboundMessage(input: {
     }
 
     const now = new Date()
+    // Compare-and-swap prevents two operator requests from reconciling the
+    // same unknown intent concurrently. All following writes roll back if
+    // any provider echo or message consistency check fails.
+    const reconciliationClaim = await tx.channelOutboundMessage.updateMany({
+      where: { id: outbound.id, status: 'unknown' },
+      data: {
+        status: input.resolution,
+        providerErrorCode: 'MANUAL_RECONCILIATION_IN_PROGRESS',
+        finishedAt: now,
+      },
+    })
+    if (reconciliationClaim.count !== 1) {
+      throw new ChannelOutboundError('La intención ya fue conciliada por otro proceso', 'INVALID_STATE')
+    }
+
     if (input.resolution === 'sent') {
       const echoedMessage = input.providerMessageId
         ? await tx.channelMessage.findUnique({
