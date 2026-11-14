@@ -183,11 +183,6 @@ export async function POST(req: NextRequest) {
     if (!ALLOWED_POST.includes(path)) {
       return json({ error: `path no permitido: ${path}` }, { status: 400 })
     }
-    // El envío legacy por Baileys evita el pipeline canónico y sus kill-switches.
-    // Mantenerlo autenticado pero fail-closed; los mensajes deben entrar por outbox.
-    if (path === '/send') {
-      return json({ error: 'El envío directo legacy está deshabilitado; usa la outbox canónica.', code: 'LEGACY_SEND_DISABLED' }, { status: 409 })
-    }
     // RBAC por operación (contrato rbac-gaps): conectar/desconectar/cerrar la
     // sesión de WhatsApp de la org es integración (admin-only, 'integrations.*')
     // y va ANTES del guard de sesión; enviar mensajes es operativo
@@ -204,6 +199,11 @@ export async function POST(req: NextRequest) {
       const op: Op = path === '/connect' ? 'connect' : 'operate'
       const denied = sessionGate(await resolveOwnership(auth.orgId), op)
       if (denied) return denied
+      // El envío legacy por Baileys evita el pipeline canónico y sus kill-switches.
+      // Verificamos primero ownership/RBAC para no revelar estado de la ruta a otro tenant.
+      if (path === '/send') {
+        return json({ error: 'El envío directo legacy está deshabilitado; usa la outbox canónica.', code: 'LEGACY_SEND_DISABLED' }, { status: 409 })
+      }
       const payload = { ...body, orgId: auth.orgId }
       const res = await fetch(`${DAEMON_URL}${path}`, {
         method: 'POST',
