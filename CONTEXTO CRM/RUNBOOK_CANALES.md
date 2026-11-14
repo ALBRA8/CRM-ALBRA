@@ -179,3 +179,5 @@ Esta prueba requiere un entorno staging aislado, un destinatario de prueba conse
 10. Desactivar el flag, retirar el secreto del worker y detener cualquier scheduler al terminar. Documentar la evidencia sin PII ni credenciales.
 
 No habilitar los tres canales a la vez en la primera prueba. La aprobación de un canal no autoriza activar los demás ni producción.
+
+- La suite de integración de Workflow Outbox verifica reclamación concurrente (un solo envío por intención), fencing frente a ACK tardío tras cuarentena, resultado ambiguo sin reintento, aislamiento entre organizaciones, idempotencia/conflicto de payload y autenticación/feature gate del endpoint. Son pruebas con proveedor simulado; no demuestran aceptación en sandbox externo.
