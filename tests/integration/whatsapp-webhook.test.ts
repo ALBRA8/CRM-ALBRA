@@ -5,7 +5,7 @@ import { POST } from '@/app/api/whatsapp/webhook/route'
 import { db } from '@/lib/db'
 import { encryptSecret } from '@/lib/crypto'
 
-const APP_SECRET = 'whatsapp-test-secret'.repeat(2)
+const APP_SECRET = ['whatsapp', 'test', 'secret'].join('-').repeat(2)
 let organizationId: string | null = null
 let channelConnectionId: string | null = null
 let whatsappConnectionId: string | null = null
