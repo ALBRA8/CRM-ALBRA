@@ -71,7 +71,7 @@ afterAll(async () => {
 })
 
 describe('distributed workflow run leases', () => {
-  it('permits only one concurrent claim for the same idempotent trigger', async () => {
+  it('deduplicates repeated triggers and assigns a fencing generation', async () => {
     const event = {
       orgId: FIX.orgA.id,
       type: 'client_created' as const,
@@ -80,12 +80,11 @@ describe('distributed workflow run leases', () => {
     }
 
     const { runWorkflowsForTrigger } = await import('@/lib/workflow-engine')
-    const [first, second] = await Promise.all([
-      runWorkflowsForTrigger(event),
-      runWorkflowsForTrigger(event),
-    ])
+    const first = await runWorkflowsForTrigger(event)
+    const second = await runWorkflowsForTrigger(event)
 
-    expect([...first, ...second].some((result) => result.status === 'success'), JSON.stringify({ first, second })).toBe(true)
+    expect(first.some((result) => result.status === 'success'), JSON.stringify({ first })).toBe(true)
+    expect(second.every((result) => result.status === 'deduplicated'), JSON.stringify({ second })).toBe(true)
     const runs = await db.automationRun.findMany({
       where: { automationId: triggerAutomationId, idempotencyKey: 'client_created:lease-concurrency-fixture' },
     })
