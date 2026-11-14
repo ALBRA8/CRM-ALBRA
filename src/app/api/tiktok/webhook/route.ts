@@ -7,6 +7,7 @@ import {
   findOrCreateChannelClient,
   buildNichoContext,
   getHandoffKeywords,
+  isChannelAutoReplyGloballyEnabled,
 } from '@/lib/integrations'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
       const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
       const state = parseTikTokState(integration?.tiktokTokenEnc)
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      if (state.accessToken && state.sendEndpoint && (nicho?.autoReplyEnabled ?? true)) {
+      if (isChannelAutoReplyGloballyEnabled() && state.accessToken && state.sendEndpoint && (nicho?.autoReplyEnabled ?? true)) {
         await llmReplyOrNotification({
           orgId,
           clientId: client?.id || null,
