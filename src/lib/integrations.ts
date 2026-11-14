@@ -469,15 +469,28 @@ export async function sendTikTokBusinessMessage(opts: {
  * variantes (secret sobre body, o sobre timestamp+body): se aceptan ambas en
  * tiempo constante. Devuelve true si alguna coincide.
  */
+export const TIKTOK_WEBHOOK_MAX_AGE_MS = 5 * 60 * 1000
+const TIKTOK_WEBHOOK_FUTURE_SKEW_MS = 30 * 1000
+
+/** TikTok timestamp (seconds or milliseconds) must be recent and not future-dated. */
+export function isTikTokWebhookTimestampFresh(timestamp: string | null, now = Date.now()): boolean {
+  if (!timestamp || !/^\\d{10,13}$/.test(timestamp)) return false
+  const parsed = Number(timestamp)
+  const timestampMs = timestamp.length <= 10 ? parsed * 1000 : parsed
+  const ageMs = now - timestampMs
+  return Number.isFinite(timestampMs) &&
+    ageMs <= TIKTOK_WEBHOOK_MAX_AGE_MS &&
+    ageMs >= -TIKTOK_WEBHOOK_FUTURE_SKEW_MS
+}
+
 export function verifyTikTokSignature(
   rawBody: string,
   appSecret: string,
   signature: string | null,
   timestamp: string | null,
 ): boolean {
-  if (!signature) return false
-  const candidates: string[] = [rawBody]
-  if (timestamp) candidates.push(`${timestamp}${rawBody}`, `${timestamp}.${rawBody}`)
+  if (!signature || !isTikTokWebhookTimestampFresh(timestamp)) return false
+  const candidates: string[] = [`${timestamp}${rawBody}`, `${timestamp}.${rawBody}`]
   for (const msg of candidates) {
     const mac = createHmac('sha256', appSecret).update(msg).digest('hex')
     if (safeEquals(mac, signature)) return true
