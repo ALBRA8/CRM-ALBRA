@@ -40,7 +40,7 @@ describe('TikTok OAuth refresh contract', () => {
       requestUrl = String(input)
       requestInit = init
       return new Response(JSON.stringify({
-        access_token: 'synthetic-new-access-token',
+        access_token: 'synthetic-new-access-token', // scan-secrets:allow — token OAuth sintético de test
         expires_in: 7200,
         refresh_token: 'synthetic-rotated-refresh-token',
         refresh_expires_in: 15_552_000,
@@ -53,8 +53,8 @@ describe('TikTok OAuth refresh contract', () => {
     const result = await refreshTikTokUserAccessToken({
       state: {
         appKey: 'synthetic-client-key',
-        appSecret: 'synthetic-client-secret',
-        accessToken: 'synthetic-old-access-token',
+        appSecret: 'synthetic-client-secret', // scan-secrets:allow — secreto OAuth sintético de test
+        accessToken: 'synthetic-old-access-token', // scan-secrets:allow — token OAuth sintético de test
         refreshToken: 'synthetic-old-refresh-token',
         openId: 'synthetic-open-id',
       },
@@ -82,7 +82,7 @@ describe('TikTok OAuth refresh contract', () => {
       error_description: 'refresh token expired',
     }), { status: 400 })
     const result = await refreshTikTokUserAccessToken({
-      state: { appKey: 'synthetic-client-key', appSecret: 'synthetic-client-secret', refreshToken: 'synthetic-expired-refresh-token' },
+      state: { appKey: 'synthetic-client-key', appSecret: 'synthetic-client-secret', refreshToken: 'synthetic-expired-refresh-token' }, // scan-secrets:allow — credenciales OAuth sintéticas de test
       fetchImpl,
     })
     expect(result).toEqual({
