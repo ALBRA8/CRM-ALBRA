@@ -650,111 +650,12 @@ export async function sendInboxMessage(opts: {
   clientId?: string | null
   text: string
 }): Promise<InboxSendResult> {
-  // Fail closed: los identificadores legacy no están conectados a la outbox canónica.
-  // Nunca llamar proveedores directamente desde esta función.
-  if (!opts.key.startsWith('cc:')) {
-    return { ok: false, error: 'El envío legacy está deshabilitado; usa una conversación canónica de la outbox.' }
+  // Defensa en profundidad: esta función ya no tiene permiso para hacer envíos
+  // directos. Los envíos válidos se persisten desde /api/inbox/send en la outbox.
+  if (opts.key.startsWith('cc:')) {
+    return { ok: false, error: 'Usa el endpoint de la bandeja para encolar la conversación canónica.' }
   }
-
-  // Canal WhatsApp directo (Task 19-b): sin conversación previa, se crea al vuelo.
-  const waNewPhone = parseWaNewKey(opts.key)
-  if (waNewPhone) {
-    return sendWhatsAppDirect({
-      orgId: opts.orgId,
-      userId: opts.userId,
-      phone: waNewPhone,
-      clientId: opts.clientId,
-      text: opts.text,
-    })
-  }
-
-  if (opts.key.startsWith('cc:')) return { ok: false, error: 'El envío desde conversaciones canónicas aún está deshabilitado; no se usará una cuenta legacy por fallback.' }
-  const parsed = parseInboxKey(opts.key)
-  if (!parsed || !parsed.channel) return { ok: false, error: 'Conversación inválida' }
-  const text = opts.text.trim().slice(0, 4000)
-  if (!text) return { ok: false, error: 'El mensaje está vacío' }
-
-  try {
-    if (parsed.channel === 'whatsapp') {
-      return await sendViaDaemon(opts.contactHandle, text)
-    }
-
-    const integration = await getIntegration(opts.orgId)
-
-    if (parsed.channel === 'telegram') {
-      const state = parseTelegramState(integration.telegramBotTokenEnc)
-      if (!state.token) return { ok: false, error: 'Telegram no configurado. Guarda el Bot Token en Configuración → Telegram.' }
-      const result = await sendTelegramBotMessage({ token: state.token, chatId: opts.contactHandle, text })
-      if (!result.ok) return { ok: false, error: `Telegram no pudo enviar: ${result.error}` }
-      await recordTimelineEvent({
-        orgId: opts.orgId,
-        clientId: opts.clientId || null,
-        type: 'telegram',
-        title: 'Mensaje enviado por Telegram',
-        description: text.slice(0, 300),
-        metadata: { chatId: String(opts.contactHandle), direction: 'out' },
-        source: 'manual',
-        userId: opts.userId,
-      })
-      return { ok: true }
-    }
-
-    // Instagram
-    if (parsed.channel === 'instagram') {
-      const igState = parseInstagramState(integration.instagramTokenEnc)
-      if (!igState.token) return { ok: false, error: 'Instagram no configurado. Guarda el Access Token en Configuración → Instagram.' }
-      const result = await sendInstagramGraphMessage({
-        token: igState.token,
-        accountId: integration.instagramAccountId || '',
-        recipientId: opts.contactHandle,
-        text,
-      })
-      if (!result.ok) return { ok: false, error: `Instagram no pudo enviar: ${result.error}` }
-      await recordTimelineEvent({
-        orgId: opts.orgId,
-        clientId: opts.clientId || null,
-        type: 'instagram',
-        title: 'Mensaje enviado por Instagram',
-        description: text.slice(0, 300),
-        metadata: { recipientId: String(opts.contactHandle), direction: 'out' },
-        source: 'manual',
-        userId: opts.userId,
-      })
-      return { ok: true }
-    }
-
-    // Facebook (Messenger de la Página)
-    if (parsed.channel === 'facebook') {
-      const fbState = parseFacebookState(integration.facebookTokenEnc)
-      if (!fbState.pageToken || !integration.facebookPageId) {
-        return { ok: false, error: 'Facebook no configurado. Guarda el Page Token y el Page ID en Configuración → Facebook.' }
-      }
-      const result = await sendFacebookGraphMessage({
-        token: fbState.pageToken,
-        pageId: integration.facebookPageId,
-        recipientId: opts.contactHandle,
-        text,
-      })
-      if (!result.ok) return { ok: false, error: `Facebook no pudo enviar: ${result.error}` }
-      await recordTimelineEvent({
-        orgId: opts.orgId,
-        clientId: opts.clientId || null,
-        type: 'facebook',
-        title: 'Mensaje enviado por Facebook',
-        description: text.slice(0, 300),
-        metadata: { recipientId: String(opts.contactHandle), direction: 'out' },
-        source: 'manual',
-        userId: opts.userId,
-      })
-      return { ok: true }
-    }
-
-    // Canal desconocido (parseInboxKey solo produce los 4 de arriba; fail-closed)
-    return { ok: false, error: 'Canal no soportado' }
-  } catch (err) {
-    console.error('[inbox] sendInboxMessage falló', err)
-    return { ok: false, error: 'No se pudo enviar el mensaje. Intenta de nuevo.' }
-  }
+  return { ok: false, error: 'El envío legacy está deshabilitado; usa una conversación canónica de la outbox.' }
 }
 
 
