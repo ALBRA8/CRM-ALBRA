@@ -4,7 +4,11 @@ import { jsonBody, req, tokenA } from '../helpers'
 
 describe('POST /api/whatsapp/daemon-proxy — legacy send guard', () => {
   it('rechaza /send sin contactar al daemon', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    const fetchSpy = vi.fn(async (url: string | URL) => {
+      expect(String(url)).toMatch(/\\/status$/)
+      return new Response(JSON.stringify({ status: 'connected', orgLinked: true, linkedOrgId: 'org-a' }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchSpy)
     try {
       const res = await daemonProxyPOST(req('/api/whatsapp/daemon-proxy', {
         method: 'POST',
@@ -13,9 +17,9 @@ describe('POST /api/whatsapp/daemon-proxy — legacy send guard', () => {
       }))
       expect(res.status).toBe(409)
       expect(await jsonBody(res)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
-      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
     } finally {
-      fetchSpy.mockRestore()
+      vi.unstubAllGlobals()
     }
   })
 })
