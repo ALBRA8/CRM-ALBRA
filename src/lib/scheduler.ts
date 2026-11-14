@@ -105,6 +105,7 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
               organizationId: automation.organizationId,
               automationId: automation.id,
               input: JSON.stringify(payload).slice(0, 5000),
+              stepLedgerVersion: 1,
               idempotencyKey: `schedule:${scheduledAt}`.slice(0, 180),
             },
           })
