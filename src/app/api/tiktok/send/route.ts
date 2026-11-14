@@ -6,7 +6,7 @@ import { getIntegration, parseTikTokState, sendTikTokBusinessMessage } from '@/l
 import { recordTimelineEvent } from '@/lib/timeline'
 
 /**
- * POST /api/tiktok/send — { to: conversationId|userId, text }
+ * POST /api/tiktok/send — { to: conversationId, text }
  * Envía un DM por el Business Messaging API de TikTok. Sin acceso de socio
  * aprobado devuelve un error estructurado (notAuthorized), nunca un fallo silencioso.
  */
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     const integration = await getIntegration(auth.orgId)
     const state = parseTikTokState(integration.tiktokTokenEnc)
 
-    const sent = await sendTikTokBusinessMessage({ state, recipientId: to, text })
+    const sent = await sendTikTokBusinessMessage({ state, conversationId: to, text })
 
     await recordTimelineEvent({
       orgId: auth.orgId,
