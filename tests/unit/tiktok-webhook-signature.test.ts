@@ -100,6 +100,25 @@ describe('TikTok inbound message identity parsing', () => {
     })).toBeNull()
   })
 
+  it('parses the Business Messaging content envelope without conflating account, sender and conversation IDs', () => {
+    expect(extractTikTokMessage({
+      client_key: 'synthetic-client-key',
+      user_openid: 'business-open-id',
+      event: 'DIRECT_MESSAGE',
+      content: JSON.stringify({
+        message: {
+          sender: { open_id: 'person-789' },
+          conversation_id: 'conversation-987',
+          text: 'Mensaje desde envelope',
+        },
+      }),
+    })).toEqual({
+      senderId: 'person-789',
+      conversationId: 'conversation-987',
+      text: 'Mensaje desde envelope',
+    })
+  })
+
   it('rejects messages without a provider conversation ID instead of creating an unthreaded CRM event', () => {
     expect(extractTikTokMessage({
       message: { sender: { id: 'person-123' }, text: 'Hola' },
