@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { db } from '@/lib/db'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection, getOrCreateMessengerWebhookConnection } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection, getOrCreateMessengerWebhookConnection, getOrCreateTikTokWebhookConnection } from '@/lib/channel-webhook-events'
 import { FIX } from '../setup/seed-data'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -271,5 +271,54 @@ describe('Channel webhook event ledger', () => {
       eventType: 'whatsapp.message',
     })).rejects.toThrow('Invalid channel webhook event identity')
     expect(await db.channelWebhookEvent.count({ where: { connectionId: connection.id } })).toBe(0)
+  })
+})
+
+
+describe('TikTok webhook event identity', () => {
+  it('creates one tenant-scoped app connection and claims a provider event once', async () => {
+    const appIdentity = 'synthetic-app-key/with+symbols='
+    const [a, b] = await Promise.all([
+      getOrCreateTikTokWebhookConnection({ organizationId: FIX.orgA.id, appIdentity, credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials' }),
+      getOrCreateTikTokWebhookConnection({ organizationId: FIX.orgA.id, appIdentity, credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials' }),
+    ])
+    connectionIds.push(a.id)
+    expect(a.id).toBe(b.id)
+
+    const input = {
+      organizationId: FIX.orgA.id,
+      connectionId: a.id,
+      eventKey: 'event:' + 'a'.repeat(64),
+      eventType: 'tiktok.message',
+    }
+    const claims = await Promise.all([
+      claimChannelWebhookEvent(input),
+      claimChannelWebhookEvent(input),
+    ])
+    expect(claims.filter(Boolean)).toHaveLength(1)
+    const claim = claims.find(Boolean)!
+    expect((await completeChannelWebhookEvent(claim)).count).toBe(1)
+    expect(await claimChannelWebhookEvent(input)).toBeNull()
+    expect(await getChannelWebhookEventStatus(a.id, input.eventKey)).toBe('processed')
+  })
+
+  it('isolates identical TikTok app identities across organizations', async () => {
+    const appIdentity = 'synthetic-shared-app-key'
+    const a = await getOrCreateTikTokWebhookConnection({
+      organizationId: FIX.orgA.id,
+      appIdentity,
+      credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials',
+    })
+    const b = await getOrCreateTikTokWebhookConnection({
+      organizationId: FIX.orgB.id,
+      appIdentity,
+      credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials',
+    })
+    connectionIds.push(a.id, b.id)
+    expect(a.id).not.toBe(b.id)
+    const ownerA = await db.channelConnection.findUnique({ where: { id: a.id }, select: { organizationId: true } })
+    const ownerB = await db.channelConnection.findUnique({ where: { id: b.id }, select: { organizationId: true } })
+    expect(ownerA?.organizationId).toBe(FIX.orgA.id)
+    expect(ownerB?.organizationId).toBe(FIX.orgB.id)
   })
 })
