@@ -12,6 +12,7 @@ beforeAll(async () => {
   // The shared integration setup mocks the workflow engine for route tests.
   // These cases exercise its real database lease/ledger implementation.
   vi.doUnmock('@/lib/workflow-engine')
+  vi.resetModules()
   const triggerAutomation = await db.automation.create({
     data: {
       organizationId: FIX.orgA.id,
