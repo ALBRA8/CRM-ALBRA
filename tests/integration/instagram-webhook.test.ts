@@ -168,6 +168,30 @@ describe('POST /api/instagram/webhook — multi-account batch and durable echo l
       where: { connectionId: { in: [connectionA.id, connectionB.id] } },
     })).toBe(2)
   })
+  it('skips inbound messages without a stable provider MID before CRM side effects', async () => {
+    const accountId = '17840000000000993'
+    const connection = await createInstagramConnection(accountId)
+    const payload = {
+      object: 'instagram',
+      entry: [{
+        id: accountId,
+        messaging: [{
+          sender: { id: 'contact-missing-mid' },
+          recipient: { id: accountId },
+          message: { text: 'No debe generar efectos sin MID' },
+        }],
+      }],
+    }
+
+    const response = await POST(signedRequest(JSON.stringify(payload)))
+    expect(response.status).toBe(200)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: connection.id } })).toBe(0)
+    expect(await db.channelConversation.count({ where: { connectionId: connection.id } })).toBe(0)
+    expect(await db.timelineEvent.count({
+      where: { organizationId: FIX.orgA.id, type: 'instagram', description: 'No debe generar efectos sin MID' },
+    })).toBe(0)
+  })
+
   it('does not auto-reply to inbound messages unless the explicit flag is enabled', async () => {
     const previous = process.env.CHANNEL_AUTOREPLY_ENABLED
     delete process.env.CHANNEL_AUTOREPLY_ENABLED
