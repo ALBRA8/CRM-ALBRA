@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { db } from '@/lib/db'
 import { encryptSecret } from '@/lib/crypto'
-import { encodeTikTokState, parseTikTokState, refreshTikTokUserAccessToken } from '@/lib/integrations'
+import { parseTikTokState, refreshTikTokUserAccessToken } from '@/lib/integrations'
 
 const REFRESH_SKEW_MS = 5 * 60 * 1000
 const REFRESH_LEASE_MS = 30 * 1000
