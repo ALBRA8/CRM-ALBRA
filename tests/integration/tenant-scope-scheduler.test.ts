@@ -293,4 +293,50 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
     }
   })
 
+
+  it('reanuda desde el siguiente paso cuando los pasos previos están confirmados', async () => {
+    const automation = await db.automation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        name: 'Workflow safe recovery',
+        triggerType: 'client_created',
+        isActive: true,
+        actions: JSON.stringify([{ type: 'create_task_like_notification', config: { title: 'must not duplicate' } }]),
+      },
+    })
+    const run = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: automation.id,
+        status: 'processing',
+        startedAt: minutesAgo(11),
+        input: JSON.stringify({ id: 'safe-recovery-event' }),
+        stepLedgerVersion: 1,
+      },
+    })
+    await db.workflowStepExecution.create({
+      data: {
+        automationRunId: run.id,
+        stepIndex: 0,
+        actionType: 'create_task_like_notification',
+        status: 'succeeded',
+        output: JSON.stringify({ notification: true }),
+        finishedAt: minutesAgo(11),
+      },
+    })
+
+    try {
+      await runDueJobs({ orgId: FIX.orgA.id })
+      const persisted = await db.automationRun.findUnique({ where: { id: run.id } })
+      const count = await db.notification.count({
+        where: { organizationId: FIX.orgA.id, title: 'must not duplicate' },
+      })
+      expect(persisted?.status).toBe('success')
+      expect(count).toBe(0) // el paso confirmado se omite, no se ejecuta otra vez
+    } finally {
+      await db.automationRun.deleteMany({ where: { id: run.id } })
+      await db.automation.deleteMany({ where: { id: automation.id } })
+    }
+  })
+
 })
