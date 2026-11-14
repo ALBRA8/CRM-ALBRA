@@ -389,19 +389,52 @@ async function runActionSteps(
       return { done: false, stepStates, outputs, waitMs: waitDurationMs(action.config), nextStep: i + 1 }
     }
 
+    // WRITE-AHEAD: la fila se crea antes de cualquier efecto. La restricción
+    // única (run, step) impide que otro intento ejecute el mismo paso.
+    let stepRecord
+    try {
+      stepRecord = await db.workflowStepExecution.create({
+        data: { automationRunId: execution.runId, stepIndex: i, actionType: action.type, status: 'started' },
+      })
+    } catch (claimError) {
+      const existing = await db.workflowStepExecution.findUnique({
+        where: { automationRunId_stepIndex: { automationRunId: execution.runId, stepIndex: i } },
+      })
+      if (existing?.status === 'succeeded') {
+        const saved = safeParse<Record<string, unknown>>(existing.output) || {}
+        outputs.push(saved)
+        stepStates[i] = { type: action.type, status: saved.pending === true ? (saved.queued === true ? 'queued' : 'skipped') : 'success' }
+        continue
+      }
+      const message = existing?.status === 'started' || existing?.status === 'unknown'
+        ? 'WORKFLOW_STEP_OUTCOME_UNKNOWN: paso previamente iniciado; no se reejecuta'
+        : (claimError instanceof Error ? claimError.message : String(claimError))
+      const blocked = new Error(message) as Error & { stepStates?: StepState[] }
+      stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300) }
+      blocked.stepStates = stepStates
+      throw blocked
+    }
+
     try {
       const out = await executeAction(orgId, action, ctx, { ...execution, stepIndex: i })
+      await db.workflowStepExecution.update({
+        where: { id: stepRecord.id },
+        data: { status: 'succeeded', output: JSON.stringify(out).slice(0, 5000), finishedAt: new Date() },
+      })
       outputs.push(out)
       // "queued" confirma persistencia durable de la intención, no entrega al proveedor.
-      // Una acción externa sin outbox queda skipped/pending y no bloquea pasos internos.
       const stepStatus = out.pending === true
         ? (out.queued === true ? 'queued' : 'skipped')
         : 'success'
       stepStates[i] = { type: action.type, status: stepStatus, ms: Date.now() - t0 }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      // No se puede probar si el efecto ocurrió antes del error: dejar unknown.
+      await db.workflowStepExecution.update({
+        where: { id: stepRecord.id },
+        data: { status: 'unknown', error: message.slice(0, 300), finishedAt: new Date() },
+      }).catch(() => undefined)
       stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300), ms: Date.now() - t0 }
-      // Propaga el error llevando los stepStates parciales para persistirlos
       const wrapped = err instanceof Error ? err : new Error(message)
       ;(wrapped as Error & { stepStates?: StepState[] }).stepStates = stepStates
       throw wrapped
@@ -457,6 +490,14 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
         continue
       }
       throw err
+    }
+    const runClaim = await db.automationRun.updateMany({
+      where: { id: run.id, organizationId: event.orgId, status: 'running' },
+      data: { status: 'processing' },
+    })
+    if (runClaim.count === 0) {
+      results.push({ automationId: automation.id, status: 'already_claimed' })
+      continue
     }
     try {
       const conditions = safeParse<Condition[]>(automation.conditions)
