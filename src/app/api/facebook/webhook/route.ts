@@ -127,12 +127,6 @@ export async function POST(req: NextRequest) {
             eventType: 'messenger.message',
           })
           if (!eventClaim) continue
-        } else {
-          const seen = await db.timelineEvent.findFirst({
-            where: { organizationId: orgId, type: 'facebook', metadata: { contains: '"direction":"in"' } },
-            select: { id: true },
-          })
-          if (seen) continue
         }
 
         try {
