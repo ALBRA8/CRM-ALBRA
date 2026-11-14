@@ -64,6 +64,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // No permitir que las keys legacy evadan el worker y la outbox canónica.
+    // La bandeja debe usar cc:<conversationId> para cualquier envío.
+    return json({ error: 'El envío legacy está deshabilitado; abre una conversación canónica para enviar.', code: 'LEGACY_SEND_DISABLED' }, { status: 409 })
+
     const result = await sendInboxMessage({
       orgId: auth.orgId,
       userId: auth.userId,
