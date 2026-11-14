@@ -18,7 +18,7 @@ export async function getOrCreateTelegramWebhookConnection(input: {
   botId: string
   credentialsEnc: string
 }): Promise<{ id: string }> {
-  if (!/^\\d{1,20}$/.test(input.botId)) throw new Error('Invalid Telegram bot identity')
+  if (!/^\d{1,20}$/.test(input.botId)) throw new Error('Invalid Telegram bot identity')
   const providerAccountKey = `telegram:bot:${input.botId}`
   const existing = await db.channelConnection.findUnique({
     where: { providerAccountKey },
