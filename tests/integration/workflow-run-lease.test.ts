@@ -68,6 +68,10 @@ afterAll(async () => {
   await db.automation.deleteMany({
     where: { id: { in: [triggerAutomationId, recoveryAutomationId] } },
   })
+  // resetModules() loads a fresh Prisma singleton for the real workflow engine.
+  // Close both clients so Vitest can terminate cleanly.
+  const { db: workflowDb } = await import('@/lib/db')
+  await workflowDb.$disconnect()
   await db.$disconnect()
 })
 
