@@ -252,7 +252,7 @@ export async function sendTelegramBotMessage(opts: {
   token: string
   chatId: string | number
   text: string
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; messageId?: string; error?: string }> {
   try {
     // TELEGRAM_API_BASE: override SOLO para pruebas E2E con mock local; en producción
     // siempre la oficial (https://api.telegram.org).
@@ -263,8 +263,8 @@ export async function sendTelegramBotMessage(opts: {
       body: JSON.stringify({ chat_id: opts.chatId, text: opts.text.slice(0, 4096) }),
       signal: AbortSignal.timeout(10_000),
     })
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string }
-    if (res.ok && data.ok) return { ok: true }
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string; result?: { message_id?: number } }
+    if (res.ok && data.ok && Number.isInteger(data.result?.message_id)) return { ok: true, messageId: String(data.result!.message_id) }
     return { ok: false, error: data.description || `HTTP ${res.status}` }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
