@@ -171,27 +171,28 @@ export async function POST(req: NextRequest) {
           if (canonicalConversation && msg.mid) {
             // Persist inbound identity in the canonical thread. Provider mid is
             // unique per conversation and prevents duplicate canonical messages.
-            await db.channelMessage.upsert({
-              where: {
-                conversationId_externalMessageId: {
+            let insertedInbound = false
+            try {
+              await db.channelMessage.create({
+                data: {
                   conversationId: canonicalConversation.id,
                   externalMessageId: msg.mid,
+                  direction: 'in',
+                  senderType: 'contact',
+                  body: text,
+                  metadata: JSON.stringify({ senderId, source: 'messenger_webhook' }),
                 },
-              },
-              create: {
-                conversationId: canonicalConversation.id,
-                externalMessageId: msg.mid,
-                direction: 'in',
-                senderType: 'contact',
-                body: text,
-                metadata: JSON.stringify({ senderId, source: 'messenger_webhook' }),
-              },
-              update: {},
-            })
-            await db.channelConversation.update({
-              where: { id: canonicalConversation.id },
-              data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
-            })
+              })
+              insertedInbound = true
+            } catch (error) {
+              if ((error as { code?: string } | null)?.code !== 'P2002') throw error
+            }
+            if (insertedInbound) {
+              await db.channelConversation.update({
+                where: { id: canonicalConversation.id },
+                data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
+              })
+            }
           }
 
           if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true) && canonicalConversation && msg.mid) {
