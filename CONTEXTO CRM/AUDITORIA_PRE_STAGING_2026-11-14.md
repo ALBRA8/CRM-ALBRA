@@ -119,3 +119,11 @@ Commits de código:
 Motivo: sin un ID estable del proveedor no existe una clave durable fiable para deduplicar una entrega repetida. Se prefiere omitir el evento malformado antes que producir efectos duplicados. Esta corrección no resuelve el lease distribuido del scheduler ni integra TikTok en la outbox.
 
 Validación pendiente para estos commits: CI completo en el HEAD resultante, incluidos tests y build. La prueba añadida cubre Instagram; deben añadirse pruebas equivalentes de ruta para WhatsApp y Messenger antes de cerrar la matriz de canales.
+
+
+### Cobertura de prueba ampliada
+
+- Se añadió `tests/integration/messenger-webhook.test.ts`: firma HMAC sintética, Page/tenant aislados y comprobación de que un mensaje Messenger sin MID no genera evento de ledger ni timeline.
+- El test de Instagram equivalente está en `tests/integration/instagram-webhook.test.ts`.
+- No se han añadido todavía pruebas equivalentes de ruta para WhatsApp ni una prueba de replay de extremo a extremo para TikTok; esos puntos siguen abiertos.
+- HEAD de código/documentación en esta actualización: `ab90228acdfac327a52c3e7fb783c08dde3511a9`. CI push para este SHA está en ejecución; no hay conclusión final aún.
