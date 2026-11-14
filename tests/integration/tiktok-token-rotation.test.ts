@@ -16,7 +16,7 @@ afterEach(async () => {
   }
 })
 
-async function createConnection(overrides: Record<string, unknown> = {}) {
+async function createConnection(overrides: { refreshState?: string; refreshLeaseToken?: string | null; refreshLeaseExpiresAt?: Date | null; refreshFencingVersion?: number } = {}) {
   const id = `tiktok-refresh-${suffix()}`
   const state = {
     accessToken: ['synthetic', 'old', 'access', 'token'].join('-'),
