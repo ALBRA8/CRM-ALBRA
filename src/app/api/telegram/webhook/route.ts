@@ -188,38 +188,41 @@ export async function POST(req: NextRequest) {
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
 
       if (!wantsHuman && (nicho?.autoReplyEnabled ?? true)) {
+        let reply = ''
         try {
           const nichoCtx = await buildNichoContext(orgId)
-          const reply = await llmChat(
+          reply = await llmChat(
             orgId,
             [
               {
                 role: 'system',
-                content: `Eres el agente comercial por Telegram de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\n\n${SALES_STRATEGY_PROMPT}\nCONTEXTO DEL NEGOCIO:\n${nichoCtx}\n\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
+                content: `Eres el agente comercial por Telegram de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\\n\\n${SALES_STRATEGY_PROMPT}\\nCONTEXTO DEL NEGOCIO:\\n${nichoCtx}\\n\\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
               },
               { role: 'user', content: text },
             ],
             { temperature: 0.5 }
           )
-          if (reply.trim()) {
-            const queued = await enqueueTelegramWebhookReply({
-              organizationId: orgId,
-              updateId: update.update_id,
-              chatId: message.chat.id,
-              text: reply.trim(),
-            })
-            await recordTimelineEvent({
-              orgId,
-              clientId: client?.id || null,
-              type: 'telegram',
-              title: 'Respuesta automática del agente IA en cola',
-              description: reply.trim().slice(0, 500),
-              metadata: { chatId: String(message.chat.id), direction: 'out', deliveryStatus: 'queued', outboxId: queued.id },
-              source: 'agent',
-            })
-          }
         } catch (err) {
-          console.error('[telegram webhook] auto-respuesta IA falló', err)
+          // Un fallo de IA no debe impedir registrar el mensaje inbound.
+          console.error('[telegram webhook] generación de auto-respuesta falló', err)
+        }
+        if (reply.trim()) {
+          // Si no se puede persistir la intención, el claim falla y Telegram reintenta.
+          const queued = await enqueueTelegramWebhookReply({
+            organizationId: orgId,
+            updateId: update.update_id,
+            chatId: message.chat.id,
+            text: reply.trim(),
+          })
+          await recordTimelineEvent({
+            orgId,
+            clientId: client?.id || null,
+            type: 'telegram',
+            title: 'Respuesta automática del agente IA en cola',
+            description: reply.trim().slice(0, 500),
+            metadata: { chatId: String(message.chat.id), direction: 'out', deliveryStatus: 'queued', outboxId: queued.id },
+            source: 'agent',
+          }).catch((err) => console.error('[telegram webhook] timeline de respuesta en cola', err))
         }
       } else if (wantsHuman && state.token) {
         // Transferencia a humano: notificación in-app + web-push (no responde la IA)
