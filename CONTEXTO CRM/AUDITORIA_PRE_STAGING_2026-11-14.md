@@ -271,3 +271,12 @@ El diseño aún requiere revisión de todas las rutas de escritura del motor y u
 8. **Release:** mantener PR draft, sin merge/deploy, y flags de despacho/auto-respuesta apagados hasta la aprobación específica de staging.
 
 No se declara staging aprobado en este commit. La evidencia de CI de los cambios de idempotencia está pendiente.
+
+
+## Endurecimiento del backup drill — 2026-11-14
+
+- `scripts/backup-restore-drill.sh` ya no copia el archivo definido por `DATABASE_URL` ni `db/custom.db`. Ahora crea una SQLite vacía desde el schema Prisma y siembra exclusivamente organización, usuario y registros sintéticos.
+- El script exige Prisma local. Para acreditar almacenamiento remoto exige `BACKUP_REMOTE_DEST` y rclone; la simulación local solo se permite con `BACKUP_DRILL_ALLOW_LOCAL_SIMULATION=1` y su salida se etiqueta como PASS LOCAL, no como recuperación remota.
+- La recuperación del artefacto remoto se hace con `rclone copy` hacia el sandbox local antes de restaurar y verificar el hash.
+- El drill **no se ejecutó** en esta sesión. No hay evidencia de RPO/RTO ni de restore remoto; solo se eliminó el riesgo de copiar por defecto una base posiblemente real. Debe probarse primero en entorno aislado.
+- HEAD del código al registrar esta nota: `8c243ba2b898227a2818e5bd19004dd9b0cc27b5`. CI push de ese SHA seguía `in_progress`; no certificar el resultado hasta verificar CI de PR y push del SHA final.
