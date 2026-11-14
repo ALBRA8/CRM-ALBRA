@@ -312,6 +312,9 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
         startedAt: minutesAgo(11),
         input: JSON.stringify({ id: 'safe-recovery-event' }),
         stepLedgerVersion: 1,
+        leaseToken: 'expired-safe-recovery-lease',
+        leaseExpiresAt: minutesAgo(1),
+        fencingVersion: 1,
       },
     })
     await db.workflowStepExecution.create({
