@@ -81,96 +81,93 @@ export async function POST(req: NextRequest) {
       where: { facebookTokenEnc: { not: null }, metaAppSecretEnc: { not: null } },
       select: { organizationId: true, facebookTokenEnc: true, facebookPageId: true, metaAppSecretEnc: true },
     })
-    let matchedOrgId: string | null = null
-    let matchedEntries: FbEntry[] = []
+    const matchedTargets: Array<{ orgId: string; pageId: string; entries: FbEntry[] }> = []
 
     for (const candidate of candidates) {
       const appSecret = decryptSecret(candidate.metaAppSecretEnc)
-      if (!appSecret) continue
-      if (verifyMetaSignature(rawBody, appSecret, signature)) {
-        // (A2-12, auditoría 2026-11-11) TODAS las entry dirigidas a la Página
-        // de esta org (antes `.find()` tomaba solo la primera y el resto de un
-        // POST agrupado se perdía). Aislamiento multi-tenant intacto.
-        const entries = (body.entry || []).filter((e) => !candidate.facebookPageId || e.id === candidate.facebookPageId)
-        if (entries.length) {
-          matchedOrgId = candidate.organizationId
-          matchedEntries = entries
-          break
-        }
-      }
+      if (!appSecret || !verifyMetaSignature(rawBody, appSecret, signature)) continue
+      const state = parseFacebookState(candidate.facebookTokenEnc)
+      // Fail closed: a shared Meta App Secret is not enough to identify a tenant.
+      // The page ID must match exactly; a missing ID must never accept every entry.
+      const pageId = candidate.facebookPageId || state.pageId
+      if (!pageId) continue
+      const entries = (body.entry || []).filter((entry) => entry.id === pageId)
+      if (entries.length) matchedTargets.push({ orgId: candidate.organizationId, pageId, entries })
     }
 
-    if (!matchedOrgId || !matchedEntries.length) {
+    if (!matchedTargets.length) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
-    const orgId = matchedOrgId
-    const messagingItems = matchedEntries.flatMap((entry) => entry.messaging || [])
-    for (const messaging of messagingItems) {
-      const msg = messaging.message
-      if (!msg?.text || msg.is_echo) continue
-      const senderId = messaging.sender?.id
-      if (!senderId) continue
-      // (A4-02, auditoría 2026-11-11) Dedup durable por mid: Meta reintenta el
-      // webhook ante timeouts; sin esto duplicaría timeline y respuestas IA.
-      if (msg.mid) {
-        const seen = await db.timelineEvent.findFirst({
-          where: { organizationId: orgId, type: 'facebook', metadata: { contains: `"mid":"${msg.mid}"` } },
-          select: { id: true },
-        })
-        if (seen) continue
-      }
-      const text = msg.text.slice(0, 3000)
+    // A single Meta batch can contain events for multiple Pages/tenants.
+    // Resolve and process each matching Page independently.
+    for (const target of matchedTargets) {
+      const orgId = target.orgId
+      const messagingItems = target.entries.flatMap((entry) => entry.messaging || [])
+      for (const messaging of messagingItems) {
+        const msg = messaging.message
+        if (!msg?.text || msg.is_echo) continue
+        const senderId = messaging.sender?.id
+        if (!senderId) continue
+        // Legacy dedup check. This is not a durable claim ledger and can race
+        // under concurrent webhook deliveries; see the channel audit runbook.
+        if (msg.mid) {
+          const seen = await db.timelineEvent.findFirst({
+            where: { organizationId: orgId, type: 'facebook', metadata: { contains: '"mid":"' + msg.mid + '"' } },
+            select: { id: true },
+          })
+          if (seen) continue
+        }
+        const text = msg.text.slice(0, 3000)
 
-      // find-or-create Client (phone = "fb:<psid>" para deduplicar por canal)
-      const client = await findOrCreateChannelClient({ orgId, platformKey: `fb:${senderId}`, name: null, source: 'facebook' })
+        const client = await findOrCreateChannelClient({ orgId, platformKey: 'fb:' + senderId, name: null, source: 'facebook' })
 
-      await recordTimelineEvent({
-        orgId,
-        clientId: client?.id || null,
-        type: 'facebook',
-        title: 'Mensaje recibido por Facebook',
-        description: text.slice(0, 500),
-        metadata: { senderId, mid: msg.mid || null, direction: 'in' },
-        source: 'integration',
-      })
-
-      try {
-        await runWorkflowsForTrigger({
-          orgId,
-          type: 'message_received',
-          payload: { channel: 'facebook', from: `fb:${senderId}`, text, conversationId: `fb:${senderId}`, clientId: client?.id },
-        })
-      } catch (err) {
-        console.error('[facebook webhook] workflows', err)
-      }
-
-      // Auto-respuesta IA
-      const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-      const state = parseFacebookState(integration?.facebookTokenEnc)
-      const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
-        await llmReplyOrNotification({
+        await recordTimelineEvent({
           orgId,
           clientId: client?.id || null,
-          channelLabel: 'Facebook',
-          incomingText: text,
-          handoffKeywords: await getHandoffKeywords(orgId),
-          nichoContext: await buildNichoContext(orgId),
-          send: async (reply) => {
-            const { sendFacebookGraphMessage } = await import('@/lib/integrations')
-            const sent = await sendFacebookGraphMessage({ token: state.pageToken!, pageId: integration?.facebookPageId || '', recipientId: senderId, text: reply })
-            await recordTimelineEvent({
-              orgId,
-              clientId: client?.id || null,
-              type: 'facebook',
-              title: 'Respuesta automática del agente IA',
-              description: reply.slice(0, 500),
-              metadata: { senderId, direction: 'out', delivered: sent.ok },
-              source: 'agent',
-            })
-          },
+          type: 'facebook',
+          title: 'Mensaje recibido por Facebook',
+          description: text.slice(0, 500),
+          metadata: { senderId, mid: msg.mid || null, direction: 'in' },
+          source: 'integration',
         })
+
+        try {
+          await runWorkflowsForTrigger({
+            orgId,
+            type: 'message_received',
+            payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id },
+          })
+        } catch (err) {
+          console.error('[facebook webhook] workflows', err)
+        }
+
+        const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
+        const state = parseFacebookState(integration?.facebookTokenEnc)
+        const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
+        if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
+          await llmReplyOrNotification({
+            orgId,
+            clientId: client?.id || null,
+            channelLabel: 'Facebook',
+            incomingText: text,
+            handoffKeywords: await getHandoffKeywords(orgId),
+            nichoContext: await buildNichoContext(orgId),
+            send: async (reply) => {
+              const { sendFacebookGraphMessage } = await import('@/lib/integrations')
+              const sent = await sendFacebookGraphMessage({ token: state.pageToken!, pageId: target.pageId, recipientId: senderId, text: reply })
+              await recordTimelineEvent({
+                orgId,
+                clientId: client?.id || null,
+                type: 'facebook',
+                title: 'Respuesta automática del agente IA',
+                description: reply.slice(0, 500),
+                metadata: { senderId, direction: 'out', delivered: sent.ok },
+                source: 'agent',
+              })
+            },
+          })
+        }
       }
     }
 
