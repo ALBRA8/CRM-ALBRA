@@ -83,10 +83,12 @@ export async function GET(req: NextRequest) {
       refresh_expires_in?: number
     }
     if (
-      !tokJson.access_token || !tokJson.refresh_token || !tokJson.open_id ||
+      !tokJson.access_token || !tokJson.refresh_token || !openId ||
       !Number.isFinite(tokJson.expires_in) || Number(tokJson.expires_in) <= 0 ||
       !Number.isFinite(tokJson.refresh_expires_in) || Number(tokJson.refresh_expires_in) <= 0
     ) return fail('token_exchange_failed')
+    const openId = tokJson.open_id
+    if (!openId) return fail('token_exchange_failed')
 
     // perfil del usuario (user_info.basic)
     let displayName = ''
@@ -112,7 +114,7 @@ export async function GET(req: NextRequest) {
       refreshToken: tokJson.refresh_token,
       accessTokenExpiresAt: now + Number(tokJson.expires_in) * 1000,
       refreshTokenExpiresAt: now + Number(tokJson.refresh_expires_in) * 1000,
-      openId: tokJson.open_id,
+      openId: openId,
       displayName,
       scope: tokJson.scope || undefined,
     }
@@ -122,7 +124,7 @@ export async function GET(req: NextRequest) {
     // Una autorización explícita de TikTok es el único camino que libera un
     // refreshState=uncertain. Se reemplaza el par completo de tokens y se
     // incrementa fencingVersion para invalidar cualquier worker anterior.
-    const providerAccountKey = `tiktok:business:${tokJson.open_id}`
+    const providerAccountKey = `tiktok:business:${openId}`
     const scopes = (tokJson.scope || '')
       .split(',')
       .map((scope) => scope.trim())
@@ -137,7 +139,7 @@ export async function GET(req: NextRequest) {
         existing.organizationId !== auth.orgId ||
         existing.channel !== 'tiktok' ||
         existing.provider !== 'tiktok_business' ||
-        existing.externalAccountId !== tokJson.open_id
+        existing.externalAccountId !== openId
       )) {
         throw new Error('TIKTOK_ACCOUNT_OWNERSHIP_CONFLICT')
       }
@@ -151,7 +153,7 @@ export async function GET(req: NextRequest) {
         await tx.channelConnection.update({
           where: { id: existing.id },
           data: {
-            externalAccountId: tokJson.open_id,
+            externalAccountId: openId,
             displayName: displayName || null,
             status: 'connected',
             scopes: JSON.stringify(scopes),
@@ -181,7 +183,7 @@ export async function GET(req: NextRequest) {
             channel: 'tiktok',
             provider: 'tiktok_business',
             providerAccountKey,
-            externalAccountId: tokJson.open_id,
+            externalAccountId: openId,
             displayName: displayName || null,
             status: 'connected',
             scopes: JSON.stringify(scopes),
@@ -211,7 +213,7 @@ export async function GET(req: NextRequest) {
       details: {
         provider: 'tiktok',
         via: 'login_kit_oauth',
-        openId: tokJson.open_id,
+        openId: openId,
         displayName: displayName || null,
         scope: tokJson.scope || null,
         tokenMasked: `${tokJson.access_token.slice(0, 4)}••••`,
@@ -219,7 +221,7 @@ export async function GET(req: NextRequest) {
     })
 
     const ok = new URL('/settings?tab=tiktok', req.url)
-    ok.searchParams.set('tt_connected', displayName || tokJson.open_id)
+    ok.searchParams.set('tt_connected', displayName || openId)
     const res = NextResponse.redirect(ok)
     res.cookies.delete('tt_oauth_csrf')
     return res
