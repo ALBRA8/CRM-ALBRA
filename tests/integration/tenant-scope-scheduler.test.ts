@@ -193,4 +193,56 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
     const b = await db.automation.findUnique({ where: { id: autoScheduleB } })
     expect(b!.nextRunAt!.getTime()).toBeGreaterThan(Date.now()) // ahora sí reclamada
   })
+
+  it('reclama un run una sola vez y persiste el resultado durable del paso', async () => {
+    const engine = await vi.importActual<typeof import('@/lib/workflow-engine')>('@/lib/workflow-engine')
+    const title = 'Scheduler ledger concurrency test'
+    const automation = await db.automation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        name: 'Workflow ledger concurrency',
+        triggerType: 'client_created',
+        isActive: true,
+        actions: JSON.stringify([{ type: 'create_task_like_notification', config: { title, body: 'ledger test' } }]),
+      },
+    })
+    const run = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: automation.id,
+        input: JSON.stringify({ id: 'ledger-test-event' }),
+        stepLedgerVersion: 1,
+      },
+    })
+    try {
+      const event = {
+        orgId: FIX.orgA.id,
+        type: 'client_created' as const,
+        payload: { id: 'ledger-test-event' },
+        automationId: automation.id,
+        existingRunId: run.id,
+      }
+      const results = await Promise.all([
+        engine.runWorkflowsForTrigger(event),
+        engine.runWorkflowsForTrigger(event),
+      ])
+      expect(results.flat().filter((item) => item.status === 'success')).toHaveLength(1)
+      expect(results.flat().filter((item) => item.status === 'already_claimed')).toHaveLength(1)
+
+      const persistedRun = await db.automationRun.findUnique({ where: { id: run.id } })
+      const steps = await db.workflowStepExecution.findMany({ where: { automationRunId: run.id } })
+      const notifications = await db.notification.count({
+        where: { organizationId: FIX.orgA.id, title },
+      })
+      expect(persistedRun?.status).toBe('success')
+      expect(steps).toHaveLength(1)
+      expect(steps[0].status).toBe('succeeded')
+      expect(notifications).toBe(1)
+    } finally {
+      await db.notification.deleteMany({ where: { organizationId: FIX.orgA.id, title } })
+      await db.automationRun.deleteMany({ where: { id: run.id } })
+      await db.automation.deleteMany({ where: { id: automation.id } })
+    }
+  })
+
 })
