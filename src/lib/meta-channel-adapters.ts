@@ -12,7 +12,7 @@ interface MetaSendResponse {
 }
 
 function makeMetaAdapter(
-  channel: 'whatsapp' | 'instagram',
+  channel: 'whatsapp' | 'instagram' | 'messenger',
   provider: 'meta_cloud' | 'meta_graph',
   fetchImpl: typeof fetch
 ): ChannelProviderAdapter {
@@ -44,7 +44,7 @@ function makeMetaAdapter(
         }
       : {
           recipient: { id: input.recipientKey },
-          messaging_type: 'RESPONSE',
+          ...(channel === 'messenger' ? { messaging_type: 'RESPONSE' } : { messaging_type: 'RESPONSE' }),
           message: { text: input.body },
         }
 
@@ -88,5 +88,6 @@ export function createMetaChannelAdapters(fetchImpl: typeof fetch = fetch): Chan
   return {
     'meta_cloud:whatsapp': makeMetaAdapter('whatsapp', 'meta_cloud', fetchImpl),
     'meta_graph:instagram': makeMetaAdapter('instagram', 'meta_graph', fetchImpl),
+    'meta_graph:messenger': makeMetaAdapter('messenger', 'meta_graph', fetchImpl),
   }
 }
