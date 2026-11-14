@@ -78,7 +78,8 @@ export async function createChannelOutboundIntent(input: {
     conversation.connection.status !== 'connected' ||
     conversation.channel !== conversation.connection.channel ||
     !((conversation.channel === 'whatsapp' && conversation.connection.provider === 'meta_cloud') ||
-      (conversation.channel === 'instagram' && conversation.connection.provider === 'meta_graph'))
+      (conversation.channel === 'instagram' && conversation.connection.provider === 'meta_graph') ||
+      (conversation.channel === 'messenger' && conversation.connection.provider === 'meta_graph'))
   ) {
     throw new ChannelOutboundError('La conexión no está disponible para enviar', 'NOT_SENDABLE')
   }
@@ -108,6 +109,24 @@ export async function createChannelOutboundIntent(input: {
     }
     return existing
   }
+}
+
+/** Read an existing intent before generating a reply again after webhook retry. */
+export async function getChannelOutboundIntentByRequestId(input: {
+  conversationId: string
+  clientRequestId: string
+}) {
+  if (!input.conversationId || !REQUEST_ID_PATTERN.test(input.clientRequestId)) {
+    throw new ChannelOutboundError('Solicitud de consulta inválida', 'INVALID_INPUT')
+  }
+  return db.channelOutboundMessage.findUnique({
+    where: {
+      conversationId_clientRequestId: {
+        conversationId: input.conversationId,
+        clientRequestId: input.clientRequestId,
+      },
+    },
+  })
 }
 
 /** Claim atómico: solo un worker puede mover queued → sending. */
