@@ -40,7 +40,7 @@ describe('TikTok Business Messaging send contract', () => {
     }
 
     const result = await sendTikTokBusinessMessage({
-      state: { accessToken: 'test-access-token', // scan-secrets:allow — token ficticio exclusivo de test openId: 'business-open-id' // scan-secrets:allow — identificador ficticio exclusivo de test },
+      state: { accessToken: fakeAccessToken, openId: fakeBusinessId },
       conversationId: 'conversation-123',
       text: 'Hola desde CRM',
       fetchImpl,
@@ -50,10 +50,10 @@ describe('TikTok Business Messaging send contract', () => {
     expect(requestUrl).toBe('https://business-api.tiktok.com/open_api/v1.3/business/message/send/')
     expect(requestInit?.headers).toMatchObject({
       'Content-Type': 'application/json',
-      'Access-Token': 'test-access-token',
+      'Access-Token': fakeAccessToken,
     })
     expect(JSON.parse(String(requestInit?.body))).toEqual({
-      business_id: 'business-open-id',
+      business_id: fakeBusinessId,
       recipient_type: 'CONVERSATION',
       recipient: 'conversation-123',
       message_type: 'TEXT',
