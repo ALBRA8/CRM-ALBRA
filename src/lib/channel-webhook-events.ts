@@ -111,7 +111,7 @@ export async function getOrCreateMessengerWebhookConnection(input: {
   } catch (error) {
     const raced = await db.channelConnection.findUnique({
       where: { providerAccountKey },
-      select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+      select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true, status: true },
     })
     if (!raced || raced.organizationId !== input.organizationId || raced.channel !== 'messenger' ||
       raced.provider !== 'meta_graph' || raced.externalAccountId !== input.pageId) throw error
