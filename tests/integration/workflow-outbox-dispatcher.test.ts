@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/lib/db'
 import { enqueueWorkflowOutboundMessage, enqueueTelegramWebhookReply, dispatchWorkflowOutboundMessage, quarantineStaleWorkflowOutboundMessages } from '@/lib/workflow-outbox'
 import { FIX } from '../setup/seed-data'
+import { encodeTelegramState } from '@/lib/integrations'
 
 const pairs: Array<{ automationId: string; runId: string }> = []
 const outboundIds: string[] = []
@@ -63,6 +64,59 @@ describe('Telegram webhook auto-reply outbox', () => {
     expect(await db.workflowOutboundMessage.count({
       where: { organizationId: FIX.orgA.id, idempotencyKey: 'telegram-webhook:765432109' },
     })).toBe(1)
+  })
+
+  it('dispatches a queued Telegram reply only after provider acknowledgement', async () => {
+    const previousFlag = process.env.CHANNEL_AUTOREPLY_ENABLED
+    const previousApiBase = process.env.TELEGRAM_API_BASE
+    const previousIntegration = await db.integration.findUnique({
+      where: { organizationId: FIX.orgA.id },
+      select: { telegramBotTokenEnc: true },
+    })
+    const tokenEnc = encodeTelegramState({ token: 'synthetic-telegram-test-token', autoReply: true })
+    if (!tokenEnc) throw new Error('test encryption unavailable')
+    await db.integration.upsert({
+      where: { organizationId: FIX.orgA.id },
+      create: { organizationId: FIX.orgA.id, telegramBotTokenEnc: tokenEnc },
+      update: { telegramBotTokenEnc: tokenEnc },
+    })
+    process.env.CHANNEL_AUTOREPLY_ENABLED = 'true'
+    process.env.TELEGRAM_API_BASE = 'https://telegram.test'
+    const intent = await enqueueTelegramWebhookReply({
+      organizationId: FIX.orgA.id,
+      updateId: 765432111,
+      chatId: 123456789,
+      text: 'respuesta para despachar',
+    })
+    outboundIds.push(intent.id)
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      result: { message_id: 90210 },
+    }), { status: 200 }))
+    try {
+      expect(await dispatchWorkflowOutboundMessage(intent.id)).toEqual({ status: 'sent' })
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(String(fetchSpy.mock.calls[0][0])).toBe('https://telegram.test/botsynthetic-telegram-test-token/sendMessage')
+      expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toEqual({
+        chat_id: 123456789,
+        text: 'respuesta para despachar',
+      })
+      const stored = await db.workflowOutboundMessage.findUnique({ where: { id: intent.id } })
+      expect(stored).toMatchObject({ status: 'sent', providerMessageId: '90210', attemptCount: 1 })
+    } finally {
+      if (previousFlag === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
+      else process.env.CHANNEL_AUTOREPLY_ENABLED = previousFlag
+      if (previousApiBase === undefined) delete process.env.TELEGRAM_API_BASE
+      else process.env.TELEGRAM_API_BASE = previousApiBase
+      if (previousIntegration) {
+        await db.integration.update({
+          where: { organizationId: FIX.orgA.id },
+          data: { telegramBotTokenEnc: previousIntegration.telegramBotTokenEnc },
+        })
+      } else {
+        await db.integration.deleteMany({ where: { organizationId: FIX.orgA.id } })
+      }
+    }
   })
 
   it('keeps a queued Telegram auto-reply unclaimed while the global kill switch is off', async () => {
