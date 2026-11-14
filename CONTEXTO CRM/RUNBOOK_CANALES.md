@@ -183,3 +183,12 @@ No habilitar los tres canales a la vez en la primera prueba. La aprobación de u
 - La suite de integración de Workflow Outbox verifica reclamación concurrente (un solo envío por intención), fencing frente a ACK tardío tras cuarentena, resultado ambiguo sin reintento, aislamiento entre organizaciones, idempotencia/conflicto de payload y autenticación/feature gate del endpoint. Son pruebas con proveedor simulado; no demuestran aceptación en sandbox externo.
 
 - En el detalle de pasos del workflow, una acción externa persistida en outbox se etiqueta `queued`, no `success`: el estado confirma que la intención quedó durablemente encolada, no que el proveedor la haya entregado. El estado global del run representa la finalización del flujo de automatización; la entrega conserva su ciclo de vida independiente en `WorkflowOutboundMessage`.
+
+## 11. Monitor de salud de outbox (implementación manual, sin scheduler)
+
+- `npm run ops:monitor-outbox` consulta exclusivamente por GET `/api/internal/channel-outbox` y `/api/internal/workflow-outbox`; nunca llama a los endpoints POST de despacho.
+- Requiere `OUTBOX_MONITOR_BASE_URL` (HTTPS), `CHANNEL_OUTBOX_WORKER_SECRET` y `WORKFLOW_OUTBOX_WORKER_SECRET` (cada uno de 32+ caracteres). Si hay alertas también requiere `OUTBOX_ALERT_WEBHOOK_URL` (HTTPS), que recibe únicamente códigos, severidades y mensajes agregados, nunca IDs, destinatarios ni contenido.
+- Umbrales: `staleSending > 0` crítico; `unknown > 0`, webhooks fallidos/vencidos o fallos de workflow altos; cola más antigua >10 minutos media.
+- GitHub Actions ofrece únicamente ejecución manual (`workflow_dispatch`). No hay ejecución programada ni monitor activo por defecto. Si faltan URL o secretos de lectura, la ejecución se omite sin hacer peticiones.
+- El webhook de alertas es una interfaz JSON genérica; debe apuntar a un receptor compatible configurado por el operador. No se configura ni se inventa un destino.
+- El monitor no habilita workers, no modifica datos y no realiza envíos a canales. No ofrece deduplicación persistente de alertas; un operador que lo ejecute repetidamente puede recibir la misma alerta en cada ejecución.
