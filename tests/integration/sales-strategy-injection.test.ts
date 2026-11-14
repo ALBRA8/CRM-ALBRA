@@ -42,6 +42,9 @@ function internalReq(body: Record<string, unknown>, headers: Record<string, stri
 
 beforeAll(async () => {
   vi.stubEnv('INTERNAL_API_SECRET', SECRET)
+  // El auto-reply permanece apagado por defecto en producción; esta suite
+  // prueba explícitamente el comportamiento habilitado.
+  vi.stubEnv('CHANNEL_AUTOREPLY_ENABLED', 'true')
   await db.client.create({
     data: { id: CLIENT_ESTRATEGIA, organizationId: FIX.orgA.id, name: 'Cliente Estrategia', phone: '+57 320 777 0000' },
   })
