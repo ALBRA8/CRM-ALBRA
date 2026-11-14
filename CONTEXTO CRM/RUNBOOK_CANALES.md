@@ -7,7 +7,7 @@ Estado: guía de staging; **no autoriza activar envíos ni desplegar**.
 ## 1. Estado seguro por defecto
 
 - `CHANNEL_OUTBOUND_DISPATCH_ENABLED` debe permanecer ausente o distinto de `true`.
-- `CHANNEL_AUTOREPLY_ENABLED` debe permanecer ausente o distinto de `true`; los webhooks no deben responder automáticamente por defecto.
+- `CHANNEL_AUTOREPLY_ENABLED` debe permanecer ausente o distinto de `true`; los webhooks Meta, la auto-respuesta Telegram y el endpoint interno de auto-respuesta Baileys no deben responder automáticamente por defecto.
 - Las acciones externas de workflows (Baileys, Telegram y SMTP) ahora persisten primero en `WorkflowOutboundMessage`, con payload cifrado, clave idempotente por run/paso y estados `queued/sending/sent/failed/unknown`. El worker `POST /api/internal/workflow-outbox` permanece desactivado por defecto: requiere `WORKFLOW_OUTBOX_DISPATCH_ENABLED=true` y `WORKFLOW_OUTBOX_WORKER_SECRET` (mínimo 32 caracteres). `WORKFLOW_EXTERNAL_SENDS_ENABLED` es un flag legacy ignorado; no habilita envíos.
 - `WHATSPOWER_ENABLED` debe permanecer ausente o distinto de `true`; el bridge inbound puede activar automatizaciones remotas, por lo que también se mantiene apagado durante pruebas de recepción.
 - `CHANNEL_OUTBOX_WORKER_SECRET` y `WORKFLOW_OUTBOX_WORKER_SECRET` no deben configurarse en entornos que no vayan a ejecutar sus respectivos workers.
@@ -202,7 +202,7 @@ No habilitar los tres canales a la vez en la primera prueba. La aprobación de u
 |---|---|---|
 | WhatsApp Cloud API | ChannelConnection + ChannelOutboundMessage; adaptador Meta y worker pull | Cubierto por outbox canónica; worker apagado por defecto |
 | Instagram Messaging | ChannelConnection + ChannelOutboundMessage; adaptador Meta y worker pull | Cubierto por outbox canónica; worker apagado por defecto |
-| WhatsApp Baileys | WorkflowOutboundMessage cifrada; dispatcher usa daemon con orgId explícito | Cubierto para acciones de workflows; no comparte la outbox canónica Meta |
+| WhatsApp Baileys | WorkflowOutboundMessage cifrada; dispatcher usa daemon con orgId explícito | Cubierto para acciones de workflows; la auto-respuesta del daemon también exige CHANNEL_AUTOREPLY_ENABLED=true y NichoConfig.autoReplyEnabled; no comparte la outbox canónica Meta |
 | Telegram Bot | WorkflowOutboundMessage para acciones de workflows | El webhook histórico también tenía auto-respuesta directa al Bot API. Ahora exige CHANNEL_AUTOREPLY_ENABLED=true además de la preferencia por organización; esa ruta directa aún no es durable ni usa la outbox. El endpoint manual autenticado /api/telegram/send sigue siendo una operación directa iniciada por usuario |
 | Email / SMTP | WorkflowOutboundMessage cifrada; configuración SMTP de la organización o fallback global existente | Cubierto para acciones de workflows; requiere sink SMTP de pruebas antes de validar |
 | Messenger | El backfill puede crear ChannelConnection en estado pending | Sin adaptador/outbox canónica; inventario solamente, no habilitar como canal migrado |
