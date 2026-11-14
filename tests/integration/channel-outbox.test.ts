@@ -14,6 +14,7 @@ import {
 import { FIX } from '../setup/seed-data'
 import { encryptSecret } from '@/lib/crypto'
 import { dispatchChannelOutboundMessage } from '@/lib/channel-outbound-dispatcher'
+import { createTikTokChannelAdapters } from '@/lib/tiktok-channel-adapter'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const connectionIds: string[] = []
@@ -84,6 +85,35 @@ async function createMessengerConversation(orgId: string = FIX.orgA.id) {
       connectionId: connection.id,
       channel: 'messenger',
       externalContactKey: '987654321098765',
+    },
+  })
+  conversationIds.push(conversation.id)
+  return conversation
+}
+
+async function createTikTokConversation(orgId: string = FIX.orgA.id) {
+  const id = `tiktok-outbox-connection-${suffix()}`
+  const connection = await db.channelConnection.create({
+    data: {
+      id,
+      organizationId: orgId,
+      channel: 'tiktok',
+      provider: 'tiktok_business',
+      providerAccountKey: `tiktok:business:${id}`,
+      externalAccountId: 'business-open-id-12345',
+      displayName: 'Cuenta TikTok de prueba',
+      credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'synthetic-tiktok-access-token' }))!,
+      status: 'connected',
+    },
+  })
+  connectionIds.push(connection.id)
+  const conversation = await db.channelConversation.create({
+    data: {
+      id: `tiktok-outbox-conversation-${suffix()}`,
+      organizationId: orgId,
+      connectionId: connection.id,
+      channel: 'tiktok',
+      externalContactKey: 'conversation-provider-id-12345',
     },
   })
   conversationIds.push(conversation.id)
@@ -311,6 +341,38 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     expect(observed).toMatchObject({ provider: 'meta_graph', channel: 'instagram', externalAccountId: expect.any(String), recipientKey: conversation.externalContactKey, outboundId: intent.id, accessToken: token })
     const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
     expect(stored?.status).toBe('sent')
+    expect(await db.channelMessage.count({ where: { outboundId: intent.id } })).toBe(1)
+  })
+
+  it('dispatches TikTok through the canonical outbox using the provider conversation ID', async () => {
+    const conversation = await createTikTokConversation()
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'tiktok-request-123456',
+      body: 'Respuesta TikTok desde outbox',
+    })
+    let requestBody: Record<string, unknown> | null = null
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify({
+        code: 0,
+        message: 'OK',
+        data: { message: { message_id: 'tiktok-provider-message-123' } },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    const result = await dispatchChannelOutboundMessage(intent.id, createTikTokChannelAdapters(fetchImpl))
+    expect(result.status).toBe('sent')
+    expect(requestBody).toMatchObject({
+      business_id: 'business-open-id-12345',
+      recipient_type: 'CONVERSATION',
+      recipient: 'conversation-provider-id-12345',
+      message_type: 'TEXT',
+      text: { body: 'Respuesta TikTok desde outbox' },
+    })
+    const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
+    expect(stored?.status).toBe('sent')
+    expect(stored?.providerMessageId).toBe('tiktok-provider-message-123')
     expect(await db.channelMessage.count({ where: { outboundId: intent.id } })).toBe(1)
   })
 
