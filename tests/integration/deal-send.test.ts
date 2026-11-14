@@ -93,22 +93,14 @@ describe('normalizeWaPhone (formato del daemon: E.164 sin +)', () => {
 })
 
 describe('POST /api/opportunities/:id/ai-suggest — canal directo wa-new', () => {
-  it('cliente con phone y sin conversación → channels ofrece "wa-new:<teléfono>"', async () => {
+  it('cliente con phone y sin conversación legacy → no ofrece envío directo', async () => {
     mockedLlm.mockResolvedValueOnce(VALID_LLM_JSON)
     const res = await aiSuggestPOST(req(`/api/opportunities/${OPP_ID}`, { method: 'POST', token: tokenA() }), routeParams(OPP_ID))
     expect(res.status).toBe(200)
     const body = await jsonBody(res)
-    const channels = body.channels as Array<{ key: string; channel: string; channelLabel: string; contactHandle: string }>
-    // Solo WhatsApp directo: sin conversación ni timeline TG/IG no hay más canales.
-    expect(channels).toHaveLength(1)
-    expect(channels[0]).toMatchObject({
-      key: `wa-new:${CLIENT_PHONE}`,
-      channel: 'whatsapp',
-      channelLabel: 'WhatsApp',
-      contactHandle: CLIENT_PHONE, // normalizado (sin '+' ni espacios)
-    })
-    // Nunca ofrece una key de conversación inexistente.
-    expect(channels.some((c) => c.key.startsWith('wa:'))).toBe(false)
+    const channels = body.channels as Array<{ key: string; channel: string }>
+    // Sin conversación canónica no se debe ofrecer un destino legacy de envío.
+    expect(channels).toHaveLength(0)
   })
 })
 
