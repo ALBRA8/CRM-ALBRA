@@ -162,7 +162,8 @@ describe('POST /api/inbox/send', () => {
 
   it('key inválida → 400', async () => {
     const res = await inboxSendPOST(req('/inbox/send', { method: 'POST', token: tokenA(), body: { key: 'fb:x', contactHandle: 'y', text: 'hola' } }))
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(409)
+    expect(await jsonBody(res)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
   })
 
   it('texto vacío → 400 (nunca envía)', async () => {
