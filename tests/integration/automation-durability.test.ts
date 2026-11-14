@@ -207,3 +207,37 @@ describe('scheduler: claim atómico y recovery', () => {
     }
   })
 })
+
+
+describe('semántica de pasos con outbox durable', () => {
+  it('registra queued y no success cuando la intención externa queda persistida', async () => {
+    const auto = await db.automation.create({
+      data: {
+        ...AUTOMATION_BASE,
+        name: 'Workflow outbox step state',
+        triggerType: 'client_created',
+        actions: JSON.stringify([{ type: 'send_telegram', config: { chatId: 'test-chat-id', body: 'mensaje de prueba' } }]),
+      },
+    })
+    try {
+      const result = await real.runWorkflowsForTrigger({
+        orgId: 'org-a',
+        type: 'client_created',
+        payload: { id: 'workflow-outbox-step-state-event' },
+      })
+      expect(result[0]?.status).toBe('success')
+      const run = await db.automationRun.findFirst({
+        where: { automationId: auto.id },
+        orderBy: { startedAt: 'desc' },
+      })
+      expect(run).not.toBeNull()
+      expect(JSON.parse(run!.stepStates || '[]')).toMatchObject([{ type: 'send_telegram', status: 'queued' }])
+      expect(JSON.parse(run!.output || '[]')).toMatchObject([{ queued: true, pending: true, channel: 'telegram' }])
+      const intent = await db.workflowOutboundMessage.findFirst({ where: { automationRunId: run!.id } })
+      expect(intent).toMatchObject({ status: 'queued', channel: 'telegram' })
+      if (intent) await db.workflowOutboundMessage.delete({ where: { id: intent.id } })
+    } finally {
+      await db.automation.delete({ where: { id: auto.id } })
+    }
+  })
+})
