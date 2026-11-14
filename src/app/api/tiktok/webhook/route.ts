@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
     return json({ ok: true })
   } catch (err) {
     console.error('[tiktok webhook]', err)
-    // Failed/stale claims are retryable. Do not acknowledge a persistence failure as success.
+    // Keep the claim leased after partial processing; retries receive 503 until lease expiry, then reclaim with a new fencing token.
     return json({ ok: false, processed: false }, { status: 500 })
   }
 }
