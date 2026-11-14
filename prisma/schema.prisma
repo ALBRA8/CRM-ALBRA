@@ -581,6 +581,7 @@ model ActivityLog {
 }
 
 model TimelineEvent {
+  sourceEventKey String? // Stable provider event key for retry-safe timeline writes
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -598,6 +599,7 @@ model TimelineEvent {
 
   @@index([organizationId, clientId, createdAt])
   @@index([organizationId, opportunityId, createdAt])
+  @@unique([organizationId, sourceEventKey])
 }
 
 // ---------- Vistas guardadas (inspirado en Twenty) ----------
