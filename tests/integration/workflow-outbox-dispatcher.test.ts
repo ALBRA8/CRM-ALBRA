@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/lib/db'
-import { enqueueWorkflowOutboundMessage, dispatchWorkflowOutboundMessage, quarantineStaleWorkflowOutboundMessages } from '@/lib/workflow-outbox'
+import { enqueueWorkflowOutboundMessage, enqueueTelegramWebhookReply, dispatchWorkflowOutboundMessage, quarantineStaleWorkflowOutboundMessages } from '@/lib/workflow-outbox'
 import { FIX } from '../setup/seed-data'
 
 const pairs: Array<{ automationId: string; runId: string }> = []
@@ -33,6 +33,37 @@ afterEach(async () => {
     await db.automation.deleteMany({ where: { id: pair.automationId } })
   }
   pairs.length = 0
+})
+
+describe('Telegram webhook auto-reply outbox', () => {
+  it('persists an encrypted intent once per organization and Telegram update_id', async () => {
+    const input = {
+      organizationId: FIX.orgA.id,
+      updateId: 765432109,
+      chatId: 123456789,
+      text: 'respuesta automática simulada',
+    }
+    const first = await enqueueTelegramWebhookReply(input)
+    outboundIds.push(first.id)
+    const duplicate = await enqueueTelegramWebhookReply(input)
+    expect(duplicate.id).toBe(first.id)
+    expect(first).toMatchObject({
+      organizationId: FIX.orgA.id,
+      automationId: null,
+      automationRunId: null,
+      stepIndex: 0,
+      idempotencyKey: 'telegram-webhook:765432109',
+      channel: 'telegram',
+      status: 'queued',
+      attemptCount: 0,
+    })
+    expect(first.payloadEnc).not.toContain(input.text)
+    await expect(enqueueTelegramWebhookReply({ ...input, text: 'contenido distinto' }))
+      .rejects.toThrow('WORKFLOW_OUTBOX_IDEMPOTENCY_CONFLICT')
+    expect(await db.workflowOutboundMessage.count({
+      where: { organizationId: FIX.orgA.id, idempotencyKey: 'telegram-webhook:765432109' },
+    })).toBe(1)
+  })
 })
 
 describe('workflow outbound outbox dispatcher', () => {
