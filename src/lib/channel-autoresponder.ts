@@ -49,7 +49,7 @@ export async function llmReplyOrNotification(opts: {
       [
         {
           role: 'system',
-          content: `Eres el agente comercial por ${channelLabel} de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\\n\\n${SALES_STRATEGY_PROMPT}\\nCONTEXTO DEL NEGOCIO:\\n${nichoContext}${knowledgeContext}${memoryBlock}${styleBlock}\\n\\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
+          content: `Eres el agente comercial por ${channelLabel} de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\n\n${SALES_STRATEGY_PROMPT}\nCONTEXTO DEL NEGOCIO:\n${nichoContext}${knowledgeContext}${memoryBlock}${styleBlock}\n\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
         },
         { role: 'user', content: incomingText },
       ],
