@@ -165,15 +165,11 @@ export async function POST(req: NextRequest) {
     })
 
     // 3) Workflows del negocio
-    try {
-      await runWorkflowsForTrigger({
-        orgId,
-        type: 'message_received',
-        payload: { channel: 'telegram', from: platformKey, text, conversationId: platformKey, clientId: client?.id, messageId: `tg_update_${update.update_id}` },
-      })
-    } catch (err) {
-      console.error('[telegram webhook] workflows', err)
-    }
+    await runWorkflowsForTrigger({
+      orgId,
+      type: 'message_received',
+      payload: { channel: 'telegram', from: platformKey, text, conversationId: platformKey, clientId: client?.id, messageId: `tg_update_${update.update_id}` },
+    })
 
     // 4) Auto-respuesta IA (si está habilitada y no pide humano)
     const state = telegramState
