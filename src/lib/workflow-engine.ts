@@ -35,8 +35,6 @@ export interface WorkflowTriggerEvent {
   payload: Record<string, unknown>
   /** Limita la ejecución a una automatización concreta (scheduler). */
   automationId?: string
-  /** Run creado previamente por una operación durable. */
-  existingRunId?: string
 }
 
 export interface Condition {
