@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { isTikTokWebhookTimestampFresh, sendTikTokBusinessMessage, verifyTikTokSignature } from '@/lib/integrations'
+import { isTikTokWebhookTimestampFresh, sendTikTokBusinessMessage, refreshTikTokUserAccessToken, verifyTikTokSignature } from '@/lib/integrations'
 import { extractTikTokMessage } from '@/app/api/tiktok/webhook/route'
 
 const fakeAccessToken = ['test', 'access', 'token'].join('-')
@@ -28,6 +28,68 @@ describe('TikTok webhook signature freshness', () => {
     const stale = String(Math.floor((now - 10 * 60_000) / 1000))
     const staleSignature = createHmac('sha256', secret).update(stale + '.' + rawBody).digest('hex')
     expect(verifyTikTokSignature(rawBody, secret, `t=${stale},s=${staleSignature}`)).toBe(false)
+  })
+})
+
+describe('TikTok OAuth refresh contract', () => {
+  it('rotates the refresh token and records both expiry timestamps', async () => {
+    let requestUrl = ''
+    let requestInit: RequestInit | undefined
+    const now = 1_800_000_000_000
+    const fetchImpl: typeof fetch = async (input, init) => {
+      requestUrl = String(input)
+      requestInit = init
+      return new Response(JSON.stringify({
+        access_token: 'synthetic-new-access-token',
+        expires_in: 7200,
+        refresh_token: 'synthetic-rotated-refresh-token',
+        refresh_expires_in: 15_552_000,
+        open_id: 'synthetic-open-id',
+        scope: 'user.info.basic',
+        token_type: 'Bearer',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+
+    const result = await refreshTikTokUserAccessToken({
+      state: {
+        appKey: 'synthetic-client-key',
+        appSecret: 'synthetic-client-secret',
+        accessToken: 'synthetic-old-access-token',
+        refreshToken: 'synthetic-old-refresh-token',
+        openId: 'synthetic-open-id',
+      },
+      fetchImpl,
+      now,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(requestUrl).toBe('https://open.tiktokapis.com/v2/oauth/token/')
+    expect(requestInit?.method).toBe('POST')
+    expect(requestInit?.headers).toMatchObject({ 'Content-Type': 'application/x-www-form-urlencoded' })
+    const body = new URLSearchParams(String(requestInit?.body))
+    expect(body.get('grant_type')).toBe('refresh_token')
+    expect(body.get('refresh_token')).toBe('synthetic-old-refresh-token')
+    expect(result.state.accessToken).toBe('synthetic-new-access-token')
+    expect(result.state.refreshToken).toBe('synthetic-rotated-refresh-token')
+    expect(result.state.accessTokenExpiresAt).toBe(now + 7_200_000)
+    expect(result.state.refreshTokenExpiresAt).toBe(now + 15_552_000_000)
+  })
+
+  it('requires reauthorization when TikTok rejects an expired refresh token', async () => {
+    const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
+      error: 'invalid_grant',
+      error_description: 'refresh token expired',
+    }), { status: 400 })
+    const result = await refreshTikTokUserAccessToken({
+      state: { appKey: 'synthetic-client-key', appSecret: 'synthetic-client-secret', refreshToken: 'synthetic-expired-refresh-token' },
+      fetchImpl,
+    })
+    expect(result).toEqual({
+      ok: false,
+      error: 'TIKTOK_REFRESH_INVALID_GRANT',
+      reauthorizationRequired: true,
+    })
   })
 })
 
