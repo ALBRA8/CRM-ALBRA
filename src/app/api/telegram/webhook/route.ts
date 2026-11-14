@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     const telegramState = parseTelegramState(integrationFull?.telegramBotTokenEnc)
     const botId = telegramState.token?.match(/^(\d+):/)?.[1]
     if (!botId || !telegramState.token) return json({ ok: true, processed: false })
-    const connectionCredentialsEnc = encryptSecret(JSON.stringify({ legacyWebhookLedger: true, botId }))
+    const connectionCredentialsEnc = encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader }))
     if (!connectionCredentialsEnc) return json({ ok: true, processed: false })
     const connection = await getOrCreateTelegramWebhookConnection({
       organizationId: orgId,
