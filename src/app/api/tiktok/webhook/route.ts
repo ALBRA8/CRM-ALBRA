@@ -95,8 +95,7 @@ export async function POST(req: NextRequest) {
       return new Response(body.challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
     }
 
-    const signature = req.headers.get('x-tiktok-signature')
-    const timestamp = req.headers.get('x-tiktok-timestamp')
+    const signature = req.headers.get('tiktok-signature')
 
     // Localiza la org validando la firma contra cada app secret configurado
     const candidates = await db.integration.findMany({
@@ -107,7 +106,7 @@ export async function POST(req: NextRequest) {
     for (const candidate of candidates) {
       const state = parseTikTokState(candidate.tiktokTokenEnc)
       if (!state.appSecret) continue
-      if (verifyTikTokSignature(rawBody, state.appSecret, signature, timestamp)) {
+      if (verifyTikTokSignature(rawBody, state.appSecret, signature)) {
         matches.push({
           organizationId: candidate.organizationId,
           credentialsEnc: candidate.tiktokTokenEnc!,
