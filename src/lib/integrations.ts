@@ -386,6 +386,9 @@ export interface TikTokState {
   /** Token de acceso Login Kit (corto ~24h; renovar con refreshToken) */
   accessToken?: string
   refreshToken?: string
+  accessTokenExpiresAt?: number
+  refreshTokenExpiresAt?: number
+  scope?: string
   openId?: string
   displayName?: string
   /** client_key público de la app de TikTok */
@@ -412,6 +415,73 @@ export function parseTikTokState(enc: string | null | undefined): TikTokState {
 
 export function encodeTikTokState(state: TikTokState): string | null {
   return encryptSecret(JSON.stringify(state))
+}
+
+export async function refreshTikTokUserAccessToken(opts: {
+  state: TikTokState
+  fetchImpl?: typeof fetch
+  now?: number
+}): Promise<{ ok: true; state: TikTokState } | { ok: false; error: string; reauthorizationRequired?: boolean }> {
+  const { state } = opts
+  if (!state.appKey || !state.appSecret || !state.refreshToken) {
+    return { ok: false, error: 'TIKTOK_REFRESH_CREDENTIALS_MISSING', reauthorizationRequired: !state.refreshToken }
+  }
+
+  const form = new URLSearchParams({
+    client_key: state.appKey,
+    client_secret: state.appSecret,
+    grant_type: 'refresh_token',
+    refresh_token: state.refreshToken,
+  })
+
+  try {
+    const response = await (opts.fetchImpl || fetch)(`${tiktokApiBase()}/v2/oauth/token/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Cache-Control': 'no-cache' },
+      body: form.toString(),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = await response.json().catch(() => ({})) as {
+      access_token?: string
+      expires_in?: number
+      refresh_token?: string
+      refresh_expires_in?: number
+      open_id?: string
+      scope?: string
+      error?: string
+    }
+    if (!response.ok || data.error) {
+      return {
+        ok: false,
+        error: data.error === 'invalid_grant' ? 'TIKTOK_REFRESH_INVALID_GRANT' : `TIKTOK_REFRESH_HTTP_${response.status}`,
+        reauthorizationRequired: data.error === 'invalid_grant',
+      }
+    }
+    if (
+      typeof data.access_token !== 'string' || !data.access_token ||
+      typeof data.refresh_token !== 'string' || !data.refresh_token ||
+      !Number.isFinite(data.expires_in) || Number(data.expires_in) <= 0 ||
+      !Number.isFinite(data.refresh_expires_in) || Number(data.refresh_expires_in) <= 0
+    ) {
+      return { ok: false, error: 'TIKTOK_REFRESH_INVALID_RESPONSE' }
+    }
+
+    const now = opts.now ?? Date.now()
+    return {
+      ok: true,
+      state: {
+        ...state,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        accessTokenExpiresAt: now + Number(data.expires_in) * 1000,
+        refreshTokenExpiresAt: now + Number(data.refresh_expires_in) * 1000,
+        openId: typeof data.open_id === 'string' && data.open_id ? data.open_id : state.openId,
+        scope: typeof data.scope === 'string' ? data.scope : state.scope,
+      },
+    }
+  } catch {
+    return { ok: false, error: 'TIKTOK_REFRESH_NETWORK_UNCERTAIN' }
+  }
 }
 
 /** Base del Login Kit / autorización de TikTok. Override SOLO para tests con mock. */
