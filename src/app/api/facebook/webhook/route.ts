@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { json } from '@/lib/api-helpers'
 import { verifyMetaSignature, parseFacebookState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals, isChannelAutoReplyGloballyEnabled } from '@/lib/integrations'
-import { decryptSecret } from '@/lib/crypto'
+import { decryptSecret, encryptSecret } from '@/lib/crypto'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
@@ -20,7 +20,7 @@ import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebho
  *
  * Procesa mensajes: find-or-create Client (phone="fb:<psid>"), timeline facebook,
  * workflows message_received, auto-respuesta IA con NichoConfig.
- * Igual que Instagram: Meta exige 200 rápido (siempre 200 tras validar, sin 500).
+ * Los fallos de persistencia/claim devuelven 500 para que Meta pueda reintentar el evento.
  */
 
 interface FbMessaging {
@@ -89,11 +89,16 @@ export async function POST(req: NextRequest) {
       if (!appSecret || !verifyMetaSignature(rawBody, appSecret, signature)) continue
       const state = parseFacebookState(candidate.facebookTokenEnc)
       // Fail closed: a shared Meta App Secret is not enough to identify a tenant.
-      // The page ID must match exactly; a missing ID must never accept every entry.
-      const pageId = candidate.facebookPageId || state.pageId
-      if (!pageId) continue
+      // Match the same Page identity and credential envelope used by the canonical backfill.
+      const pageId = state.pageId || candidate.facebookPageId
+      if (!pageId || !state.pageToken) continue
       const entries = (body.entry || []).filter((entry) => entry.id === pageId)
-      if (entries.length && candidate.facebookTokenEnc) matchedTargets.push({ orgId: candidate.organizationId, pageId, credentialsEnc: candidate.facebookTokenEnc, entries })
+      const credentialsEnc = encryptSecret(JSON.stringify({
+        accessToken: state.pageToken,
+        appSecret,
+        webhookVerifyToken: state.webhookVerifyToken || null,
+      }))
+      if (entries.length && credentialsEnc) matchedTargets.push({ orgId: candidate.organizationId, pageId, credentialsEnc, entries })
     }
 
     if (!matchedTargets.length) {
