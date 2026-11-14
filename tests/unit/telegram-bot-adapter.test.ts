@@ -1,3 +1,4 @@
+import { createHmac } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isChannelAutoReplyGloballyEnabled, isTelegramAutoReplyEnabled, isTikTokWebhookTimestampFresh, verifyTikTokSignature, sendTelegramBotMessage } from '@/lib/integrations'
 
@@ -25,7 +26,6 @@ describe('TikTok webhook signature freshness', () => {
   })
 
   it('requires a fresh timestamp even when the body HMAC matches', () => {
-    const { createHmac } = require('crypto')
     const body = '{"event":"message"}'
     const secret = 'synthetic-tiktok-secret'
     const stale = String(Date.now() - 10 * 60 * 1000)
