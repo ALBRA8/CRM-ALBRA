@@ -167,15 +167,17 @@ export async function getChannelWebhookEventStatus(connectionId: string, eventKe
 export async function getOrCreateTikTokWebhookConnection(input: {
   organizationId: string
   appIdentity: string
+  externalAccountId: string
   credentialsEnc: string
+  readyForOutbound: boolean
 }): Promise<{ id: string }> {
-  if (!input.organizationId || typeof input.appIdentity !== 'string' || input.appIdentity.length < 1 || input.appIdentity.length > 512 || /[\u0000-\u001f\u007f]/.test(input.appIdentity) || !input.credentialsEnc) {
+  if (!input.organizationId || typeof input.appIdentity !== 'string' || input.appIdentity.length < 1 || input.appIdentity.length > 512 || /[\u0000-\u001f\u007f]/.test(input.appIdentity) || !/^\\d{5,30}$/.test(input.externalAccountId) || !input.credentialsEnc) {
     throw new Error('Invalid TikTok app identity')
   }
   const { createHash } = await import('node:crypto')
   const identityHash = createHash('sha256').update(input.appIdentity).digest('hex')
   const providerAccountKey = `tiktok:app:${input.organizationId}:${identityHash}`
-  const externalAccountId = identityHash
+  const externalAccountId = input.externalAccountId
   const existing = await db.channelConnection.findUnique({
     where: { providerAccountKey },
     select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
@@ -184,6 +186,9 @@ export async function getOrCreateTikTokWebhookConnection(input: {
     if (existing.organizationId !== input.organizationId || existing.channel !== 'tiktok' ||
       existing.provider !== 'tiktok_business' || existing.externalAccountId !== externalAccountId) {
       throw new Error('TikTok app connection ownership conflict')
+    }
+    if (existing.status === 'pending' && input.readyForOutbound) {
+      await db.channelConnection.update({ where: { id: existing.id }, data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null } })
     }
     return { id: existing.id }
   }
@@ -195,8 +200,9 @@ export async function getOrCreateTikTokWebhookConnection(input: {
         provider: 'tiktok_business',
         providerAccountKey,
         externalAccountId,
-        status: 'pending',
+        status: input.readyForOutbound ? 'connected' : 'pending',
         credentialsEnc: input.credentialsEnc,
+        lastVerifiedAt: input.readyForOutbound ? new Date() : null,
         metadata: JSON.stringify({ legacyWebhook: true, source: 'Integration.tiktok' }),
       },
       select: { id: true },
