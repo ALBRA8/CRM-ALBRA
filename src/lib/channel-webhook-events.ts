@@ -169,7 +169,7 @@ export async function getOrCreateTikTokWebhookConnection(input: {
   appIdentity: string
   credentialsEnc: string
 }): Promise<{ id: string }> {
-  if (!input.organizationId || !/^[A-Za-z0-9._:-]{1,255}$/.test(input.appIdentity) || !input.credentialsEnc) {
+  if (!input.organizationId || typeof input.appIdentity !== 'string' || input.appIdentity.length < 1 || input.appIdentity.length > 512 || /[\u0000-\u001f\u007f]/.test(input.appIdentity) || !input.credentialsEnc) {
     throw new Error('Invalid TikTok app identity')
   }
   const { createHash } = await import('node:crypto')
