@@ -25,6 +25,14 @@ describe('TikTok webhook signature freshness', () => {
     expect(isTikTokWebhookTimestampFresh(String(now + 60 * 1000), now)).toBe(false)
   })
 
+  it('accepts a fresh timestamp bound to the signed body', () => {
+    const timestamp = String(Date.now())
+    const body = '{"event":"message"}'
+    const secret = 'synthetic-tiktok-secret'
+    const signature = createHmac('sha256', secret).update(timestamp + body).digest('hex')
+    expect(verifyTikTokSignature(body, secret, signature, timestamp)).toBe(true)
+  })
+
   it('requires a fresh timestamp even when the body HMAC matches', () => {
     const body = '{"event":"message"}'
     const secret = 'synthetic-tiktok-secret'
