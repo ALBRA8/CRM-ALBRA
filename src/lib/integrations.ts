@@ -51,6 +51,11 @@ export function encodeTelegramState(state: TelegramState): string | null {
   return encryptSecret(JSON.stringify(state))
 }
 
+/** Telegram auto-replies are opt-in globally and may be disabled per integration. */
+export function isTelegramAutoReplyEnabled(state: TelegramState): boolean {
+  return process.env.CHANNEL_AUTOREPLY_ENABLED === 'true' && state.autoReply !== false && !!state.token
+}
+
 /**
  * Estado de Instagram guardado como JSON cifrado en instagramTokenEnc:
  * { token, webhookVerifyToken, webhookSecret, metaAppId }
