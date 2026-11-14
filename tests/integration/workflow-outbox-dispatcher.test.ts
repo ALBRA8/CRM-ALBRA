@@ -63,7 +63,9 @@ describe('Telegram webhook auto-reply outbox', () => {
     expect(await db.workflowOutboundMessage.count({
       where: { organizationId: FIX.orgA.id, idempotencyKey: 'telegram-webhook:765432109' },
     })).toBe(1)
-  })  it('keeps a queued Telegram auto-reply unclaimed while the global kill switch is off', async () => {
+  })
+
+  it('keeps a queued Telegram auto-reply unclaimed while the global kill switch is off', async () => {
     const intent = await enqueueTelegramWebhookReply({
       organizationId: FIX.orgA.id,
       updateId: 765432110,
