@@ -166,8 +166,8 @@ export async function POST(req: NextRequest) {
                 externalContactKey: senderId,
               })
             : null
-          if (msg.mid && !canonicalConversation) throw new Error('MESSENGER_CANONICAL_CONVERSATION_UNAVAILABLE')
-
+          // A disconnected/revoked canonical connection is not revived by a webhook;
+          // legacy inbound processing may continue, but no durable auto-reply is queued.
           if (canonicalConversation && msg.mid) {
             // Persist inbound identity in the canonical thread. Provider mid is
             // unique per conversation and prevents duplicate canonical messages.
