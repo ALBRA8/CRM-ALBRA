@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { sendTelegramBotMessage } from '@/lib/integrations'
+import { isTelegramAutoReplyEnabled, sendTelegramBotMessage } from '@/lib/integrations'
 
 const previousApiBase = process.env.TELEGRAM_API_BASE
 
@@ -10,6 +10,18 @@ afterEach(() => {
 })
 
 describe('Telegram Bot API outbound adapter', () => {
+  it('keeps webhook auto-replies disabled unless the global channel flag is explicitly true', () => {
+    const previous = process.env.CHANNEL_AUTOREPLY_ENABLED
+    delete process.env.CHANNEL_AUTOREPLY_ENABLED
+    expect(isTelegramAutoReplyEnabled({ token: 'synthetic-token' })).toBe(false)
+    process.env.CHANNEL_AUTOREPLY_ENABLED = 'true'
+    expect(isTelegramAutoReplyEnabled({ token: 'synthetic-token' })).toBe(true)
+    expect(isTelegramAutoReplyEnabled({ token: 'synthetic-token', autoReply: false })).toBe(false)
+    expect(isTelegramAutoReplyEnabled({ autoReply: true })).toBe(false)
+    if (previous === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
+    else process.env.CHANNEL_AUTOREPLY_ENABLED = previous
+  })
+
   it('returns the provider message id after an acknowledged send', async () => {
     process.env.TELEGRAM_API_BASE = 'https://telegram.test'
     const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify({
