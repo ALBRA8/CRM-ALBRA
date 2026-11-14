@@ -44,7 +44,7 @@ function makeMetaAdapter(
         }
       : {
           recipient: { id: input.recipientKey },
-          ...(channel === 'messenger' ? { messaging_type: 'RESPONSE' } : { messaging_type: 'RESPONSE' }),
+          messaging_type: 'RESPONSE',
           message: { text: input.body },
         }
 
