@@ -68,19 +68,25 @@ export async function getOrCreateMessengerWebhookConnection(input: {
   pageId: string
   credentialsEnc: string
 }): Promise<{ id: string }> {
-  if (!/^\d{1,30}$/.test(input.pageId) || !input.organizationId || !input.credentialsEnc) {
+  if (!/^\\d{1,30}$/.test(input.pageId) || !input.organizationId || !input.credentialsEnc) {
     throw new Error('Invalid Messenger Page identity')
   }
   const providerAccountKey = `meta:messenger:${input.pageId}`
   const existing = await db.channelConnection.findUnique({
     where: { providerAccountKey },
-    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true, status: true },
   })
   if (existing) {
     if (existing.organizationId !== input.organizationId || existing.channel !== 'messenger' ||
       existing.provider !== 'meta_graph' || existing.externalAccountId !== input.pageId) {
       throw new Error('Messenger Page connection ownership conflict')
     }
+    // A signed webhook matched this exact Page and its current encrypted token.
+    // Dispatch remains separately gated by CHANNEL_OUTBOUND_DISPATCH_ENABLED.
+    await db.channelConnection.update({
+      where: { id: existing.id },
+      data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null },
+    })
     return { id: existing.id }
   }
 
@@ -92,8 +98,9 @@ export async function getOrCreateMessengerWebhookConnection(input: {
         provider: 'meta_graph',
         providerAccountKey,
         externalAccountId: input.pageId,
-        status: 'pending',
+        status: 'connected',
         credentialsEnc: input.credentialsEnc,
+        lastVerifiedAt: new Date(),
         metadata: JSON.stringify({ legacyWebhook: true, source: 'Integration.facebook' }),
       },
       select: { id: true },
@@ -105,6 +112,10 @@ export async function getOrCreateMessengerWebhookConnection(input: {
     })
     if (!raced || raced.organizationId !== input.organizationId || raced.channel !== 'messenger' ||
       raced.provider !== 'meta_graph' || raced.externalAccountId !== input.pageId) throw error
+    await db.channelConnection.update({
+      where: { id: raced.id },
+      data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null },
+    })
     return { id: raced.id }
   }
 }
