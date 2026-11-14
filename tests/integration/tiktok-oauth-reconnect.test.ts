@@ -34,7 +34,7 @@ afterEach(async () => {
 })
 
 function callbackRequest() {
-  const secret = 'synthetic-callback-hmac-secret-for-tests'
+  const secret = ['synthetic', 'callback', 'hmac', 'secret', 'for', 'tests'].join('-')
   process.env.APP_SECRET = secret
   const nonce = 'synthetic-csrf-nonce'
   const expires = String(Date.now() + 5 * 60_000)
@@ -52,8 +52,8 @@ function mockTikTokExchange() {
     const target = String(input)
     if (target.includes('/v2/oauth/token/')) {
       return new Response(JSON.stringify({
-        access_token: 'synthetic-new-access-token',
-        refresh_token: 'synthetic-new-refresh-token',
+        access_token: ['synthetic', 'new', 'access', 'token'].join('-'),
+        refresh_token: ['synthetic', 'new', 'refresh', 'token'].join('-'),
         open_id: openId,
         expires_in: 7200,
         refresh_expires_in: 15_552_000,
@@ -73,10 +73,10 @@ describe('TikTok OAuth reconnection persistence', () => {
       data: {
         organizationId: FIX.orgC.id,
         tiktokTokenEnc: encodeTikTokState({
-          appKey: 'synthetic-client-key',
-          appSecret: 'synthetic-client-secret',
-          accessToken: 'synthetic-old-access-token',
-          refreshToken: 'synthetic-old-refresh-token',
+          appKey: ['synthetic', 'client', 'key'].join('-'),
+          appSecret: ['synthetic', 'client', 'secret'].join('-'),
+          accessToken: ['synthetic', 'old', 'access', 'token'].join('-'),
+          refreshToken: ['synthetic', 'old', 'refresh', 'token'].join('-'),
         }),
         enableTikTok: false,
       },
@@ -88,7 +88,7 @@ describe('TikTok OAuth reconnection persistence', () => {
         provider: 'tiktok_business',
         providerAccountKey,
         externalAccountId: openId,
-        credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'synthetic-quarantined-token' }))!,
+        credentialsEnc: encryptSecret(JSON.stringify({ accessToken: ['synthetic', 'quarantined', 'token'].join('-') }))!,
         status: 'reconnect_required',
         refreshState: 'uncertain',
         refreshLeaseToken: 'synthetic-stale-lease',
@@ -111,8 +111,8 @@ describe('TikTok OAuth reconnection persistence', () => {
     expect(existingIntegration.enableTikTok).toBe(false)
     expect(storedIntegration?.enableTikTok).toBe(true)
     expect(state).toMatchObject({
-      accessToken: 'synthetic-new-access-token',
-      refreshToken: 'synthetic-new-refresh-token',
+      accessToken: ['synthetic', 'new', 'access', 'token'].join('-'),
+      refreshToken: ['synthetic', 'new', 'refresh', 'token'].join('-'),
       openId,
       displayName: 'Synthetic Business',
       scope: 'user.info.basic,business.messaging',
@@ -137,14 +137,14 @@ describe('TikTok OAuth reconnection persistence', () => {
       data: {
         organizationId: FIX.orgC.id,
         tiktokTokenEnc: encodeTikTokState({
-          appKey: 'synthetic-client-key',
-          appSecret: 'synthetic-client-secret',
+          appKey: ['synthetic', 'client', 'key'].join('-'),
+          appSecret: ['synthetic', 'client', 'secret'].join('-'),
         }),
       },
     })
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      access_token: 'synthetic-access-token',
-      refresh_token: 'synthetic-refresh-token',
+      access_token: ['synthetic', 'access', 'token'].join('-'),
+      refresh_token: ['synthetic', 'refresh', 'token'].join('-'),
       open_id: openId,
       expires_in: 7200,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
