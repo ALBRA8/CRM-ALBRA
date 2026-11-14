@@ -106,8 +106,15 @@ export async function dispatchWorkflowOutboundMessage(id: string) {
     let queuedPayload: Record<string, unknown> = {}
     try { queuedPayload = raw ? JSON.parse(raw) as Record<string, unknown> : {} } catch { queuedPayload = {} }
     if (queuedPayload.autoReply === true) {
-      const integration = await getIntegration(pending.organizationId)
-      if (!isTelegramAutoReplyEnabled(parseTelegramState(integration.telegramBotTokenEnc))) {
+      const [integration, nicho] = await Promise.all([
+        getIntegration(pending.organizationId),
+        db.nichoConfig.findUnique({
+          where: { organizationId: pending.organizationId },
+          select: { autoReplyEnabled: true },
+        }),
+      ])
+      if (!isTelegramAutoReplyEnabled(parseTelegramState(integration.telegramBotTokenEnc)) ||
+        !(nicho?.autoReplyEnabled ?? true)) {
         return { status: 'disabled' as const }
       }
     }
