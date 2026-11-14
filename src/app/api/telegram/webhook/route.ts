@@ -87,10 +87,12 @@ export async function POST(req: NextRequest) {
     const telegramState = parseTelegramState(integrationFull?.telegramBotTokenEnc)
     const botId = telegramState.token?.match(/^(\\d+):/)?.[1]
     if (!botId || !telegramState.token) return json({ ok: true, processed: false })
+    const connectionCredentialsEnc = encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader }))
+    if (!connectionCredentialsEnc) return json({ ok: true, processed: false })
     const connection = await getOrCreateTelegramWebhookConnection({
       organizationId: orgId,
       botId,
-      credentialsEnc: encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader })) || '',
+      credentialsEnc: connectionCredentialsEnc,
     })
     activeClaim = await claimChannelWebhookEvent({
       organizationId: orgId,
@@ -225,12 +227,16 @@ export async function POST(req: NextRequest) {
     activeClaim = null
     return json({ ok: true })
   } catch (err) {
+    const shouldRetry = activeClaim !== null
     if (activeClaim) {
       await failChannelWebhookEvent(activeClaim, 'TELEGRAM_WEBHOOK_PROCESSING_FAILED').catch(() => null)
     }
     console.error('[telegram webhook]', err)
-    // Nunca 500 a Telegram: evita reintentos infinitos
-    return json({ ok: true, processed: false })
+    // Tras reclamar el update, un 5xx permite que Telegram reintente; el ledger
+    // evita concurrencia y permite reclamar de nuevo el evento fallido.
+    return shouldRetry
+      ? json({ ok: false, processed: false }, { status: 500 })
+      : json({ ok: true, processed: false })
   }
 }
 
