@@ -322,3 +322,21 @@ Esta sección **reemplaza cualquier estado anterior de CI** que describa los wor
 - Multitenancy: falta inventario sistemático y pruebas negativas exhaustivas de endpoints, jobs, relaciones y callbacks.
 - Datos/operación: faltan dry-run revisado, ensayo aislado de migraciones/rollback, backup remoto ejecutado y sandbox de proveedores.
 - Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`. No aprobar staging, merge ni deploy en esta fase.
+
+
+## Actualización scheduler/outbox — HEAD `cbdfb704c5247c5d7c6d2531ad6e721bfa85aaa4`
+
+- Se añadió `AutomationRun.leaseToken`, `leaseExpiresAt` y `fencingVersion`, con migración aditiva `zzzz_scheduler_distributed_fencing` e índice coherente en Prisma.
+- El workflow engine reclama runs con compare-and-swap, incrementa la generación de fencing y renueva el lease en checkpoints. Las transiciones finales del run y las escrituras del ledger de pasos verifican tenant, token, generación y expiración; creación/actualización de pasos comparte transacción con la comprobación de ownership.
+- El scheduler no toca runs con lease aún vigente aunque `startedAt` sea antiguo. Tras expiración, solo recupera automáticamente cuando el ledger demuestra que todos los pasos terminaron; pasos ambiguos y runs históricos sin ledger se cierran sin replay.
+- Se añadieron pruebas de deduplicación de trigger, reclaim de lease vencido con nueva generación, preservación de lease activo y recuperación sin duplicar pasos completados.
+- La conciliación manual de `ChannelOutboundMessage` usa compare-and-swap transaccional para impedir que dos procesos resuelvan la misma intención `unknown`; existe prueba de carrera concurrente.
+- Límite importante: un efecto de acción que ya estaba en vuelo al perderse el lease puede terminar antes de que el checkpoint posterior detecte la pérdida. El ledger evita replay automático del resultado ambiguo, pero faltan fault-injection multiinstancia y validación de todos los efectos internos/externos. No declarar fencing plenamente cerrado ni staging-ready todavía.
+
+### CI de este HEAD
+
+- Push: [run 43572292463](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43572292463).
+- Pull request: [run 43572296100](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43572296100).
+- Ambos workflows están en ejecución al registrar esta sección. No se declara CI verde hasta que todos los pasos de ambos runs terminen en success.
+- PR #3 sigue abierta, en draft y sin merge. No se ejecutaron migraciones reales, backfill, despliegues ni envíos externos.
+- Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
