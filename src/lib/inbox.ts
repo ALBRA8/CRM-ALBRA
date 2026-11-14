@@ -361,7 +361,7 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
   }
   try {
     const events = await db.timelineEvent.findMany({
-      where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram', 'facebook'] } },
+      where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram', 'facebook', 'tiktok'] } },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: { type: true, metadata: true },
@@ -399,6 +399,19 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
         channel: 'facebook',
         channelLabel: 'Messenger',
         contactHandle: String(m.senderId || m.recipientId),
+      })
+    }
+    const tt = events.find((e) => {
+      const m = safeMetadata(e.metadata)
+      return e.type === 'tiktok' && !!m.canonicalConversationId && !!m.conversationId
+    })
+    if (tt) {
+      const m = safeMetadata(tt.metadata)
+      options.push({
+        key: `cc:${String(m.canonicalConversationId)}`,
+        channel: 'tiktok',
+        channelLabel: 'TikTok',
+        contactHandle: String(m.conversationId),
       })
     }
   } catch (err) {
