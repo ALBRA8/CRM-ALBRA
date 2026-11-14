@@ -184,7 +184,7 @@ describe('scheduler: claim atómico y recovery', () => {
       await runDueJobs()
       const after = await db.automationRun.findUnique({ where: { id: run.id } })
       expect(after!.status).toBe('failed')
-      expect(after!.error).toContain('interrupted')
+      expect(after!.error).toContain('interrumpido')
     } finally {
       await db.automation.delete({ where: { id: auto.id } })
     }
