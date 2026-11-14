@@ -279,8 +279,8 @@ describe('TikTok webhook event identity', () => {
   it('creates one tenant-scoped app connection and claims a provider event once', async () => {
     const appIdentity = 'synthetic-app-key/with+symbols='
     const [a, b] = await Promise.all([
-      getOrCreateTikTokWebhookConnection({ organizationId: FIX.orgA.id, appIdentity, credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials' }),
-      getOrCreateTikTokWebhookConnection({ organizationId: FIX.orgA.id, appIdentity, credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials' }),
+      getOrCreateTikTokWebhookConnection({ organizationId: FIX.orgA.id, appIdentity, externalAccountId: 'synthetic-open-id-a', credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials', readyForOutbound: false }),
+      getOrCreateTikTokWebhookConnection({ organizationId: FIX.orgA.id, appIdentity, externalAccountId: 'synthetic-open-id-a', credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials', readyForOutbound: false }),
     ])
     connectionIds.push(a.id)
     expect(a.id).toBe(b.id)
@@ -307,12 +307,16 @@ describe('TikTok webhook event identity', () => {
     const a = await getOrCreateTikTokWebhookConnection({
       organizationId: FIX.orgA.id,
       appIdentity,
+      externalAccountId: 'synthetic-open-id-a',
       credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials',
+      readyForOutbound: false,
     })
     const b = await getOrCreateTikTokWebhookConnection({
       organizationId: FIX.orgB.id,
       appIdentity,
+      externalAccountId: 'synthetic-open-id-a',
       credentialsEnc: 'v1:synthetic-encrypted-tiktok-credentials',
+      readyForOutbound: false,
     })
     connectionIds.push(a.id, b.id)
     expect(a.id).not.toBe(b.id)
