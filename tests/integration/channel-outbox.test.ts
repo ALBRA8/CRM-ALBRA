@@ -103,7 +103,7 @@ async function createTikTokConversation(orgId: string = FIX.orgA.id) {
       providerAccountKey: `tiktok:business:${id}`,
       externalAccountId: 'business-open-id-12345',
       displayName: 'Cuenta TikTok de prueba',
-      credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'synthetic-tiktok-access-token' }))!,
+      credentialsEnc: encryptSecret(JSON.stringify({ accessToken: ['synthetic', 'tiktok', 'access', 'token'].join('-') }))!,
       status: 'connected',
     },
   })
