@@ -18,7 +18,7 @@ import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebho
  * mensaje se aísla por Integration→organizationId.
  *
  * Procesa: message_received (workflows) + auto-respuesta IA con NichoConfig + timeline.
- * Siempre responde 200 a Telegram tras validar (evita reintentos infinitos).
+ * Los duplicados se confirman con 200; fallos posteriores al claim responden 500 para permitir reintento seguro.
  */
 
 interface TgMessage {
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     // The bot key matches the canonical channel backfill identity.
     const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
     const telegramState = parseTelegramState(integrationFull?.telegramBotTokenEnc)
-    const botId = telegramState.token?.match(/^(\\d+):/)?.[1]
+    const botId = telegramState.token?.match(/^(\d+):/)?.[1]
     if (!botId || !telegramState.token) return json({ ok: true, processed: false })
     const connectionCredentialsEnc = encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader }))
     if (!connectionCredentialsEnc) return json({ ok: true, processed: false })
