@@ -11,10 +11,9 @@ afterEach(() => {
 })
 
 describe('TikTok webhook signature freshness', () => {
-  it('accepts recent seconds and milliseconds timestamps', () => {
+  it('accepts recent Unix-seconds timestamps from TikTok', () => {
     const now = 1_800_000_000_000
     expect(isTikTokWebhookTimestampFresh(String(Math.floor(now / 1000)), now)).toBe(true)
-    expect(isTikTokWebhookTimestampFresh(String(now), now)).toBe(true)
   })
 
   it('rejects missing, malformed, stale and future timestamps', () => {
@@ -26,18 +25,18 @@ describe('TikTok webhook signature freshness', () => {
   })
 
   it('accepts a fresh timestamp bound to the signed body', () => {
-    const timestamp = String(Date.now())
+    const timestamp = String(Math.floor(Date.now() / 1000))
     const body = '{"event":"message"}'
     const secret = ['synthetic', 'tiktok', 'secret'].join('-')
-    const signature = createHmac('sha256', secret).update(timestamp + body).digest('hex')
+    const signature = createHmac('sha256', secret).update(timestamp + '.' + body).digest('hex')
     expect(verifyTikTokSignature(body, secret, signature, timestamp)).toBe(true)
   })
 
   it('requires a fresh timestamp even when the body HMAC matches', () => {
     const body = '{"event":"message"}'
     const secret = ['synthetic', 'tiktok', 'secret'].join('-')
-    const stale = String(Date.now() - 10 * 60 * 1000)
-    const signature = createHmac('sha256', secret).update(body).digest('hex')
+    const stale = String(Math.floor((Date.now() - 10 * 60 * 1000) / 1000))
+    const signature = createHmac('sha256', secret).update(stale + '.' + body).digest('hex')
     expect(verifyTikTokSignature(body, secret, signature, stale)).toBe(false)
     expect(verifyTikTokSignature(body, secret, signature, null)).toBe(false)
   })
