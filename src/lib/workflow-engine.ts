@@ -361,7 +361,7 @@ function renderTemplate(body: string, ctx: Record<string, unknown>): string {
 // ---------- Lease distribuido del workflow ----------
 // El token identifica al propietario y fencingVersion es la generación monotónica.
 // Cada checkpoint renueva el lease mediante compare-and-swap en la base de datos.
-const WORKFLOW_LEASE_MS = 10 * 60_000
+const WORKFLOW_LEASE_MS = 30 * 60_000
 
 async function claimWorkflowRun(runId: string, orgId: string) {
   const now = new Date()
@@ -420,7 +420,9 @@ async function updateStepWithLease(
       data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
     })
     if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: escritura de paso rechazada')
-    return tx.workflowStepExecution.updateMany({ where: { id: stepId, automationRunId: runId }, data })
+    const step = await tx.workflowStepExecution.updateMany({ where: { id: stepId, automationRunId: runId }, data })
+    if (step.count !== 1) throw new Error('WORKFLOW_STEP_WRITE_REJECTED: paso inexistente o ya no pertenece al run')
+    return step
   })
 }
 
