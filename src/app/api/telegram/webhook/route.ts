@@ -9,6 +9,7 @@ import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
 import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getOrCreateTelegramWebhookConnection, type ChannelWebhookEventClaim } from '@/lib/channel-webhook-events'
 
 /**
  * POST /api/telegram/webhook — PÚBLICO pero con validación ESTRICTA del header
@@ -38,6 +39,7 @@ interface TgUpdate {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
+  let activeClaim: ChannelWebhookEventClaim | null = null
   try {
     const secretHeader = req.headers.get('x-telegram-bot-api-secret-token')
     if (!secretHeader) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
@@ -77,6 +79,26 @@ export async function POST(req: NextRequest) {
     const update = JSON.parse(rawBody) as TgUpdate
     const message = update.message || update.edited_message || update.channel_post
     if (!message) return json({ ok: true })
+    if (!Number.isSafeInteger(update.update_id) || update.update_id < 0) return json({ ok: true, processed: false })
+
+    // Claim the provider update before any timeline, workflow, ASR or reply side effect.
+    // The bot key matches the canonical channel backfill identity.
+    const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
+    const telegramState = parseTelegramState(integrationFull?.telegramBotTokenEnc)
+    const botId = telegramState.token?.match(/^(\\d+):/)?.[1]
+    if (!botId || !telegramState.token) return json({ ok: true, processed: false })
+    const connection = await getOrCreateTelegramWebhookConnection({
+      organizationId: orgId,
+      botId,
+      credentialsEnc: encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader })) || '',
+    })
+    activeClaim = await claimChannelWebhookEvent({
+      organizationId: orgId,
+      connectionId: connection.id,
+      eventKey: `update:${update.update_id}`,
+      eventType: 'telegram.update',
+    })
+    if (!activeClaim) return json({ ok: true, duplicate: true })
 
     const senderName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || null
     const platformKey = `tg:${message.chat.id}`
@@ -115,10 +137,16 @@ export async function POST(req: NextRequest) {
           body: `${senderName || platformKey} envió una nota de voz que no se pudo transcribir. Revisa el chat en Telegram.`,
           data: JSON.stringify({ clientId: fbClient?.id, channel: 'telegram' }),
         })
+        await completeChannelWebhookEvent(activeClaim)
+        activeClaim = null
         return json({ ok: true })
       }
     }
-    if (!text) return json({ ok: true })
+    if (!text) {
+      await completeChannelWebhookEvent(activeClaim)
+      activeClaim = null
+      return json({ ok: true })
+    }
 
     // 1) Cliente asociado (find-or-create, aislado por org)
     const client = await findOrCreateChannelClient({ orgId, platformKey, name: senderName, source: 'telegram' })
@@ -146,8 +174,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 4) Auto-respuesta IA (si está habilitada y no pide humano)
-    const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
-    const state = parseTelegramState(integrationFull?.telegramBotTokenEnc)
+    const state = telegramState
     const telegramToken = state.token
     if (isTelegramAutoReplyEnabled(state) && telegramToken && message.chat.type === 'private') {
       const handoffKeywords = await getHandoffKeywords(orgId)
@@ -194,8 +221,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    await completeChannelWebhookEvent(activeClaim)
+    activeClaim = null
     return json({ ok: true })
   } catch (err) {
+    if (activeClaim) {
+      await failChannelWebhookEvent(activeClaim, 'TELEGRAM_WEBHOOK_PROCESSING_FAILED').catch(() => null)
+    }
     console.error('[telegram webhook]', err)
     // Nunca 500 a Telegram: evita reintentos infinitos
     return json({ ok: true, processed: false })
