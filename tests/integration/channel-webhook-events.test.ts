@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { db } from '@/lib/db'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection, getOrCreateMessengerWebhookConnection } from '@/lib/channel-webhook-events'
 import { FIX } from '../setup/seed-data'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -73,6 +73,32 @@ describe('Telegram webhook event identity', () => {
       botId,
       credentialsEnc: 'v1:other-tenant-credentials',
     })).rejects.toThrow('Telegram bot connection ownership conflict')
+  })
+})
+
+
+describe('Messenger webhook connection identity', () => {
+  it('reuses the canonical Page connection and rejects cross-tenant ownership', async () => {
+    const pageId = `100000${String(Date.now()).slice(-8)}`
+    const [a, b] = await Promise.all([
+      getOrCreateMessengerWebhookConnection({ organizationId: FIX.orgA.id, pageId, credentialsEnc: 'v1:synthetic-encrypted-page-credentials' }),
+      getOrCreateMessengerWebhookConnection({ organizationId: FIX.orgA.id, pageId, credentialsEnc: 'v1:synthetic-encrypted-page-credentials' }),
+    ])
+    connectionIds.push(a.id)
+    expect(a.id).toBe(b.id)
+    await expect(getOrCreateMessengerWebhookConnection({
+      organizationId: FIX.orgB.id,
+      pageId,
+      credentialsEnc: 'v1:other-tenant-page-credentials',
+    })).rejects.toThrow('Messenger Page connection ownership conflict')
+  })
+
+  it('rejects malformed Page identities before creating a connection', async () => {
+    await expect(getOrCreateMessengerWebhookConnection({
+      organizationId: FIX.orgA.id,
+      pageId: 'page id with spaces',
+      credentialsEnc: 'v1:synthetic-encrypted-page-credentials',
+    })).rejects.toThrow('Invalid Messenger Page identity')
   })
 })
 
