@@ -79,7 +79,8 @@ export async function createChannelOutboundIntent(input: {
     conversation.channel !== conversation.connection.channel ||
     !((conversation.channel === 'whatsapp' && conversation.connection.provider === 'meta_cloud') ||
       (conversation.channel === 'instagram' && conversation.connection.provider === 'meta_graph') ||
-      (conversation.channel === 'messenger' && conversation.connection.provider === 'meta_graph'))
+      (conversation.channel === 'messenger' && conversation.connection.provider === 'meta_graph') ||
+      (conversation.channel === 'tiktok' && conversation.connection.provider === 'tiktok_business'))
   ) {
     throw new ChannelOutboundError('La conexión no está disponible para enviar', 'NOT_SENDABLE')
   }
