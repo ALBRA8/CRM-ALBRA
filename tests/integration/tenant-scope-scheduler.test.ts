@@ -106,8 +106,15 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
   })
 
   it('con orgId=A SOLO reclama la automatización vencida de A; la de B sigue vencida', async () => {
+    const runsBeforeA = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+    const runsBeforeB = await db.automationRun.count({ where: { automationId: autoScheduleB } })
     const { processed } = await runDueJobs({ orgId: FIX.orgA.id })
     expect(processed).toBeGreaterThanOrEqual(1)
+
+    const runsAfterA = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+    const runsAfterB = await db.automationRun.count({ where: { automationId: autoScheduleB } })
+    expect(runsAfterA).toBe(runsBeforeA + 1) // claim y run quedan persistidos
+    expect(runsAfterB).toBe(runsBeforeB) // ningún run de otro tenant
 
     const a = await db.automation.findUnique({ where: { id: autoScheduleA } })
     const b = await db.automation.findUnique({ where: { id: autoScheduleB } })
