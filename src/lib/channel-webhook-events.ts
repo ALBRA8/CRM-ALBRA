@@ -22,7 +22,7 @@ export async function getOrCreateTelegramWebhookConnection(input: {
   const providerAccountKey = `telegram:bot:${input.botId}`
   const existing = await db.channelConnection.findUnique({
     where: { providerAccountKey },
-    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true, status: true },
   })
   if (existing) {
     if (existing.organizationId !== input.organizationId || existing.channel !== 'telegram' ||
@@ -187,7 +187,7 @@ export async function getOrCreateTikTokWebhookConnection(input: {
       existing.provider !== 'tiktok_business' || existing.externalAccountId !== externalAccountId) {
       throw new Error('TikTok app connection ownership conflict')
     }
-    if (existing.status === 'pending' && input.readyForOutbound) {
+    if (input.readyForOutbound && (existing.status === 'pending' || existing.status === 'connected')) {
       await db.channelConnection.update({ where: { id: existing.id }, data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null } })
     }
     return { id: existing.id }
@@ -210,10 +210,13 @@ export async function getOrCreateTikTokWebhookConnection(input: {
   } catch (error) {
     const raced = await db.channelConnection.findUnique({
       where: { providerAccountKey },
-      select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+      select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true, status: true },
     })
     if (!raced || raced.organizationId !== input.organizationId || raced.channel !== 'tiktok' ||
       raced.provider !== 'tiktok_business' || raced.externalAccountId !== externalAccountId) throw error
+    if (input.readyForOutbound && (raced.status === 'pending' || raced.status === 'connected')) {
+      await db.channelConnection.update({ where: { id: raced.id }, data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null } })
+    }
     return { id: raced.id }
   }
 }
