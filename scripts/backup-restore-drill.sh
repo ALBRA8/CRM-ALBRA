@@ -20,9 +20,9 @@
 # Reqs:  node + better-sqlite3 (repo) y .next/standalone (bun run build)
 # Exit:  0 PASS · 1 FAIL
 #
-# La "BD original" del drill NUNCA es la BD real: se copia la estructura y
-# se SIEMBRAN datos demo (org + usuario scrypt + cliente + oportunidad +
-# automatización) → conteos > 0 verificables y cero riesgo para producción.
+# El drill crea una BD SQLite VACÍA desde el schema Prisma y SIEMBRA datos
+# sintéticos. Nunca lee DATABASE_URL ni copia una BD existente; así no puede
+# duplicar accidentalmente datos reales en /tmp.
 # ============================================================
 set -euo pipefail
 
