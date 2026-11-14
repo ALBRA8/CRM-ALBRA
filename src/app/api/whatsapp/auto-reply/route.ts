@@ -70,8 +70,9 @@ export async function POST(req: NextRequest) {
       select: { autoReplyEnabled: true, handoffKeywords: true },
     })
 
-    // Kill-switch: la IA del canal está apagada → sin respuesta, sin LLM.
-    if (nicho?.autoReplyEnabled === false) {
+    // Kill-switch global fail-closed + preferencia del tenant: la IA del canal
+    // permanece apagada por defecto aunque el daemon Baileys esté conectado.
+    if (process.env.CHANNEL_AUTOREPLY_ENABLED !== 'true' || nicho?.autoReplyEnabled === false) {
       return json({ reply: '', content: '', handoff: false, paused: true })
     }
 
