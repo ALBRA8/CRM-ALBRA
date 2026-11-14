@@ -75,3 +75,34 @@ Esta auditoría se hizo leyendo el árbol y los archivos de la rama en GitHub. N
 ## Regla de seguridad
 
 Mantener desactivados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`. No configurar secretos de workers, no ejecutar envíos reales, no hacer merge ni desplegar como parte de esta fase previa.
+
+
+## Auditoría ampliada de canales y CI — 2026-11-14
+
+HEAD de esta revisión documental: `9b4fa5356b4d0243c84d8e97a48e0fc3203ee2a8`.
+
+### Matriz de entrada por canal
+
+| Canal | Firma/autenticación observada | Identidad/deduplicación observada | Brecha confirmada |
+|---|---|---|---|
+| WhatsApp Cloud | HMAC Meta contra secretos de las integraciones candidatas | Reclama `message.id` cuando existe; conserva IDs de mensaje en conversación canónica | El flujo sigue procesando algunos mensajes aunque falte `message.id`; ese camino no obtiene claim durable antes de timeline/workflow. Revisar y fallar cerrado para eventos de mensaje sin ID estable |
+| Instagram | HMAC Meta por cuenta candidata | Reclama `msg.mid` cuando existe y usa upsert de mensaje canónico | Si falta `mid`, el handler aún puede procesar timeline/workflow sin claim durable. Debe definirse rechazo/registro no accionable para eventos sin identidad estable |
+| Messenger | HMAC Meta y filtro estricto por Page ID exacto | Reclama `msg.mid` cuando existe | Si falta `mid`, actualmente continúa con efectos CRM/workflow sin claim. Bloquear o aislar estos eventos sin identidad estable |
+| Telegram | Header `X-Telegram-Bot-Api-Secret-Token` | Reclama `update_id` antes de efectos; la respuesta automática se encola con clave basada en `update_id` | Verificar límites/retención del ledger, fallos parciales en timeline/ASR y alineación de la outbox específica de Telegram con la outbox canónica |
+| TikTok | HMAC con timestamp y ventana de frescura; identidad tenant ambigua devuelve 409 | Exige ID estable de evento y reclama el evento con fencing token | Parser no conserva por separado sender ID y `conversation_id`; no hay despacho TikTok en outbox canónica ni conciliación de entrega |
+
+### Hallazgos cruzados adicionales
+
+- El helper del ledger de webhooks usa claim token aleatorio y compara ese token al completar/fallar. Es fencing para la vida del claim de webhook, pero no equivale a un lease/fencing del scheduler.
+- Los webhooks Meta de Instagram/Messenger y WhatsApp tienen ramas que aceptan eventos sin ID estable. Para evitar duplicar timeline/workflows/auto-respuestas tras reentregas, la regla debe ser no ejecutar efectos no idempotentes sin identidad del proveedor.
+- Telegram sí tiene deduplicación durable por `update_id`; el mensaje de respuesta se encola por `enqueueTelegramWebhookReply`, en una ruta específica de workflow outbox.
+- El dispatcher de la outbox canónica filtra explícitamente canales WhatsApp, Instagram y Messenger. TikTok no aparece entre los canales elegibles.
+- Las rutas manuales `/api/{facebook,instagram,telegram,tiktok}/send` y otras rutas legacy deben auditarse separadamente: no son el worker pull de outbox y no deben confundirse con entrega gestionada/conciliada por outbox.
+- Scheduler: `running` es un mutex de módulo, no coordinación entre réplicas. La recuperación por `startedAt` puede tomar un run mientras un worker antiguo continúa vivo. Hace falta un token monotónico por run/lease, con todas las escrituras de estado condicionadas por ese token; además, los efectos internos no idempotentes deben tener su propia clave/claim.
+- La outbox de workflows y la outbox de canales tienen leases/claims propios; no asumir que el fencing de una protege a la otra ni al scheduler.
+
+### Estado CI del commit documental anterior
+
+- El run pull_request `43566330805` para este HEAD superó Prisma generate, migraciones SQLite, TypeScript y lint.
+- La suite de tests estaba en ejecución al momento de registrar esta actualización; build de producción aún no confirmado.
+- No declarar el commit verde hasta verificar suite y build para el SHA exacto.
