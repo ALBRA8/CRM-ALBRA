@@ -369,3 +369,33 @@ Esta sección supersede los snapshots de HEAD/CI y los bloqueos de scheduler des
 - La suite existente `tests/integration/channel-webhook-events.test.ts` ya cubre reclaim concurrente, fencing del propietario anterior (complete/fail devuelven count 0), y un único reclaimer; esta modificación refuerza el predicado CAS usado por esos escenarios.
 - No se amplía el alcance a atomicidad de efectos de negocio externos ni a validación multiinstancia real; los workers y envíos permanecen desactivados.
 - Commit de código: `98e4aa4f6999fd4287733e746d268a53902f2b59`. La validación CI de este commit y del HEAD documental posterior debe verificarse en ambos eventos (push y pull_request) antes de certificar el estado final.
+
+
+## Verificación de fencing de claims webhook y CI — 2026-11-14
+
+HEAD de código/documentación revisado antes de esta nota: `a63c3c344b36634fc098bf36924386baa82163dc`.
+
+- `claimChannelWebhookEvent` toma un snapshot del evento existente y solo reclama un evento fallido o cuyo lease de procesamiento expiró.
+- El compare-and-swap de reclaim compara en una sola escritura condicional el ID, estado, `updatedAt` y `claimToken` previamente observados. Si otro handler modifica el claim entre lectura y escritura, el reclaimer basado en el snapshot anterior no debe obtener ownership.
+- Las operaciones `completeChannelWebhookEvent` y `failChannelWebhookEvent` también exigen el `claimToken` actual; un handler antiguo no puede cerrar el claim nuevo.
+- La suite `tests/integration/channel-webhook-events.test.ts` cubre claim concurrente único, reclaim concurrente único, recuperación tras lease vencido, y rechazo de complete/fail del propietario anterior. Esto es cobertura de integración con la base de pruebas, no una prueba de fault-injection con dos procesos/instancias independientes.
+- No se amplía la garantía a efectos de negocio realizados antes de completar el claim; Telegram conserva riesgos de fallos parciales entre etapas y TikTok continúa sin contrato/fixture oficial ni outbox canónica completa.
+
+### CI verificado en el HEAD `a63c3c344b36634fc098bf36924386baa82163dc`
+
+- Push: [run 43575708022](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43575708022) — job `ci` completado con `success`.
+- Pull request: [run 43575712914](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43575712914) — job `ci` completado con `success`.
+- En ambos runs el job reportado terminó en estado `completed` y conclusión `success`. La suite CI incluye secret scan, Prisma generate, migraciones limpias SQLite, TypeScript, lint, tests y build según el workflow; esto no acredita PostgreSQL real, sandbox de proveedores, restore remoto ni concurrencia multiinstancia.
+- PR #3 continúa abierta, en draft y sin merge. No se ejecutaron despliegues, migraciones reales, backfills aplicados ni envíos externos.
+- Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
+
+### Bloqueos operativos sin cambio
+
+1. Pruebas fault-injection multiinstancia para scheduler, workflow engine y claims de webhook.
+2. Fixture/contrato TikTok Business validado, prueba HTTP firmada/replay, persistencia canónica y adaptador de outbox/ACK/conciliación.
+3. Conciliación de outbox con actor autenticado, motivo y evidencia verificable; matriz de ACK tardío/lease y alertas demostradas.
+4. Auditoría multitenant exhaustiva de rutas, jobs, relaciones, archivos y callbacks.
+5. Dry-run de datos revisado, ensayo aislado de migración/rollback, backup remoto y restore medidos.
+6. Pruebas sandbox autorizadas por proveedor y runbooks/monitorización verificados.
+
+No declarar staging-ready por el resultado de CI. No hacer merge, deploy ni activar workers sin autorización expresa.
