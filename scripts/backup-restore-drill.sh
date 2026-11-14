@@ -36,8 +36,8 @@ EXTERNAL="$DRILL/2-backup-externo"     # = rol del storage remoto (rclone)
 SANDBOX="$DRILL/3-sandbox-restauracion"
 PORT=3101
 
-SRC_DB="${DATABASE_URL:-file:$ROOT/db/custom.db}"
-SRC_DB="${SRC_DB#file:}"
+SRC_DB="$LOCAL_BAK/custom.db"
+PRISMA_BIN="$ROOT/node_modules/.bin/prisma"
 
 declare -a TIMES
 phase() { TIMES+=("$1|$(date +%s%3N)"); echo "── $1"; }
@@ -45,11 +45,16 @@ phase() { TIMES+=("$1|$(date +%s%3N)"); echo "── $1"; }
 fail() { echo "❌ FAIL: $*" >&2; exit 1; }
 
 mkdir -p "$LOCAL_BAK" "$EXTERNAL" "$SANDBOX"
-[ -f "$SRC_DB" ] || fail "no existe la BD de origen: $SRC_DB"
+[ -x "$PRISMA_BIN" ] || fail "falta Prisma local; instala dependencias antes del drill"
+if [ -z "${BACKUP_REMOTE_DEST:-}" ]; then
+  [ "${BACKUP_DRILL_ALLOW_LOCAL_SIMULATION:-}" = "1" ] || fail "define BACKUP_REMOTE_DEST con rclone; para simulación local explícita usa BACKUP_DRILL_ALLOW_LOCAL_SIMULATION=1"
+else
+  command -v rclone >/dev/null 2>&1 || fail "BACKUP_REMOTE_DEST está definido pero rclone no está instalado"
+fi
 
 # ─────────────────────────────────────────────────────────────
-phase "[0/8] BD original del drill (estructura real + datos demo — la BD real NUNCA se toca)"
-cp "$SRC_DB" "$LOCAL_BAK/custom.db"
+phase "[0/8] Crear BD sintética vacía desde el schema Prisma (sin leer DATABASE_URL)"
+DATABASE_URL="file:$SRC_DB" "$PRISMA_BIN" db push --schema "$ROOT/prisma/schema.prisma" --skip-generate
 DRILL_USER_EMAIL="drill-owner@drill.local"
 DRILL_USER_PASS="Drill-Passw0rd!"
 node -e "
@@ -97,8 +102,8 @@ console.log('integrity_check: ok · tablas: ' + tables.length);
 # Hash del snapshot original (para comparar tras la copia externa)
 HASH_ORIG="$(sha256sum "$SNAP" | cut -d' ' -f1)"
 
-phase "[3/8] Copia EXTERNA $( [ -n "${BACKUP_REMOTE_DEST:-}" ] && echo "(rclone → $BACKUP_REMOTE_DEST)" || echo "(dir local que simula el storage remoto)" )"
-if [ -n "${BACKUP_REMOTE_DEST:-}" ] && command -v rclone >/dev/null 2>&1; then
+phase "[3/8] Copia EXTERNA $( [ -n "${BACKUP_REMOTE_DEST:-}" ] && echo "(rclone → $BACKUP_REMOTE_DEST)" || echo "(simulación local explícita)" )"
+if [ -n "${BACKUP_REMOTE_DEST:-}" ]; then
   rclone copy "$SNAP" "$BACKUP_REMOTE_DEST/drill-$STAMP/"
   cp "$BACKUP_REMOTE_DEST/drill-$STAMP/$(basename "$SNAP")" "$EXTERNAL/custom-drill.db"
 else
@@ -172,9 +177,9 @@ kill "$APP_PID" 2>/dev/null || true
 APP_PID=""
 
 phase "[8/8] Informe del drill"
-echo "   Origen:      $SRC_DB"
+echo "   Origen:      BD sintética vacía creada desde Prisma ($SRC_DB); DATABASE_URL no se leyó"
 echo "   Snapshot:    $SNAP ($(wc -c < "$SNAP") bytes, sha256 ${HASH_ORIG:0:16}…)"
-echo "   Externo:     $EXTERNAL/custom-drill.db (hash verificado)"
+echo "   Externo:     $EXTERNAL/custom-drill.db (hash verificado; copia remota real: $( [ -n "${BACKUP_REMOTE_DEST:-}" ] && echo sí || echo no ) )"
 echo "   Restaurada:  $SANDBOX/custom.db (integridad ok, conteos idénticos)"
 echo "   CRM:         health ok + auth operativa contra la BD restaurada"
 echo "   NO cubierto por este drill (respaldado/documentado aparte):"
@@ -183,4 +188,8 @@ echo "     · .env con secretos (se re-crea; pérdida = re-ingresar llaves IA)"
 echo "     · attachmentes binarios si existieran fuera de la BD"
 i=${#TIMES[@]}
 echo ""
-echo "✅ DRILL BACKUP/RESTAURE: PASS — backup→integridad→externo→destrucción→restore→CRM funcional"
+if [ -n "${BACKUP_REMOTE_DEST:-}" ]; then
+  echo "✅ DRILL BACKUP/RESTAURE: PASS — incluye copia/restauración remota"
+else
+  echo "⚠️ DRILL BACKUP/RESTAURE: PASS LOCAL — no acredita almacenamiento remoto"
+fi
