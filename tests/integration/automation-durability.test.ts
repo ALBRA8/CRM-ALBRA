@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 const real = await vi.importActual<typeof import('@/lib/workflow-engine')>('@/lib/workflow-engine')
 import { runDueJobs } from '@/lib/scheduler'
 import { db } from '@/lib/db'
+import { FIX } from '../helpers'
 
 const AUTOMATION_BASE = {
   organizationId: 'org-a',
@@ -16,6 +17,12 @@ const AUTOMATION_BASE = {
   actions: '[]',
   isActive: true,
 }
+
+describe('seguridad del formato de correo workflow', () => {
+  it('escapa HTML no confiable y conserva saltos de línea para el renderizador', () => {
+    expect(real.escapeWorkflowEmailHtml('<img src=x onerror="alert(1)">&\'')).toBe('&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;')
+  })
+})
 
 describe('idempotencia de runs (webhook re-entregado ≠ doble ejecución)', () => {
   it('el mismo evento dos veces → el segundo es deduplicated (1 solo run)', async () => {
@@ -66,6 +73,90 @@ describe('idempotencia de runs (webhook re-entregado ≠ doble ejecución)', () 
   })
 })
 
+describe('aislamiento de contexto en acciones workflow', () => {
+  it('no acepta destinatarios de email/teléfono inyectados en el payload sin clientId validado', async () => {
+    const marker = `workflow-unlinked-recipient-${Date.now()}`
+    const previousFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+    delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+    const auto = await db.automation.create({
+      data: {
+        ...AUTOMATION_BASE,
+        name: 'Workflow unlinked recipient',
+        triggerType: 'client_created',
+        actions: JSON.stringify([{ type: 'send_email', config: { body: marker } }]),
+      },
+    })
+    try {
+      const results = await real.runWorkflowsForTrigger({
+        orgId: 'org-a',
+        type: 'client_created',
+        payload: {
+          id: marker,
+          email: 'attacker@example.invalid',
+          phone: '+15550000000',
+          clientName: 'Contacto ajeno',
+        },
+      })
+      expect(results[0]?.status).toBe('success')
+      const notification = await db.notification.findFirst({
+        where: { organizationId: 'org-a', title: { contains: 'Mensaje email PENDIENTE' } },
+        orderBy: { createdAt: 'desc' },
+      })
+      expect(notification).not.toBeNull()
+      expect(notification!.body).not.toContain('attacker@example.invalid')
+      const data = JSON.parse(notification!.data || '{}') as Record<string, unknown>
+      expect(data.email).toBeNull()
+      expect(data.phone).toBeNull()
+      expect(data.clientId).toBeNull()
+      await db.notification.deleteMany({ where: { id: notification!.id } })
+      const emailTimeline = await db.timelineEvent.findFirst({ where: { organizationId: 'org-a', type: 'email', title: { contains: 'destinatario no disponible' } }, orderBy: { createdAt: 'desc' } })
+      if (emailTimeline) await db.timelineEvent.delete({ where: { id: emailTimeline.id } })
+    } finally {
+      await db.automation.delete({ where: { id: auto.id } })
+      if (previousFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+      else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = previousFlag
+    }
+  })
+
+  it('un clientId de otra organización no filtra teléfono, email ni vínculo al timeline', async () => {
+    const auto = await db.automation.create({
+      data: {
+        ...AUTOMATION_BASE,
+        name: 'Workflow foreign client context',
+        triggerType: 'client_created',
+        actions: JSON.stringify([{ type: 'send_whatsapp', config: { body: 'Prueba de aislamiento {{clientName}}' } }]),
+      },
+    })
+    try {
+      const results = await real.runWorkflowsForTrigger({
+        orgId: 'org-a',
+        type: 'client_created',
+        payload: { id: 'foreign-client-context-event', clientId: FIX.clientB1.id },
+      })
+      expect(results[0]?.status).toBe('success')
+      const notification = await db.notification.findFirst({
+        where: { organizationId: 'org-a', title: { contains: 'Mensaje whatsapp PENDIENTE' } },
+        orderBy: { createdAt: 'desc' },
+      })
+      expect(notification).not.toBeNull()
+      const notificationData = JSON.parse(notification!.data || '{}') as Record<string, unknown>
+      expect(notificationData.clientId).toBeNull()
+      expect(notificationData.phone).toBeNull()
+      expect(notificationData.email).toBeNull()
+      const timeline = await db.timelineEvent.findFirst({
+        where: { organizationId: 'org-a', type: 'whatsapp', title: { contains: 'destinatario no disponible' } },
+        orderBy: { createdAt: 'desc' },
+      })
+      expect(timeline).not.toBeNull()
+      expect(timeline!.clientId).toBeNull()
+      await db.notification.deleteMany({ where: { id: notification!.id } })
+      await db.timelineEvent.deleteMany({ where: { id: timeline!.id } })
+    } finally {
+      await db.automation.delete({ where: { id: auto.id } })
+    }
+  })
+})
+
 describe('scheduler: claim atómico y recovery', () => {
   it('runDueJobs ejecuta UNA vez y mueve nextRunAt; el segundo pase no repite', async () => {
     const auto = await db.automation.create({
@@ -93,7 +184,7 @@ describe('scheduler: claim atómico y recovery', () => {
       await runDueJobs()
       const after = await db.automationRun.findUnique({ where: { id: run.id } })
       expect(after!.status).toBe('failed')
-      expect(after!.error).toContain('interrupted')
+      expect(after!.error).toContain('interrumpido')
     } finally {
       await db.automation.delete({ where: { id: auto.id } })
     }
@@ -111,6 +202,40 @@ describe('scheduler: claim atómico y recovery', () => {
       expect(n2).toBe(0) // ya no hay runs vencidos: no se re-ejecuta dos veces
       const after = await db.automationRun.findUnique({ where: { id: run.id } })
       expect(after!.status).toBe('success')
+    } finally {
+      await db.automation.delete({ where: { id: auto.id } })
+    }
+  })
+})
+
+
+describe('semántica de pasos con outbox durable', () => {
+  it('registra queued y no success cuando la intención externa queda persistida', async () => {
+    const auto = await db.automation.create({
+      data: {
+        ...AUTOMATION_BASE,
+        name: 'Workflow outbox step state',
+        triggerType: 'client_created',
+        actions: JSON.stringify([{ type: 'send_telegram', config: { chatId: 'test-chat-id', body: 'mensaje de prueba' } }]),
+      },
+    })
+    try {
+      const result = await real.runWorkflowsForTrigger({
+        orgId: 'org-a',
+        type: 'client_created',
+        payload: { id: 'workflow-outbox-step-state-event' },
+      })
+      expect(result[0]?.status).toBe('success')
+      const run = await db.automationRun.findFirst({
+        where: { automationId: auto.id },
+        orderBy: { startedAt: 'desc' },
+      })
+      expect(run).not.toBeNull()
+      expect(JSON.parse(run!.stepStates || '[]')).toMatchObject([{ type: 'send_telegram', status: 'queued' }])
+      expect(JSON.parse(run!.output || '[]')).toMatchObject([{ queued: true, pending: true, channel: 'telegram' }])
+      const intent = await db.workflowOutboundMessage.findFirst({ where: { automationRunId: run!.id } })
+      expect(intent).toMatchObject({ status: 'queued', channel: 'telegram' })
+      if (intent) await db.workflowOutboundMessage.delete({ where: { id: intent.id } })
     } finally {
       await db.automation.delete({ where: { id: auto.id } })
     }

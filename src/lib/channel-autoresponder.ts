@@ -34,6 +34,7 @@ export async function llmReplyOrNotification(opts: {
     return { replied: false, handoff: true }
   }
 
+  let generatedReply: string
   try {
     // Memoria vectorial (Fase 5): recuerda conversaciones anteriores con este
     // cliente y las lecciones de estilo del vendedor. Degradación elegante:
@@ -43,7 +44,7 @@ export async function llmReplyOrNotification(opts: {
       recallContext({ orgId, clientId, query: incomingText }),
       recallStyleLessons({ orgId, clientId, query: incomingText }),
     ])
-    const reply = await llmChat(
+    generatedReply = (await llmChat(
       orgId,
       [
         {
@@ -53,18 +54,21 @@ export async function llmReplyOrNotification(opts: {
         { role: 'user', content: incomingText },
       ],
       { temperature: 0.5 }
-    )
-    if (reply.trim()) {
-      await send(reply.trim())
-      // Escribir memoria en background: nunca bloquea ni puede tumbar la respuesta.
-      void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'incoming', text: incomingText })
-      void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'outgoing', text: reply.trim() })
-      maybeConsolidate(orgId, clientId)
-      return { replied: true, handoff: false, reply: reply.trim() }
-    }
-    return { replied: false, handoff: false }
+    )).trim()
   } catch (err) {
-    console.error('[auto-responder] auto-respuesta IA falló', err)
+    // Solo los fallos de contexto/modelo se degradan. Un fallo del proveedor
+    // de mensajería debe propagarse para que el webhook pueda reintentar.
+    console.error('[auto-responder] generación IA falló', err)
     return { replied: false, handoff: false }
   }
+
+  if (!generatedReply) return { replied: false, handoff: false }
+
+  // La entrega está fuera del catch de generación: nunca ocultar errores del proveedor.
+  await send(generatedReply)
+  // Escribir memoria en background: nunca bloquea ni puede tumbar la respuesta.
+  void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'incoming', text: incomingText })
+  void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'outgoing', text: generatedReply })
+  maybeConsolidate(orgId, clientId)
+  return { replied: true, handoff: false, reply: generatedReply }
 }

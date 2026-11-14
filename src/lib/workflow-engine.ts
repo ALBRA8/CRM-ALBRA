@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto'
+import type { Prisma } from '@prisma/client'
 import { db } from './db'
-import { recordTimelineEvent } from './timeline'
-import { decryptSecret } from './crypto'
+import { enqueueWorkflowOutboundMessage } from './workflow-outbox'
 
 /**
  * Motor de workflows disparado por eventos (feature #1 del plan aprobado,
@@ -33,6 +34,10 @@ export interface WorkflowTriggerEvent {
     | 'quote_status_changed'
     | 'schedule'
   payload: Record<string, unknown>
+  /** Limita la ejecución a una automatización concreta (scheduler). */
+  automationId?: string
+  /** Run de schedule creado en la misma transacción que el claim. */
+  existingRunId?: string
 }
 
 export interface Condition {
@@ -49,7 +54,7 @@ export interface WorkflowAction {
 /** Estado de ejecución por acción (estilo Twenty: stepInfos/stepLogs). */
 export interface StepState {
   type: string
-  status: 'success' | 'failed' | 'skipped' | 'waiting'
+  status: 'success' | 'queued' | 'failed' | 'skipped' | 'waiting'
   error?: string
   ms?: number
 }
@@ -108,25 +113,79 @@ export function evaluateConditions(conditions: Condition[] | null | undefined, r
  * post-venta disparadas por opportunity_stage_changed).
  */
 async function buildActionContext(orgId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const safePayload = { ...payload }
   const clientId = payload.clientId as string | undefined
-  if (!clientId) return { ...payload }
+  if (!clientId) {
+    // No permitir que un payload de evento arbitrario inyecte destinatarios
+    // de canales. Solo un cliente resuelto dentro del tenant puede aportar
+    // teléfono/email para acciones externas.
+    delete safePayload.phone
+    delete safePayload.email
+    delete safePayload.clientName
+    return safePayload
+  }
   try {
-    const client = await db.client.findUnique({
-      where: { id: clientId },
+    // Nunca enriquecer un workflow con datos de un cliente de otro tenant,
+    // incluso si un trigger interno recibe un clientId ajeno o manipulado.
+    const client = await db.client.findFirst({
+      where: { id: clientId, organizationId: orgId },
       select: { name: true, phone: true, email: true },
     })
-    if (!client) return { ...payload }
-    return { ...payload, clientName: client.name, name: client.name, phone: client.phone, email: client.email }
+    if (!client) {
+      // El ID foráneo tampoco debe llegar a acciones que creen timeline,
+      // oportunidades o notificaciones dentro de la organización actual.
+      delete safePayload.clientId
+      delete safePayload.clientName
+      delete safePayload.name
+      delete safePayload.phone
+      delete safePayload.email
+      return safePayload
+    }
+    return { ...safePayload, clientName: client.name, name: client.name, phone: client.phone, email: client.email }
   } catch {
-    return { ...payload }
+    // Ante fallo de lectura, fallar cerrado respecto al vínculo con el cliente.
+    delete safePayload.clientId
+    delete safePayload.clientName
+    delete safePayload.name
+    delete safePayload.phone
+    delete safePayload.email
+    return safePayload
   }
 }
 
-async function executeAction(orgId: string, userId: string | null, action: WorkflowAction, ctx: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function recordWorkflowOutboundPending(
+  execution: { runId: string; orgId: string; leaseToken: string; fencingVersion: number },
+  channel: string,
+  ctx: Record<string, unknown>,
+  rendered: string,
+  error: string,
+) {
+  await withWorkflowLeaseMutation(execution, async (tx) => {
+    await tx.notification.create({
+      data: {
+        organizationId: execution.orgId,
+        type: 'automation',
+        title: `Mensaje ${channel} PENDIENTE (destinatario no disponible)`,
+        body: 'No se pudo encolar el mensaje porque falta un destinatario válido.',
+        data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent: false, queued: false, error }),
+      },
+    })
+    await tx.timelineEvent.create({ data: {
+      organizationId: execution.orgId,
+      clientId: (ctx.clientId as string) || null,
+      type: channel,
+      title: `Mensaje ${channel} (automatización) — pendiente: destinatario no disponible`,
+      description: 'No se pudo encolar: destinatario no disponible.',
+      source: 'automation',
+    } })
+  })
+}
+
+async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<string, unknown>, execution: { automationId: string; runId: string; stepIndex: number; orgId: string; leaseToken: string; fencingVersion: number }): Promise<Record<string, unknown>> {
   const config = action.config || {}
   switch (action.type) {
     case 'create_task_like_notification': {
-      await db.notification.create({
+      await withWorkflowLeaseMutation(execution, (tx) => tx.notification.create({
         data: {
           organizationId: orgId,
           userId: null,
@@ -135,18 +194,18 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
           body: renderTemplate(String(config.body || ''), ctx),
           data: JSON.stringify({ clientId: ctx.clientId ?? null, source: 'automation' }),
         },
-      })
+      }))
       return { notification: true }
     }
     case 'notify_admin': {
-      await db.notification.create({
+      await withWorkflowLeaseMutation(execution, (tx) => tx.notification.create({
         data: {
           organizationId: orgId,
           type: 'automation',
           title: String(config.title || 'Aviso de automatización'),
           body: renderTemplate(String(config.body || ''), ctx),
         },
-      })
+      }))
       return { notified: true }
     }
     case 'send_whatsapp':
@@ -160,114 +219,84 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         if (tpl) body = tpl.body
       }
       const rendered = renderTemplate(body, ctx)
-      // ENVÍO REAL (auditoría Antigravity, importante #3 — antes email/telegram eran
-      // stubs que solo creaban una notificación interna):
-      //  - whatsapp → daemon Baileys (POST /send con secreto server-to-server)
-      //  - email    → SMTP de la organización (mail.ts trySendSmtp)
-      //  - telegram → Bot API con el token cifrado de la organización
-      // Los fallos quedan registrados como notificación en cola para revisión.
-      let sent = false
-      let sendError: string | undefined
-      if (channel === 'whatsapp' && ctx.phone) {
-        try {
-          const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
-          const daemonSecret = process.env.INTERNAL_API_SECRET
-          if (!daemonSecret) {
-            sendError = 'INTERNAL_API_SECRET no configurado'
-          } else {
-            const res = await fetch(`${daemonUrl}/send`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${daemonSecret}` },
-              body: JSON.stringify({ to: ctx.phone, text: rendered }),
-              signal: AbortSignal.timeout(8000),
-            })
-            if (res.ok) {
-              sent = true
-            } else {
-              sendError = `daemon ${res.status}`
-            }
-          }
-        } catch (err) {
-          sendError = err instanceof Error ? err.message.slice(0, 120) : 'daemon no disponible'
-        }
-      } else if (channel === 'email' && ctx.email) {
-        try {
-          const { getSmtpConfig, trySendSmtp } = await import('./mail')
-          const cfg = await getSmtpConfig(orgId)
-          if (!cfg) {
-            sendError = 'SMTP no configurado (Configuración → Email)'
-          } else {
-            const subject = String(config.subject || `Mensaje de ${cfg.from}`)
-            const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6">${rendered.replace(/\n/g, '<br>')}</div>`
-            const result = await trySendSmtp(cfg, String(ctx.email), subject, html, rendered)
-            sent = result.ok
-            if (!result.ok) sendError = (result.error || 'fallo SMTP').slice(0, 120)
-          }
-        } catch (err) {
-          sendError = err instanceof Error ? err.message.slice(0, 120) : 'error de email'
-        }
+      let payload: { to: string; text: string } | { chatId: string | number; text: string } | { to: string; subject: string; html: string; text: string }
+      if (channel === 'whatsapp') {
+        const to = typeof ctx.phone === 'string' ? ctx.phone.trim() : ''
+        if (!to) { await recordWorkflowOutboundPending(execution, channel, ctx, rendered, 'WORKFLOW_RECIPIENT_NOT_AVAILABLE'); return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' } }
+        payload = { to, text: rendered.slice(0, 4096) }
       } else if (channel === 'telegram') {
-        try {
-          const integration = await db.integration.findFirst({
-            where: { organizationId: orgId, telegramBotTokenEnc: { not: null } },
-            select: { telegramBotTokenEnc: true },
-          })
-          const token = integration ? decryptSecret(integration.telegramBotTokenEnc) : null
-          const chatId = (ctx.telegramChatId || ctx.chatId || ctx.phone) as string | undefined
-          if (!token) {
-            sendError = 'Telegram no configurado (falta token del bot)'
-          } else if (!chatId) {
-            sendError = 'falta chatId de Telegram para el destinatario'
-          } else {
-            const { sendTelegramBotMessage } = await import('./integrations')
-            const result = await sendTelegramBotMessage({ token, chatId: String(chatId), text: rendered })
-            sent = result.ok
-            if (!result.ok) sendError = (result.error || 'fallo Telegram').slice(0, 120)
-          }
-        } catch (err) {
-          sendError = err instanceof Error ? err.message.slice(0, 120) : 'error de telegram'
+        const chatId = config.chatId
+        if ((typeof chatId !== 'string' && typeof chatId !== 'number') || !String(chatId).trim()) {
+          await recordWorkflowOutboundPending(execution, channel, ctx, rendered, 'WORKFLOW_RECIPIENT_NOT_AVAILABLE')
+          return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' }
+        }
+        payload = { chatId, text: rendered.slice(0, 4096) }
+      } else {
+        const to = typeof ctx.email === 'string' ? ctx.email.trim() : ''
+        if (!to) { await recordWorkflowOutboundPending(execution, channel, ctx, rendered, 'WORKFLOW_RECIPIENT_NOT_AVAILABLE'); return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' } }
+        const subject = renderTemplate(String(config.subject || 'Seguimiento'), ctx).replace(/[\r\n]/g, ' ').slice(0, 200)
+        payload = {
+          to,
+          subject,
+          html: '<div>' + escapeWorkflowEmailHtml(rendered).replace(/\n/g, '<br/>') + '</div>',
+          text: rendered.slice(0, 50000),
         }
       }
-      // Registro del intento + evento de timeline (auditable). El título deja claro
-      // si el mensaje SALIÓ de verdad o quedó pendiente — nada de engaños.
-      const { db: database } = await import('./db')
-      await database.notification.create({
-        data: {
+
+      const intent = await enqueueWorkflowOutboundMessage({
+        organizationId: orgId,
+        automationId: execution.automationId,
+        automationRunId: execution.runId,
+        stepIndex: execution.stepIndex,
+        channel,
+        payload,
+        lease: { runId: execution.runId, orgId: execution.orgId, leaseToken: execution.leaseToken, fencingVersion: execution.fencingVersion },
+      })
+      await withWorkflowLeaseMutation(execution, async (tx) => {
+        await tx.notification.create({
+          data: {
+            organizationId: orgId,
+            type: 'automation',
+            title: `Mensaje ${channel} en cola durable`,
+            body: 'Intención persistida en outbox para despacho.',
+            data: JSON.stringify({ channel, outboundId: intent.id, status: intent.status, clientId: ctx.clientId ?? null }),
+          },
+        })
+        await tx.timelineEvent.create({ data: {
           organizationId: orgId,
-          type: 'automation',
-          title: `Mensaje ${channel} ${sent ? 'enviado' : 'PENDIENTE de envío (fallo de canal)'}`,
-          body: rendered.slice(0, 500),
-          data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent, error: sendError ?? null }),
-        },
+          clientId: (ctx.clientId as string) || null,
+          type: channel,
+          title: `Mensaje ${channel} (automatización) — en cola`,
+          description: 'Intención ' + intent.id + ' persistida en outbox.',
+          source: 'automation',
+        } })
       })
-      await recordTimelineEvent({
-        orgId,
-        clientId: (ctx.clientId as string) || null,
-        type: channel,
-        title: `Mensaje ${channel} (automatización)${sent ? '' : ' — no entregado'}`,
-        description: rendered.slice(0, 300),
-        source: 'automation',
-      })
-      return { queued: true, channel, sent, error: sendError }
+      return { queued: true, pending: true, channel, outboundId: intent.id, status: intent.status }
     }
     case 'create_opportunity': {
-      const stage = await db.pipelineStage.findFirst({ where: { organizationId: orgId }, orderBy: { order: 'asc' } })
-      const opp = await db.opportunity.create({
+      const requestedStageId = config.stageId as string | undefined
+      const [requestedStage, firstStage] = await Promise.all([
+        requestedStageId
+          ? db.pipelineStage.findFirst({ where: { id: requestedStageId, organizationId: orgId }, select: { id: true } })
+          : Promise.resolve(null),
+        db.pipelineStage.findFirst({ where: { organizationId: orgId }, orderBy: { order: 'asc' }, select: { id: true } }),
+      ])
+      const opp = await withWorkflowLeaseMutation(execution, (tx) => tx.opportunity.create({
         data: {
           organizationId: orgId,
           title: renderTemplate(String(config.title || 'Nueva oportunidad'), ctx),
           clientId: (ctx.clientId as string) || null,
-          stageId: (config.stageId as string) || stage?.id || null,
+          stageId: requestedStage?.id || firstStage?.id || null,
           amount: Number(config.amount || 0),
           source: 'automation',
         },
-      })
+      }))
       return { opportunityId: opp.id }
     }
     case 'update_client_status': {
       const clientId = ctx.clientId as string | undefined
       if (clientId) {
-        await db.client.updateMany({ where: { id: clientId, organizationId: orgId }, data: { status: String(config.status || 'active') } })
+        await withWorkflowLeaseMutation(execution, (tx) => tx.client.updateMany({ where: { id: clientId, organizationId: orgId }, data: { status: String(config.status || 'active') } }))
         return { updated: clientId }
       }
       return { skipped: 'sin clientId' }
@@ -276,14 +305,22 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
       const opportunityId = (ctx.opportunityId as string) || (config.opportunityId as string)
       const stageId = config.stageId as string
       if (opportunityId && stageId) {
-        await db.opportunity.updateMany({ where: { id: opportunityId, organizationId: orgId }, data: { stageId } })
-        await recordTimelineEvent({
-          orgId,
-          opportunityId,
-          clientId: (ctx.clientId as string) || null,
-          type: 'stage_change',
-          title: 'Etapa actualizada por automatización',
-          source: 'automation',
+        const [validOpportunity, validStage] = await Promise.all([
+          db.opportunity.findFirst({ where: { id: opportunityId, organizationId: orgId }, select: { id: true } }),
+          db.pipelineStage.findFirst({ where: { id: stageId, organizationId: orgId }, select: { id: true } }),
+        ])
+        if (!validOpportunity) return { skipped: 'oportunidad no pertenece a la organización' }
+        if (!validStage) return { skipped: 'etapa no pertenece a la organización' }
+        await withWorkflowLeaseMutation(execution, async (tx) => {
+          await tx.opportunity.updateMany({ where: { id: validOpportunity.id, organizationId: orgId }, data: { stageId: validStage.id } })
+          await tx.timelineEvent.create({ data: {
+            organizationId: orgId,
+            opportunityId,
+            clientId: (ctx.clientId as string) || null,
+            type: 'stage_change',
+            title: 'Etapa actualizada por automatización',
+            source: 'automation',
+          } })
         })
         return { moved: opportunityId }
       }
@@ -298,7 +335,7 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
         { role: 'system', content: 'Eres un asistente comercial. Responde SOLO con el mensaje listo para enviar, sin comillas ni prefijos.' },
         { role: 'user', content: `${instruction}\nCliente: ${client}\nContexto: ${JSON.stringify(ctx).slice(0, 500)}` },
       ])
-      await db.notification.create({
+      await withWorkflowLeaseMutation(execution, (tx) => tx.notification.create({
         data: {
           organizationId: orgId,
           type: 'agent',
@@ -306,12 +343,23 @@ async function executeAction(orgId: string, userId: string | null, action: Workf
           body: text.slice(0, 500),
           data: JSON.stringify({ clientId: ctx.clientId ?? null }),
         },
-      })
+      }))
       return { drafted: true, text: text.slice(0, 200) }
     }
     default:
       return { skipped: `acción desconocida: ${action.type}` }
   }
+}
+
+/** Escapa contenido plano antes de insertarlo en el HTML de correo. */
+export function escapeWorkflowEmailHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character]!)
 }
 
 function renderTemplate(body: string, ctx: Record<string, unknown>): string {
@@ -320,6 +368,98 @@ function renderTemplate(body: string, ctx: Record<string, unknown>): string {
     if (v === undefined || v === null) return `{{${key}}}`
     if (v instanceof Date) return v.toLocaleDateString('es-CO')
     return String(v)
+  })
+}
+
+// All first-party database side effects must be fenced in the same transaction
+// as their write. A preflight lease check alone leaves a race with lease reclaim.
+async function withWorkflowLeaseMutation<T>(
+  execution: { runId: string; orgId: string; leaseToken: string; fencingVersion: number },
+  mutate: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return db.$transaction(async (tx) => {
+    const now = new Date()
+    const owner = await tx.automationRun.updateMany({
+      where: {
+        id: execution.runId,
+        organizationId: execution.orgId,
+        status: 'processing',
+        leaseToken: execution.leaseToken,
+        fencingVersion: execution.fencingVersion,
+        leaseExpiresAt: { gt: now },
+      },
+      data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+    })
+    if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: side effect rejected by fencing')
+    return mutate(tx)
+  })
+}
+
+// ---------- Lease distribuido del workflow ----------
+// El token identifica al propietario y fencingVersion es la generación monotónica.
+// Cada checkpoint renueva el lease mediante compare-and-swap en la base de datos.
+const WORKFLOW_LEASE_MS = 30 * 60_000
+
+async function claimWorkflowRun(runId: string, orgId: string) {
+  const now = new Date()
+  const token = randomUUID()
+  const claimed = await db.automationRun.updateMany({
+    where: { id: runId, organizationId: orgId, status: 'running',
+      OR: [{ leaseToken: null }, { leaseExpiresAt: null }, { leaseExpiresAt: { lte: now } }] },
+    data: { status: 'processing', leaseToken: token,
+      leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS), fencingVersion: { increment: 1 } },
+  })
+  if (claimed.count !== 1) return null
+  const run = await db.automationRun.findFirst({ where: { id: runId, organizationId: orgId, leaseToken: token } })
+  return run ? { leaseToken: token, fencingVersion: run.fencingVersion } : null
+}
+
+async function assertWorkflowLease(runId: string, orgId: string, leaseToken: string, fencingVersion: number) {
+  const now = new Date()
+  const renewed = await db.automationRun.updateMany({
+    where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+    data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+  })
+  if (renewed.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: el worker perdió el lease; se detiene la ejecución')
+}
+
+async function updateRunWithLease(runId: string, orgId: string, leaseToken: string, fencingVersion: number, data: Record<string, unknown>) {
+  const now = new Date()
+  const updated = await db.automationRun.updateMany({
+    where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+    data: data as never,
+  })
+  if (updated.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: escritura rechazada por fencing')
+}
+
+async function createStepWithLease(runId: string, orgId: string, leaseToken: string, fencingVersion: number, stepIndex: number, actionType: string) {
+  return db.$transaction(async (tx) => {
+    const now = new Date()
+    const owner = await tx.automationRun.updateMany({
+      where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+      data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+    })
+    if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: claim de paso rechazado')
+    return tx.workflowStepExecution.create({
+      data: { automationRunId: runId, stepIndex, actionType, status: 'started' },
+    })
+  })
+}
+
+async function updateStepWithLease(
+  runId: string, orgId: string, leaseToken: string, fencingVersion: number,
+  stepId: string, data: { status: string; output?: string; error?: string; finishedAt: Date },
+) {
+  return db.$transaction(async (tx) => {
+    const now = new Date()
+    const owner = await tx.automationRun.updateMany({
+      where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+      data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+    })
+    if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: escritura de paso rechazada')
+    const step = await tx.workflowStepExecution.updateMany({ where: { id: stepId, automationRunId: runId }, data })
+    if (step.count !== 1) throw new Error('WORKFLOW_STEP_WRITE_REJECTED: paso inexistente o ya no pertenece al run')
+    return step
   })
 }
 
@@ -333,12 +473,12 @@ function renderTemplate(body: string, ctx: Record<string, unknown>): string {
  */
 async function runActionSteps(
   orgId: string,
-  userId: string | null,
   actions: WorkflowAction[],
   ctx: Record<string, unknown>,
   startIndex: number,
   prevStates: StepState[],
-  prevOutputs: Record<string, unknown>[]
+  prevOutputs: Record<string, unknown>[],
+  execution: { automationId: string; runId: string; orgId: string; leaseToken: string; fencingVersion: number }
 ): Promise<
   | { done: true; stepStates: StepState[]; outputs: Record<string, unknown>[] }
   | { done: false; stepStates: StepState[]; outputs: Record<string, unknown>[]; waitMs: number; nextStep: number }
@@ -355,14 +495,46 @@ async function runActionSteps(
       return { done: false, stepStates, outputs, waitMs: waitDurationMs(action.config), nextStep: i + 1 }
     }
 
+    // WRITE-AHEAD y ownership se confirman en la misma transacción.
+    let stepRecord
     try {
-      const out = await executeAction(orgId, userId, action, ctx)
+      stepRecord = await createStepWithLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion, i, action.type)
+    } catch (claimError) {
+      await assertWorkflowLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion)
+      const existing = await db.workflowStepExecution.findUnique({
+        where: { automationRunId_stepIndex: { automationRunId: execution.runId, stepIndex: i } },
+      })
+      if (existing?.status === 'succeeded') {
+        const saved = safeParse<Record<string, unknown>>(existing.output) || {}
+        outputs.push(saved)
+        stepStates[i] = { type: action.type, status: saved.pending === true ? (saved.queued === true ? 'queued' : 'skipped') : 'success' }
+        continue
+      }
+      const message = existing?.status === 'started' || existing?.status === 'unknown'
+        ? 'WORKFLOW_STEP_OUTCOME_UNKNOWN: paso previamente iniciado; no se reejecuta'
+        : (claimError instanceof Error ? claimError.message : String(claimError))
+      const blocked = new Error(message) as Error & { stepStates?: StepState[] }
+      stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300) }
+      blocked.stepStates = stepStates
+      throw blocked
+    }
+
+    try {
+      const out = await executeAction(orgId, action, ctx, { automationId: execution.automationId, runId: execution.runId, stepIndex: i, orgId: execution.orgId, leaseToken: execution.leaseToken, fencingVersion: execution.fencingVersion })
+      await updateStepWithLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion,
+        stepRecord.id, { status: 'succeeded', output: JSON.stringify(out).slice(0, 5000), finishedAt: new Date() })
       outputs.push(out)
-      stepStates[i] = { type: action.type, status: 'success', ms: Date.now() - t0 }
+      // "queued" confirma persistencia durable de la intención, no entrega al proveedor.
+      const stepStatus = out.pending === true
+        ? (out.queued === true ? 'queued' : 'skipped')
+        : 'success'
+      stepStates[i] = { type: action.type, status: stepStatus, ms: Date.now() - t0 }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      // No se puede probar si el efecto ocurrió antes del error: dejar unknown.
+      await updateStepWithLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion,
+        stepRecord.id, { status: 'unknown', error: message.slice(0, 300), finishedAt: new Date() }).catch(() => undefined)
       stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300), ms: Date.now() - t0 }
-      // Propaga el error llevando los stepStates parciales para persistirlos
       const wrapped = err instanceof Error ? err : new Error(message)
       ;(wrapped as Error & { stepStates?: StepState[] }).stepStates = stepStates
       throw wrapped
@@ -374,7 +546,12 @@ async function runActionSteps(
 
 export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
   const automations = await db.automation.findMany({
-    where: { organizationId: event.orgId, isActive: true, triggerType: event.type },
+    where: {
+      organizationId: event.orgId,
+      isActive: true,
+      triggerType: event.type,
+      ...(event.automationId ? { id: event.automationId } : {}),
+    },
   })
   const results: Array<{ automationId: string; status: string; error?: string }> = []
 
@@ -391,14 +568,22 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
     const idempotencyKey = entityKey ? `${event.type}:${entityKey}`.slice(0, 180) : null
     let run
     try {
-      run = await db.automationRun.create({
-        data: {
-          organizationId: event.orgId,
-          automationId: automation.id,
-          input: JSON.stringify(event.payload).slice(0, 5000),
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-        },
-      })
+      if (event.existingRunId) {
+        run = await db.automationRun.findFirst({
+          where: { id: event.existingRunId, organizationId: event.orgId, automationId: automation.id },
+        })
+        if (!run) throw new Error('El run durable no pertenece a esta automatización/organización')
+      } else {
+        run = await db.automationRun.create({
+          data: {
+            organizationId: event.orgId,
+            automationId: automation.id,
+            input: JSON.stringify(event.payload).slice(0, 5000),
+            stepLedgerVersion: 1,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          },
+        })
+      }
     } catch (err) {
       // P2002: ese MISMO evento ya ejecutó esta automatización → no duplicar
       if ((err as { code?: string }).code === 'P2002') {
@@ -407,57 +592,48 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
       }
       throw err
     }
+    const lease = await claimWorkflowRun(run.id, event.orgId)
+    if (!lease) {
+      results.push({ automationId: automation.id, status: 'already_claimed' })
+      continue
+    }
     try {
       const conditions = safeParse<Condition[]>(automation.conditions)
       if (!evaluateConditions(conditions, event.payload)) {
-        await db.automationRun.update({ where: { id: run.id }, data: { status: 'success', output: JSON.stringify({ skipped: 'condiciones no cumplidas' }), finishedAt: new Date() } })
+        await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, { status: 'success', output: JSON.stringify({ skipped: 'condiciones no cumplidas' }), finishedAt: new Date(), leaseExpiresAt: new Date() })
         results.push({ automationId: automation.id, status: 'skipped' })
         continue
       }
       const actions = safeParse<WorkflowAction[]>(automation.actions) || []
       const ctx = await buildActionContext(event.orgId, event.payload)
-      const res = await runActionSteps(event.orgId, automation.createdById, actions, ctx, 0, [], [])
+      const res = await runActionSteps(event.orgId, actions, ctx, 0, [], [], { automationId: automation.id, runId: run.id, orgId: event.orgId, ...lease })
 
       if (!res.done) {
         // PAUSA durable (patrón DELAY de Twenty): el run queda 'waiting' y el
         // scheduler lo reanuda cuando venza resumeAt.
-        await db.automationRun.update({
-          where: { id: run.id },
-          data: {
-            status: 'waiting',
-            stepStates: JSON.stringify(res.stepStates),
-            currentStep: res.nextStep,
-            output: JSON.stringify(res.outputs).slice(0, 5000),
-            resumeAt: new Date(Date.now() + res.waitMs),
-          },
+        await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, {
+          status: 'waiting', stepStates: JSON.stringify(res.stepStates), currentStep: res.nextStep,
+          output: JSON.stringify(res.outputs).slice(0, 5000),
+          resumeAt: new Date(Date.now() + res.waitMs), leaseExpiresAt: new Date(),
         })
         results.push({ automationId: automation.id, status: 'waiting' })
         continue
       }
 
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'success',
-          output: JSON.stringify(res.outputs).slice(0, 5000),
-          stepStates: JSON.stringify(res.stepStates),
-          finishedAt: new Date(),
-        },
+      await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, {
+        status: 'success', output: JSON.stringify(res.outputs).slice(0, 5000),
+        stepStates: JSON.stringify(res.stepStates), finishedAt: new Date(), leaseExpiresAt: new Date(),
       })
       await db.automation.update({ where: { id: automation.id }, data: { runCount: { increment: 1 }, lastRunAt: new Date() } })
       results.push({ automationId: automation.id, status: 'success' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const partialStates = (err as Error & { stepStates?: StepState[] }).stepStates
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'failed',
-          error: message.slice(0, 1000),
-          stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
-          finishedAt: new Date(),
-        },
-      })
+      await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, {
+        status: 'failed', error: message.slice(0, 1000),
+        stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
+        finishedAt: new Date(), leaseExpiresAt: new Date(),
+      }).catch(() => undefined)
       results.push({ automationId: automation.id, status: 'failed', error: message })
     }
   }
@@ -487,16 +663,18 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
   for (const run of waiting) {
     // CLAIM atómico: solo una instancia reanuda cada run (concurrentes → count=0)
     const claim = await db.automationRun.updateMany({
-      where: { id: run.id, status: 'waiting', resumeAt: { lte: now } },
+      where: { id: run.id, organizationId: run.organizationId, status: 'waiting', resumeAt: { lte: now } },
       data: { status: 'running' },
     })
     if (claim.count === 0) continue
+    const lease = await claimWorkflowRun(run.id, run.organizationId)
+    if (!lease) continue
 
-    const automation = await db.automation.findUnique({ where: { id: run.automationId } })
+    const automation = await db.automation.findFirst({ where: { id: run.automationId, organizationId: run.organizationId } })
     if (!automation || !automation.isActive) {
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: { status: 'success', output: JSON.stringify({ skipped: 'automación inactiva al reanudar' }), finishedAt: new Date() },
+      await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+        status: 'success', output: JSON.stringify({ skipped: 'automatización inactiva al reanudar' }),
+        finishedAt: new Date(), leaseExpiresAt: new Date(),
       })
       processed++
       continue
@@ -509,28 +687,18 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
 
     try {
       const ctx = await buildActionContext(automation.organizationId, payload)
-      const res = await runActionSteps(automation.organizationId, automation.createdById, actions, ctx, run.currentStep, prevStates, prevOutputs)
+      const res = await runActionSteps(automation.organizationId, actions, ctx, run.currentStep, prevStates, prevOutputs, { automationId: automation.id, runId: run.id, orgId: run.organizationId, ...lease })
       if (!res.done) {
         // Otra espera encadenada: vuelve a pausar (secuencias multi-touch)
-        await db.automationRun.update({
-          where: { id: run.id },
-          data: {
-            status: 'waiting',
-            stepStates: JSON.stringify(res.stepStates),
-            currentStep: res.nextStep,
-            output: JSON.stringify(res.outputs).slice(0, 5000),
-            resumeAt: new Date(Date.now() + res.waitMs),
-          },
+        await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+          status: 'waiting', stepStates: JSON.stringify(res.stepStates), currentStep: res.nextStep,
+          output: JSON.stringify(res.outputs).slice(0, 5000),
+          resumeAt: new Date(Date.now() + res.waitMs), leaseExpiresAt: new Date(),
         })
       } else {
-        await db.automationRun.update({
-          where: { id: run.id },
-          data: {
-            status: 'success',
-            output: JSON.stringify(res.outputs).slice(0, 5000),
-            stepStates: JSON.stringify(res.stepStates),
-            finishedAt: new Date(),
-          },
+        await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+          status: 'success', output: JSON.stringify(res.outputs).slice(0, 5000),
+          stepStates: JSON.stringify(res.stepStates), finishedAt: new Date(), leaseExpiresAt: new Date(),
         })
         await db.automation.update({ where: { id: automation.id }, data: { runCount: { increment: 1 }, lastRunAt: new Date() } })
       }
@@ -538,15 +706,11 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const partialStates = (err as Error & { stepStates?: StepState[] }).stepStates
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'failed',
-          error: message.slice(0, 1000),
-          stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
-          finishedAt: new Date(),
-        },
-      })
+      await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+        status: 'failed', error: message.slice(0, 1000),
+        stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
+        finishedAt: new Date(), leaseExpiresAt: new Date(),
+      }).catch(() => undefined)
       processed++
     }
   }

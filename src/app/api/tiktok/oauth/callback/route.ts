@@ -79,8 +79,16 @@ export async function GET(req: NextRequest) {
       refresh_token?: string
       open_id?: string
       scope?: string
+      expires_in?: number
+      refresh_expires_in?: number
     }
-    if (!tokJson.access_token || !tokJson.open_id) return fail('token_exchange_failed')
+    if (
+      !tokJson.access_token || !tokJson.refresh_token || !tokJson.open_id ||
+      !Number.isFinite(tokJson.expires_in) || Number(tokJson.expires_in) <= 0 ||
+      !Number.isFinite(tokJson.refresh_expires_in) || Number(tokJson.refresh_expires_in) <= 0
+    ) return fail('token_exchange_failed')
+    const openId = tokJson.open_id
+    if (!openId) return fail('token_exchange_failed')
 
     // perfil del usuario (user_info.basic)
     let displayName = ''
@@ -99,16 +107,102 @@ export async function GET(req: NextRequest) {
       /* perfil no fatal */
     }
 
-    const next = encodeTikTokState({
+    const now = Date.now()
+    const nextState = {
       ...tt,
       accessToken: tokJson.access_token,
       refreshToken: tokJson.refresh_token,
-      openId: tokJson.open_id,
+      accessTokenExpiresAt: now + Number(tokJson.expires_in) * 1000,
+      refreshTokenExpiresAt: now + Number(tokJson.refresh_expires_in) * 1000,
+      openId: openId,
       displayName,
-    })
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: { tiktokTokenEnc: next, enableTikTok: true },
+      scope: tokJson.scope || undefined,
+    }
+    const next = encodeTikTokState(nextState)
+    if (!next) return fail('token_persistence_failed')
+
+    // Una autorización explícita de TikTok es el único camino que libera un
+    // refreshState=uncertain. Se reemplaza el par completo de tokens y se
+    // incrementa fencingVersion para invalidar cualquier worker anterior.
+    const providerAccountKey = `tiktok:business:${openId}`
+    const scopes = (tokJson.scope || '')
+      .split(',')
+      .map((scope) => scope.trim())
+      .filter(Boolean)
+    const tokenExpiresAt = new Date(nextState.accessTokenExpiresAt)
+    await db.$transaction(async (tx) => {
+      const existing = await tx.channelConnection.findUnique({
+        where: { providerAccountKey },
+        select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+      })
+      if (existing && (
+        existing.organizationId !== auth.orgId ||
+        existing.channel !== 'tiktok' ||
+        existing.provider !== 'tiktok_business' ||
+        existing.externalAccountId !== openId
+      )) {
+        throw new Error('TIKTOK_ACCOUNT_OWNERSHIP_CONFLICT')
+      }
+
+      await tx.integration.update({
+        where: { organizationId: auth.orgId },
+        data: { tiktokTokenEnc: next, enableTikTok: true },
+      })
+
+      if (existing) {
+        await tx.channelConnection.update({
+          where: { id: existing.id },
+          data: {
+            externalAccountId: openId,
+            displayName: displayName || null,
+            status: 'connected',
+            scopes: JSON.stringify(scopes),
+            credentialsEnc: next,
+            tokenExpiresAt,
+            lastVerifiedAt: new Date(now),
+            lastErrorAt: null,
+            lastErrorCode: null,
+            refreshState: 'idle',
+            refreshLeaseToken: null,
+            refreshLeaseExpiresAt: null,
+            refreshFencingVersion: { increment: 1 },
+          },
+        })
+        await tx.channelConnectionEvent.create({
+          data: {
+            organizationId: auth.orgId,
+            connectionId: existing.id,
+            type: 'connected',
+            detail: 'via=login_kit_oauth; recovery=explicit_reauthorization',
+          },
+        })
+      } else {
+        const connection = await tx.channelConnection.create({
+          data: {
+            organizationId: auth.orgId,
+            channel: 'tiktok',
+            provider: 'tiktok_business',
+            providerAccountKey,
+            externalAccountId: openId,
+            displayName: displayName || null,
+            status: 'connected',
+            scopes: JSON.stringify(scopes),
+            credentialsEnc: next,
+            tokenExpiresAt,
+            lastVerifiedAt: new Date(now),
+            refreshState: 'idle',
+            refreshFencingVersion: 1,
+          },
+        })
+        await tx.channelConnectionEvent.create({
+          data: {
+            organizationId: auth.orgId,
+            connectionId: connection.id,
+            type: 'connected',
+            detail: 'via=login_kit_oauth',
+          },
+        })
+      }
     })
 
     await auditAndTimeline({
@@ -119,7 +213,7 @@ export async function GET(req: NextRequest) {
       details: {
         provider: 'tiktok',
         via: 'login_kit_oauth',
-        openId: tokJson.open_id,
+        openId: openId,
         displayName: displayName || null,
         scope: tokJson.scope || null,
         tokenMasked: `${tokJson.access_token.slice(0, 4)}••••`,
@@ -127,7 +221,7 @@ export async function GET(req: NextRequest) {
     })
 
     const ok = new URL('/settings?tab=tiktok', req.url)
-    ok.searchParams.set('tt_connected', displayName || tokJson.open_id)
+    ok.searchParams.set('tt_connected', displayName || openId)
     const res = NextResponse.redirect(ok)
     res.cookies.delete('tt_oauth_csrf')
     return res

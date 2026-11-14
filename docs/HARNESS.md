@@ -139,7 +139,8 @@ El host puede **añadir inteligencia** sobre estos workflows (decidir cuándo y 
 ```bash
 npm install
 cp .env.example .env          # APP_SECRET, APP_ENCRYPTION_KEY, INTERNAL_API_SECRET
-npx prisma db push
+# DATABASE_URL debe apuntar a una BD SQLite local de pruebas
+npm run db:migrate       # aplica prisma/migrations/ (instalación limpia)
 npm run dev                   # http://localhost:3000
 node src/whatsapp-daemon/daemon.mjs   # opcional (puerto 3002)
 

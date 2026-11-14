@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2, Mic } from 'lucide-react'
+import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2, Mic, Music2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -29,6 +29,7 @@ const CHANNEL_ICON = {
   telegram: SendIcon,
   instagram: Instagram,
   facebook: MessengerIcon,
+  tiktok: Music2,
 } as const
 
 const CHANNEL_BADGE = {
@@ -36,6 +37,7 @@ const CHANNEL_BADGE = {
   telegram: 'bg-sky-100 text-sky-700',
   instagram: 'bg-pink-100 text-pink-700',
   facebook: 'bg-blue-100 text-blue-700',
+  tiktok: 'bg-slate-900 text-white',
 } as const
 
 type ChannelFilter = 'all' | InboxConversation['channel']
@@ -62,6 +64,7 @@ export function InboxPage() {
   const [draft, setDraft] = useState('')
   const [filter, setFilter] = useState<ChannelFilter>('all')
   const threadRef = useRef<HTMLDivElement>(null)
+  const canonicalRequestRef = useRef<{ key: string; text: string; id: string } | null>(null)
 
   const loadList = useCallback(async (silent = false) => {
     if (!silent) setLoadingList(true)
@@ -127,6 +130,9 @@ export function InboxPage() {
 
   async function handleSend() {
     if (!selected || !draft.trim() || sending) return
+    // Solo conversaciones canónicas de canales soportados pueden encolarse.
+    if (!selected.key.startsWith('cc:')) return
+    if (selected.channel !== 'whatsapp' && selected.channel !== 'instagram' && selected.channel !== 'tiktok') return
     setSending(true)
     const optimistic: InboxMessage = {
       id: `tmp-${Date.now()}`,
@@ -137,24 +143,45 @@ export function InboxPage() {
     }
     setMessages((prev) => [...prev, optimistic])
     const text = draft.trim()
+    const canonical = selected.key.startsWith('cc:')
+    let acceptedCanonical = false
     setDraft('')
     try {
+      const requestId = canonical
+        ? (canonicalRequestRef.current?.key === selected.key && canonicalRequestRef.current.text === text
+            ? canonicalRequestRef.current.id
+            : globalThis.crypto.randomUUID())
+        : undefined
+      if (canonical && requestId) canonicalRequestRef.current = { key: selected.key, text, id: requestId }
       await api.sendInboxMessage({
         key: selected.key,
         contactHandle: selected.contactHandle,
         clientId: selected.clientId,
         text,
+        ...(requestId ? { clientRequestId: requestId } : {}),
       })
-      // Refresca el hilo real (el servidor registra el mensaje en su fuente)
+      if (canonical) {
+        acceptedCanonical = true
+        canonicalRequestRef.current = null
+      }
+      // Refresca el hilo real; en canonical muestra estado de outbox, no simula entrega.
       const res = (await api.getInboxMessages(selected.key)) as { messages?: InboxMessage[] }
       setMessages(res.messages || [])
-      setConversations((prev) =>
-        prev.map((c) => (c.key === selected.key ? { ...c, lastMessage: text, lastMessageAt: optimistic.createdAt, lastMessageFrom: 'out' } : c))
-      )
+      if (canonical) {
+        toast.info('Mensaje guardado en cola. Todavía no se ha enviado al proveedor.')
+      } else {
+        setConversations((prev) =>
+          prev.map((c) => (c.key === selected.key ? { ...c, lastMessage: text, lastMessageAt: optimistic.createdAt, lastMessageFrom: 'out' } : c))
+        )
+      }
     } catch (err) {
-      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id))
-      setDraft(text)
-      toast.error(err instanceof Error ? err.message : 'No se pudo enviar el mensaje')
+      if (canonical && acceptedCanonical) {
+        toast.info('El mensaje quedó en cola; no se pudo actualizar el hilo. Actualiza para consultar su estado.')
+      } else {
+        setMessages((prev) => prev.filter((m) => m.id !== optimistic.id))
+        setDraft(text)
+        toast.error(err instanceof Error ? err.message : 'No se pudo enviar el mensaje')
+      }
     } finally {
       setSending(false)
     }
@@ -166,6 +193,7 @@ export function InboxPage() {
     { id: 'telegram', label: 'Telegram' },
     { id: 'instagram', label: 'Instagram' },
     { id: 'facebook', label: 'Messenger' },
+    { id: 'tiktok', label: 'TikTok' },
   ]
 
   return (
@@ -174,7 +202,7 @@ export function InboxPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Bandeja</h1>
           <p className="text-xs text-slate-500">
-            WhatsApp · Telegram · Instagram · Messenger {totalUnread > 0 ? `— ${totalUnread} sin leer` : '— todo al día'}
+            WhatsApp · Telegram · Instagram · Messenger · TikTok {totalUnread > 0 ? `— ${totalUnread} sin leer` : '— todo al día'}
           </p>
         </div>
         <Button variant="ghost" size="sm" className="text-slate-500 h-8 w-8 p-0" onClick={() => loadList()} title="Actualizar">
@@ -209,7 +237,7 @@ export function InboxPage() {
               <div className="p-6 text-center">
                 <InboxIcon className="w-8 h-8 text-slate-200 mx-auto mb-2" />
                 <p className="text-xs text-slate-400">Sin conversaciones aún</p>
-                <p className="text-[10px] text-slate-300 mt-1">Los mensajes de WhatsApp, Telegram, Instagram y Messenger aparecerán aquí</p>
+                <p className="text-[10px] text-slate-300 mt-1">Los mensajes de WhatsApp, Telegram, Instagram, Messenger y TikTok aparecerán aquí</p>
               </div>
             ) : (
               filtered.map((conv) => {
@@ -235,6 +263,7 @@ export function InboxPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <span className="text-[13px] font-medium text-slate-900 truncate">{conv.contactName}</span>
+                          {conv.connectionName && <span className="text-[9px] text-slate-400 truncate max-w-[90px] ml-1">{conv.connectionName}</span>}
                           <span className="text-[10px] text-slate-400 flex-shrink-0 ml-1">{timeAgo(conv.lastMessageAt)}</span>
                         </div>
                         <div className="flex items-center justify-between mt-0.5">
@@ -282,7 +311,7 @@ export function InboxPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-slate-900 truncate">{selected.contactName}</p>
                   <p className="text-[11px] text-slate-400 truncate">
-                    vía {selected.channelLabel} · {selected.contactHandle || 'sin handle'}
+                    vía {selected.channelLabel}{selected.connectionName ? ` · ${selected.connectionName}` : ''} · {selected.contactHandle || 'sin handle'}
                   </p>
                 </div>
                 {selected.isAutoReply && (
@@ -316,6 +345,21 @@ export function InboxPage() {
                           </span>
                         )}
                         {m.text}
+                        {m.deliveryStatus && (
+                          <span className={cn(
+                            'block text-[10px] mt-1 font-medium',
+                            m.deliveryStatus === 'failed' || m.deliveryStatus === 'delivery_failed' ? 'text-red-200' : m.deliveryStatus === 'unknown' ? 'text-amber-200' : 'text-emerald-100'
+                          )}>
+                            {m.deliveryStatus === 'queued' ? 'En cola · aún no enviado' :
+                              m.deliveryStatus === 'sending' ? 'En proceso de entrega' :
+                              m.deliveryStatus === 'sent' ? 'Aceptado por el proveedor' :
+                              m.deliveryStatus === 'delivered' ? 'Entregado' :
+                              m.deliveryStatus === 'read' ? 'Leído' :
+                              m.deliveryStatus === 'delivery_failed' ? 'No se pudo entregar' :
+                              m.deliveryStatus === 'failed' ? 'Rechazado · no enviado' :
+                              'Resultado incierto · verificar antes de reenviar'}
+                          </span>
+                        )}
                         <span className={cn('block text-[9px] mt-1', m.direction === 'out' ? (m.senderType === 'agent' ? 'text-amber-600' : 'text-emerald-200') : 'text-slate-400')}>
                           {m.senderType === 'agent' ? 'Agente IA · ' : ''}
                           {new Date(m.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
@@ -327,6 +371,8 @@ export function InboxPage() {
               </div>
 
               <div className="p-3 border-t border-slate-100 bg-white">
+                {!selected.key.startsWith('cc:') && <p className="text-[11px] text-amber-700 mb-2">Esta conversación todavía usa el formato legacy. El envío está deshabilitado hasta migrarla a una conexión canónica.</p>}
+                {selected.key.startsWith('cc:') && <p className="text-[11px] text-amber-700 mb-2">{selected.channel === 'whatsapp' || selected.channel === 'instagram' || selected.channel === 'tiktok' ? 'El mensaje se guardará en una cola segura y podrás ver su estado. El worker de entrega aún no está habilitado: no se enviará al proveedor ni se usará una cuenta legacy.' : 'El envío canónico de este canal todavía no está soportado; no se usará una cuenta legacy.'}</p>}
                 <div className="flex gap-2 items-end">
                   <Textarea
                     value={draft}
@@ -337,13 +383,14 @@ export function InboxPage() {
                         handleSend()
                       }
                     }}
-                    placeholder={`Responder por ${selected.channelLabel}…`}
+                    placeholder={!selected.key.startsWith('cc:') ? 'Envío deshabilitado para conversaciones legacy…' : 'Escribe para guardar en la cola (sin envío todavía)…'}
+                    disabled={!selected.key.startsWith('cc:') || (selected.channel !== 'whatsapp' && selected.channel !== 'instagram' && selected.channel !== 'tiktok')}
                     className="min-h-[42px] max-h-32 resize-none text-[13px]"
                     rows={1}
                   />
-                  <Button onClick={handleSend} disabled={sending || !draft.trim()} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
+                  <Button onClick={handleSend} disabled={sending || !draft.trim() || !selected.key.startsWith('cc:') || (selected.channel !== 'whatsapp' && selected.channel !== 'instagram' && selected.channel !== 'tiktok')} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
                     {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <SendIcon className="w-4 h-4" />}
-                    <span className="hidden sm:inline">Enviar</span>
+                    <span className="hidden sm:inline">{selected.key.startsWith('cc:') ? 'Encolar' : 'Enviar'}</span>
                   </Button>
                 </div>
               </div>

@@ -195,7 +195,9 @@ describe('whatspower-bridge: contrato stage-change', () => {
       toStage: 'B',
     }
     // Mismo instante (reintento): mismo eventId → dedup en WHATSPOWER.
-    const t = Date.now()
+    // Fijar el instante al inicio de una ventana evita que el reloj real
+    // cruce el límite de 5 min entre t y t+1000 y vuelva flaky el contrato.
+    const t = Math.floor(Date.now() / (5 * 60 * 1000)) * (5 * 60 * 1000) + 1000
     const e1 = deriveStageEventId(input.orgId, input.opportunityId, input.fromStage, input.toStage, t)
     const e2 = deriveStageEventId(input.orgId, input.opportunityId, input.fromStage, input.toStage, t + 1000)
     expect(e1).toBe(e2)

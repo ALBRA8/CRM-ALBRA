@@ -7,7 +7,10 @@ import { GET as signupGet, POST as signupPost } from '@/app/api/whatsapp/embedde
 import { GET as internalCredentialsGet } from '@/app/api/internal/whatsapp/credentials/route'
 import { GET as webhookGet, POST as webhookPost } from '@/app/api/whatsapp/webhook/route'
 import { db } from '@/lib/db'
+import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
+import { claimChannelOutboundMessage, createChannelOutboundIntent } from '@/lib/channel-outbox'
 import { FIX, jsonBody, req, routeParams, tokenA, tokenB, tokenFor } from '../helpers'
+import * as autoResponder from '@/lib/channel-autoresponder'
 
 /**
  * OLEADA 2 — CONEXIONES WHATSAPP POR ORGANIZACIÓN (decisión de negocio 2026-11-11).
@@ -23,7 +26,11 @@ import { FIX, jsonBody, req, routeParams, tokenA, tokenB, tokenFor } from '../he
  * 10. Embedded Signup oficial (code→token server-side), sin contraseñas.
  */
 
-const ownerB = (): string => tokenFor({ ...FIX.userB, role: 'owner' })
+async function ownerB(): Promise<string> {
+  // La sesión de prueba debe reflejar el rol real de la BD, no solo el JWT.
+  await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'owner' } })
+  return tokenFor({ ...FIX.userB, role: 'owner' })
+}
 
 /**
  * Stub de Graph API para las rutas que validan el token contra Meta (regla 9:
@@ -61,15 +68,19 @@ async function seedConnection(orgId: string, phoneNumberId: string, opts: { stat
 
 beforeEach(async () => {
   // Limpieza determinista del área bajo prueba (las demás tablas quedan intactas).
+  await db.channelConnectionEvent.deleteMany()
+  await db.channelConnection.deleteMany({ where: { provider: 'meta_cloud' } })
   await db.whatsAppConnectionEvent.deleteMany()
   await db.whatsAppConnection.deleteMany()
 })
 
-afterEach(() => {
+afterEach(async () => {
+  await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'member' } })
   delete process.env.INTERNAL_API_KEYS
   delete process.env.META_APP_ID
   delete process.env.META_APP_SECRET
   delete process.env.META_APP_SECRET_test
+  delete process.env.CHANNEL_AUTOREPLY_ENABLED
   vi.unstubAllGlobals()
 })
 
@@ -100,6 +111,22 @@ describe('OLEADA 2 — credenciales cifradas y asociadas a su organización', ()
     const events = await db.whatsAppConnectionEvent.findMany({ where: { type: 'connected' } })
     expect(events).toHaveLength(1)
     expect(events[0].organizationId).toBe('org-a')
+
+    const canonical = await db.channelConnection.findUnique({
+      where: { providerAccountKey: 'meta:whatsapp:222000222' },
+    })
+    expect(canonical).toMatchObject({
+      organizationId: 'org-a',
+      channel: 'whatsapp',
+      provider: 'meta_cloud',
+      externalAccountId: '222000222',
+      status: 'connected',
+    })
+    expect(canonical!.credentialsEnc).not.toContain('EAAG-token-admin')
+    const { decryptSecret } = await import('@/lib/crypto')
+    expect(JSON.parse(decryptSecret(canonical!.credentialsEnc)!)).toMatchObject({
+      accessToken: 'EAAG-token-admin-0123456789',
+    })
   })
 
   it('un member (no admin) no puede conectar números (permiso, punto 5)', async () => {
@@ -155,6 +182,11 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
       routeParams(conn!.id),
     )
     expect(del.status).toBe(200)
+    const canonical = await db.channelConnection.findUnique({
+      where: { providerAccountKey: 'meta:whatsapp:777000777' },
+    })
+    expect(canonical?.status).toBe('disconnected')
+    expect(JSON.parse((await import('@/lib/crypto')).decryptSecret(canonical!.credentialsEnc)!)).toEqual({})
     stubGraphOk('777000778')
     const r2 = await connectionsPost(req('/api/whatsapp/connections', {
       token: tokenFor({ ...FIX.userA, role: 'owner' }),
@@ -226,7 +258,7 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
 describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {
   it('la conexión de org-a es invisible para org-b (404, sin detalles)', async () => {
     const conn = await seedConnection('org-a', '888000888')
-    const res = await connectionGet(req(`/api/whatsapp/connections/${conn!.id}`, { token: ownerB() }), routeParams(conn!.id))
+    const res = await connectionGet(req(`/api/whatsapp/connections/${conn!.id}`, { token: await ownerB() }), routeParams(conn!.id))
     expect(res.status).toBe(404)
     const text = JSON.stringify(await jsonBody(res))
     expect(text).not.toContain('org-a')
@@ -236,7 +268,7 @@ describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {
   it('org-b no puede desconectar la conexión de org-a (la conexión sobrevive intacta)', async () => {
     const conn = await seedConnection('org-a', '888000889')
     const res = await connectionDelete(
-      req(`/api/whatsapp/connections/${conn!.id}`, { token: ownerB(), method: 'DELETE' }),
+      req(`/api/whatsapp/connections/${conn!.id}`, { token: await ownerB(), method: 'DELETE' }),
       routeParams(conn!.id),
     )
     expect(res.status).toBe(404)
@@ -247,7 +279,7 @@ describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {
 
   it('el listado de org-b nunca incluye conexiones de org-a', async () => {
     await seedConnection('org-a', '888000890')
-    const res = await connectionsGet(req('/api/whatsapp/connections', { token: ownerB() }))
+    const res = await connectionsGet(req('/api/whatsapp/connections', { token: await ownerB() }))
     const body = await jsonBody(res)
     expect(body.connections).toHaveLength(0)
   })
@@ -422,6 +454,297 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
     expect(JSON.stringify(timeline)).toContain('Contacto Webhook')
   })
 
+
+  it('encola la auto-respuesta WhatsApp en la outbox y no llama al proveedor desde el webhook', async () => {
+    await seedConnection('org-a', '121000121')
+    process.env.CHANNEL_AUTOREPLY_ENABLED = 'true'
+    const sendSpy = vi.spyOn(autoResponder, 'llmReplyOrNotification').mockImplementation(async (opts) => {
+      await opts.send('Respuesta WhatsApp en cola')
+      return { replied: true, handoff: false, reply: 'Respuesta WhatsApp en cola' }
+    })
+    // Un ID de proveedor único evita que la deduplicación durable de otro test
+    // convierta este evento en replay y omita correctamente la creación de conversación.
+    const uniquePayload = structuredClone(WEBHOOK_BODY)
+    uniquePayload.entry[0].changes[0].value.messages[0].id = 'wamid.autoreply-outbox-test'
+    const body = JSON.stringify(uniquePayload)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(body).digest('hex')
+    const request = new (await import('next/server')).NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    })
+
+    try {
+      const response = await webhookPost(request)
+      expect(response.status).toBe(200)
+      expect(sendSpy).toHaveBeenCalledOnce()
+      const canonicalConnection = await db.channelConnection.findUnique({
+        where: { providerAccountKey: 'meta:whatsapp:121000121' },
+        select: { id: true },
+      })
+      expect(canonicalConnection).not.toBeNull()
+      const conversation = await db.channelConversation.findFirst({
+        where: { connectionId: canonicalConnection!.id },
+      })
+      expect(conversation).not.toBeNull()
+      const intents = await db.channelOutboundMessage.findMany({
+        where: { conversationId: conversation!.id },
+      })
+      expect(intents).toHaveLength(1)
+      expect(intents[0].status).toBe('queued')
+      expect(intents[0].body).toBe('Respuesta WhatsApp en cola')
+      expect(intents[0].clientRequestId).toMatch(/^autoreply:[a-f0-9]{64}$/)
+    } finally {
+      sendSpy.mockRestore()
+    }
+  })
+
+  it('procesa mensajes entrantes batch por conexión y tenant sin mezclar conversaciones', async () => {
+    await seedConnection('org-a', '121000301')
+    await seedConnection('org-b', '121000302')
+    await db.whatsAppConnection.create({
+      data: {
+        organizationId: 'org-a',
+        phoneNumberId: '121000303',
+        phoneNumber: '+15550303',
+        displayName: 'Cuenta desconectada batch',
+        accessTokenEnc: 'not-a-real-ciphertext',
+        webhookVerifyToken: 'fixture-disconnected-batch-token',
+        status: 'disconnected',
+      },
+    })
+    const batchBody = {
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          id: 'waba-inbound-a',
+          changes: [{ field: 'messages', value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550301', phone_number_id: '121000301' },
+            contacts: [{ wa_id: '5215512300301', profile: { name: 'Contacto A' } }],
+            messages: [{ from: '5215512300301', id: 'wamid.inbound-batch-a', timestamp: '1794500101', type: 'text', text: { body: 'Mensaje tenant A' } }],
+          } }],
+        },
+        {
+          id: 'waba-inbound-b',
+          changes: [{ field: 'messages', value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550302', phone_number_id: '121000302' },
+            contacts: [{ wa_id: '5215512300302', profile: { name: 'Contacto B' } }],
+            messages: [{ from: '5215512300302', id: 'wamid.inbound-batch-b', timestamp: '1794500102', type: 'text', text: { body: 'Mensaje tenant B' } }],
+          } }],
+        },
+        {
+          id: 'waba-inbound-disconnected',
+          changes: [{ field: 'messages', value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550303', phone_number_id: '121000303' },
+            contacts: [{ wa_id: '5215512300303', profile: { name: 'No debe procesarse' } }],
+            messages: [{ from: '5215512300303', id: 'wamid.inbound-batch-disconnected', timestamp: '1794500103', type: 'text', text: { body: 'No procesar' } }],
+          } }],
+        },
+      ],
+    }
+    const body = JSON.stringify(batchBody)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(body).digest('hex')
+    const request = new (await import('next/server')).NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    })
+
+    const response = await webhookPost(request)
+    expect(response.status).toBe(200)
+    const [connectionA, connectionB, conversationA, conversationB, disconnectedConversation] = await Promise.all([
+      db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000301' } }),
+      db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000302' } }),
+      db.channelConversation.findFirst({ where: { externalContactKey: '5215512300301', connection: { providerAccountKey: 'meta:whatsapp:121000301' } } }),
+      db.channelConversation.findFirst({ where: { externalContactKey: '5215512300302', connection: { providerAccountKey: 'meta:whatsapp:121000302' } } }),
+      db.channelConversation.findFirst({ where: { externalContactKey: '5215512300303' } }),
+    ])
+    expect(connectionA?.organizationId).toBe('org-a')
+    expect(connectionB?.organizationId).toBe('org-b')
+    expect(conversationA?.organizationId).toBe('org-a')
+    expect(conversationB?.organizationId).toBe('org-b')
+    expect(conversationA?.connectionId).toBe(connectionA?.id)
+    expect(conversationB?.connectionId).toBe(connectionB?.id)
+    expect(disconnectedConversation).toBeNull()
+    const [messageA, messageB] = await Promise.all([
+      db.channelMessage.findFirst({ where: { conversationId: conversationA!.id, externalMessageId: 'wamid.inbound-batch-a' } }),
+      db.channelMessage.findFirst({ where: { conversationId: conversationB!.id, externalMessageId: 'wamid.inbound-batch-b' } }),
+    ])
+    expect(messageA?.body).toBe('Mensaje tenant A')
+    expect(messageB?.body).toBe('Mensaje tenant B')
+  })
+
+  it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
+    await seedConnection('org-a', '121000201')
+    await seedConnection('org-b', '121000202')
+    await db.whatsAppConnection.create({
+      data: {
+        organizationId: 'org-a',
+        phoneNumberId: '121000203',
+        phoneNumber: '+15550203',
+        displayName: 'Cuenta desconectada de prueba',
+        accessTokenEnc: 'not-a-real-ciphertext',
+        webhookVerifyToken: 'fixture-disconnected-verify-token',
+        status: 'disconnected',
+      },
+    })
+    const canonicalA = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000201' }, select: { id: true } })
+    const canonicalB = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:121000202' }, select: { id: true } })
+    expect(canonicalA).not.toBeNull()
+    expect(canonicalB).not.toBeNull()
+    const conversationA = await getOrCreateChannelConversation({
+      providerAccountKey: 'meta:whatsapp:121000201',
+      channel: 'whatsapp',
+      externalContactKey: '5215512345601',
+    })
+    const conversationB = await getOrCreateChannelConversation({
+      providerAccountKey: 'meta:whatsapp:121000202',
+      channel: 'whatsapp',
+      externalContactKey: '5215512345602',
+    })
+    expect(conversationA).not.toBeNull()
+    expect(conversationB).not.toBeNull()
+    const outboundA = await createChannelOutboundIntent({
+      organizationId: 'org-a',
+      conversationId: conversationA!.id,
+      clientRequestId: 'request-batch-status-a',
+      body: 'Mensaje de prueba A',
+    })
+    const outboundB = await createChannelOutboundIntent({
+      organizationId: 'org-b',
+      conversationId: conversationB!.id,
+      clientRequestId: 'request-batch-status-b',
+      body: 'Mensaje de prueba B',
+    })
+    await claimChannelOutboundMessage(outboundA.id)
+    await claimChannelOutboundMessage(outboundB.id)
+
+    const batchBody = {
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          id: 'waba-a',
+          changes: [{
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: { display_phone_number: '15550201', phone_number_id: '121000201' },
+              statuses: [{
+                id: 'wamid.batch-a',
+                status: 'delivered',
+                timestamp: '1794500001',
+                biz_opaque_callback_data: outboundA.id,
+              }],
+            },
+          }],
+        },
+        {
+          id: 'waba-b',
+          changes: [{
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: { display_phone_number: '15550202', phone_number_id: '121000202' },
+              statuses: [{
+                id: 'wamid.batch-b',
+                status: 'read',
+                timestamp: '1794500002',
+                biz_opaque_callback_data: outboundB.id,
+              }],
+            },
+          }],
+        },
+        {
+          id: 'waba-disconnected',
+          changes: [{
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: { display_phone_number: '15550203', phone_number_id: '121000203' },
+              statuses: [{
+                id: 'wamid.batch-disconnected',
+                status: 'sent',
+                timestamp: '1794500003',
+                biz_opaque_callback_data: 'unrelated-outbound-id',
+              }],
+            },
+          }],
+        },
+      ],
+    }
+    const raw = JSON.stringify(batchBody)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(raw).digest('hex')
+    const NextRequest = (await import('next/server')).NextRequest
+    const response = await webhookPost(new NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body: raw,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    }))
+    expect(response.status).toBe(200)
+
+    const [storedA, storedB] = await Promise.all([
+      db.channelOutboundMessage.findUnique({ where: { id: outboundA.id } }),
+      db.channelOutboundMessage.findUnique({ where: { id: outboundB.id } }),
+    ])
+    expect(storedA?.status).toBe('sent')
+    expect(storedB?.status).toBe('sent')
+    const [messageA, messageB] = await Promise.all([
+      db.channelMessage.findUnique({ where: { conversationId_externalMessageId: { conversationId: conversationA!.id, externalMessageId: 'wamid.batch-a' } } }),
+      db.channelMessage.findUnique({ where: { conversationId_externalMessageId: { conversationId: conversationB!.id, externalMessageId: 'wamid.batch-b' } } }),
+    ])
+    expect(JSON.parse(messageA?.metadata || '{}').deliveryStatus).toBe('delivered')
+    expect(JSON.parse(messageB?.metadata || '{}').deliveryStatus).toBe('read')
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [canonicalA!.id, canonicalB!.id] }, status: 'processed' } })).toBe(2)
+
+    // Repetir exactamente el mismo batch no duplica los eventos ni mensajes.
+    const duplicate = await webhookPost(new NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body: raw,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    }))
+    expect(duplicate.status).toBe(200)
+    expect(await db.channelMessage.count({ where: { conversationId: { in: [conversationA!.id, conversationB!.id] } } })).toBe(2)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: { in: [canonicalA!.id, canonicalB!.id] } } })).toBe(2)
+  })
+
+  it('ignora estados de entrega desconocidos sin persistirlos en ledger ni timeline', async () => {
+    await seedConnection('org-a', '121000204')
+    const connection = await db.channelConnection.findUnique({
+      where: { providerAccountKey: 'meta:whatsapp:121000204' },
+      select: { id: true },
+    })
+    const payload = {
+      object: 'whatsapp_business_account',
+      entry: [{
+        id: 'waba-unknown-status',
+        changes: [{
+          field: 'messages',
+          value: {
+            messaging_product: 'whatsapp',
+            metadata: { display_phone_number: '15550204', phone_number_id: '121000204' },
+            statuses: [{ id: 'wamid.unknown-status', status: 'queued', timestamp: '1794500004' }],
+          },
+        }],
+      }],
+    }
+    const raw = JSON.stringify(payload)
+    const signature = 'sha256=' + createHmac('sha256', APP_SECRET_TEST).update(raw).digest('hex')
+    const request = new (await import('next/server')).NextRequest('http://localhost:3000/api/whatsapp/webhook', {
+      method: 'POST',
+      body: raw,
+      headers: new Headers({ 'content-type': 'application/json', 'x-hub-signature-256': signature }),
+    })
+    const response = await webhookPost(request)
+    expect(response.status).toBe(200)
+    expect(await db.channelWebhookEvent.count({ where: { connectionId: connection!.id } })).toBe(0)
+    expect(await db.timelineEvent.count({
+      where: { organizationId: 'org-a', type: 'whatsapp', metadata: { contains: 'wamid.unknown-status' } },
+    })).toBe(0)
+  })
+
   it('un phoneNumberId sin conexión conectada → 401 (ni fallback a org "dicha" por el body)', async () => {
     await seedConnection('org-a', '121000122', { status: 'disconnected' })
     const { body, signature } = signedBody()
@@ -524,7 +847,7 @@ describe('OLEADA 2 — Embedded Signup oficial (punto 10, sin contraseñas)', ()
     const { state } = await jsonBody(configRes)
     // userB (org-b) reutiliza el estado firmado para org-a.
     const res = await signupPost(req('/api/whatsapp/embedded-signup', {
-      token: ownerB(),
+      token: await ownerB(),
       method: 'POST',
       body: { code: 'AQC-x', state, phoneNumberId: '131000132' },
     }))

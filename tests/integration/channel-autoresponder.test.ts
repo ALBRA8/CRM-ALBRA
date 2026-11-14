@@ -46,6 +46,7 @@ const CLIENT_WA = 'client-auto-wa'
 
 beforeAll(async () => {
   vi.stubEnv('INTERNAL_API_SECRET', SECRET)
+  vi.stubEnv('CHANNEL_AUTOREPLY_ENABLED', 'true')
   await db.client.create({
     data: { id: CLIENT_WA, organizationId: FIX.orgA.id, name: 'Cliente WhatsApp Test', phone: '+57 320 999 0000' },
   })
@@ -70,6 +71,16 @@ describe('POST /api/whatsapp/auto-reply — canal cliente WhatsApp (daemon)', ()
   it('401 sin secreto interno (canal server-to-server fail-closed)', async () => {
     const res = await autoReplyPOST(internalReq({ message: 'Hola', clientId: CLIENT_WA }, {}))
     expect(res.status).toBe(401)
+  })
+
+  it('mantiene apagada la auto-respuesta si falta el flag global aunque el tenant la permita', async () => {
+    mockedLlm.mockClear()
+    vi.stubEnv('CHANNEL_AUTOREPLY_ENABLED', 'false')
+    const res = await autoReplyPOST(internalReq({ message: 'Hola', clientId: CLIENT_WA }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ reply: '', paused: true })
+    expect(mockedLlm).not.toHaveBeenCalled()
+    vi.stubEnv('CHANNEL_AUTOREPLY_ENABLED', 'true')
   })
 
   it('400 sin clientId para el canal interno', async () => {

@@ -207,8 +207,8 @@ export class HttpError extends Error {
  *  2. debe estar activo (la desactivación de un empleado corta su sesión al instante);
  *  3. la `tv` del JWT debe coincidir con `tokenVersion` vigente (revocación por
  *     reset de contraseña, cambio de rol o logout global);
- *  4. la organización del token debe seguir siendo la del usuario (el JWT no
- *     puede "viajar" entre organizaciones).
+ *  4. los usuarios normales solo pueden usar su organización asignada; el
+ *     superadmin vigente puede usar un contexto de organización activa distinto.
  *
  * FAIL-CLOSED: cualquier fallo de BD NO autoriza — la excepción sube y la ruta
  * responde 500 sin ejecutar la operación de negocio.
@@ -216,7 +216,7 @@ export class HttpError extends Error {
 export async function assertSessionState(ctx: AuthContext): Promise<AuthContext> {
   const user = await db.user.findUnique({
     where: { id: ctx.userId },
-    select: { isActive: true, tokenVersion: true, organizationId: true },
+    select: { isActive: true, tokenVersion: true, organizationId: true, role: true },
   })
   if (!user || !user.isActive) {
     throw new HttpError(401, 'Sesión revocada o usuario inactivo')
@@ -225,7 +225,20 @@ export async function assertSessionState(ctx: AuthContext): Promise<AuthContext>
   if ((ctx.tv ?? 0) !== currentVersion) {
     throw new HttpError(401, 'Sesión revocada: vuelve a iniciar sesión')
   }
-  if (user.organizationId !== ctx.orgId) {
+  // El rol vigente en BD es la autoridad: cambios de rol invalidan el token anterior.
+  if (user.role !== ctx.role) {
+    throw new HttpError(401, 'El rol de la cuenta cambió. Vuelve a iniciar sesión')
+  }
+  const activeOrg = await db.organization.findUnique({
+    where: { id: ctx.orgId },
+    select: { isActive: true },
+  })
+  if (!activeOrg?.isActive) {
+    throw new HttpError(403, 'La organización seleccionada no existe o está inactiva')
+  }
+  if (user.organizationId !== ctx.orgId && user.role !== 'superadmin') {
+    // Única excepción cross-tenant: cuenta cuyo rol ACTUAL en BD es superadmin.
+    // El orgId del token representa el contexto activo, nunca una membresía del usuario.
     throw new HttpError(401, 'Sesión inválida para esta organización')
   }
   return ctx

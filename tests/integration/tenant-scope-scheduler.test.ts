@@ -75,9 +75,46 @@ afterAll(async () => {
 })
 
 describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
+  it('un disparo schedule con automationId no ejecuta otras automatizaciones del mismo tenant', async () => {
+    const other = await db.automation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        name: 'Tenant-scope — schedule sibling',
+        triggerType: 'schedule',
+        isActive: true,
+        actions: '[]',
+      },
+    })
+    try {
+      const beforeTarget = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+      const beforeOther = await db.automationRun.count({ where: { automationId: other.id } })
+      const engine = await vi.importActual<typeof import('@/lib/workflow-engine')>('@/lib/workflow-engine')
+      await engine.runWorkflowsForTrigger({
+        orgId: FIX.orgA.id,
+        type: 'schedule',
+        automationId: autoScheduleA,
+        payload: { automationId: autoScheduleA, scheduledAt: new Date().toISOString() },
+      })
+      const afterTarget = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+      const afterOther = await db.automationRun.count({ where: { automationId: other.id } })
+      expect(afterTarget).toBe(beforeTarget + 1)
+      expect(afterOther).toBe(beforeOther)
+    } finally {
+      await db.automationRun.deleteMany({ where: { automationId: other.id } })
+      await db.automation.delete({ where: { id: other.id } })
+    }
+  })
+
   it('con orgId=A SOLO reclama la automatización vencida de A; la de B sigue vencida', async () => {
+    const runsBeforeA = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+    const runsBeforeB = await db.automationRun.count({ where: { automationId: autoScheduleB } })
     const { processed } = await runDueJobs({ orgId: FIX.orgA.id })
     expect(processed).toBeGreaterThanOrEqual(1)
+
+    const runsAfterA = await db.automationRun.count({ where: { automationId: autoScheduleA } })
+    const runsAfterB = await db.automationRun.count({ where: { automationId: autoScheduleB } })
+    expect(runsAfterA).toBe(runsBeforeA + 1) // claim y run quedan persistidos
+    expect(runsAfterB).toBe(runsBeforeB) // ningún run de otro tenant
 
     const a = await db.automation.findUnique({ where: { id: autoScheduleA } })
     const b = await db.automation.findUnique({ where: { id: autoScheduleB } })
@@ -156,4 +193,156 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
     const b = await db.automation.findUnique({ where: { id: autoScheduleB } })
     expect(b!.nextRunAt!.getTime()).toBeGreaterThan(Date.now()) // ahora sí reclamada
   })
+
+  it('reclama un run una sola vez y persiste el resultado durable del paso', async () => {
+    const engine = await vi.importActual<typeof import('@/lib/workflow-engine')>('@/lib/workflow-engine')
+    const title = 'Scheduler ledger concurrency test'
+    const automation = await db.automation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        name: 'Workflow ledger concurrency',
+        triggerType: 'client_created',
+        isActive: true,
+        actions: JSON.stringify([{ type: 'create_task_like_notification', config: { title, body: 'ledger test' } }]),
+      },
+    })
+    const run = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: automation.id,
+        input: JSON.stringify({ id: 'ledger-test-event' }),
+        stepLedgerVersion: 1,
+      },
+    })
+    try {
+      const event = {
+        orgId: FIX.orgA.id,
+        type: 'client_created' as const,
+        payload: { id: 'ledger-test-event' },
+        automationId: automation.id,
+        existingRunId: run.id,
+      }
+      const results = await Promise.all([
+        engine.runWorkflowsForTrigger(event),
+        engine.runWorkflowsForTrigger(event),
+      ])
+      expect(results.flat().filter((item) => item.status === 'success')).toHaveLength(1)
+      expect(results.flat().filter((item) => item.status === 'already_claimed')).toHaveLength(1)
+
+      const persistedRun = await db.automationRun.findUnique({ where: { id: run.id } })
+      const steps = await db.workflowStepExecution.findMany({ where: { automationRunId: run.id } })
+      const notifications = await db.notification.count({
+        where: { organizationId: FIX.orgA.id, title },
+      })
+      expect(persistedRun?.status).toBe('success')
+      expect(steps).toHaveLength(1)
+      expect(steps[0].status).toBe('succeeded')
+      expect(notifications).toBe(1)
+    } finally {
+      await db.notification.deleteMany({ where: { organizationId: FIX.orgA.id, title } })
+      await db.automationRun.deleteMany({ where: { id: run.id } })
+      await db.automation.deleteMany({ where: { id: automation.id } })
+    }
+  })
+
+
+  it('marca unknown los pasos interrumpidos y nunca reintenta runs legacy', async () => {
+    const ambiguous = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: autoManualA,
+        status: 'processing',
+        startedAt: minutesAgo(11),
+        stepLedgerVersion: 1,
+      },
+    })
+    const legacy = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: autoManualA,
+        status: 'processing',
+        startedAt: minutesAgo(11),
+        stepLedgerVersion: 0,
+      },
+    })
+    await db.workflowStepExecution.create({
+      data: {
+        automationRunId: ambiguous.id,
+        stepIndex: 0,
+        actionType: 'create_opportunity',
+        status: 'started',
+      },
+    })
+
+    try {
+      await runDueJobs({ orgId: FIX.orgA.id })
+      const [ambiguousRun, legacyRun, step] = await Promise.all([
+        db.automationRun.findUnique({ where: { id: ambiguous.id } }),
+        db.automationRun.findUnique({ where: { id: legacy.id } }),
+        db.workflowStepExecution.findUnique({
+          where: { automationRunId_stepIndex: { automationRunId: ambiguous.id, stepIndex: 0 } },
+        }),
+      ])
+      expect(ambiguousRun?.status).toBe('failed')
+      expect(ambiguousRun?.error).toContain('ambiguo')
+      expect(step?.status).toBe('unknown')
+      expect(legacyRun?.status).toBe('failed')
+      expect(legacyRun?.error).toContain('histórico')
+    } finally {
+      await db.automationRun.deleteMany({ where: { id: { in: [ambiguous.id, legacy.id] } } })
+    }
+  })
+
+
+  it('reanuda desde el siguiente paso cuando los pasos previos están confirmados', async () => {
+    const automation = await db.automation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        name: 'Workflow safe recovery',
+        triggerType: 'client_created',
+        isActive: true,
+        actions: JSON.stringify([{ type: 'create_task_like_notification', config: { title: 'must not duplicate' } }]),
+      },
+    })
+    const run = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: automation.id,
+        status: 'processing',
+        startedAt: minutesAgo(11),
+        input: JSON.stringify({ id: 'safe-recovery-event' }),
+        stepLedgerVersion: 1,
+        leaseToken: 'expired-safe-recovery-lease',
+        leaseExpiresAt: minutesAgo(1),
+        fencingVersion: 1,
+      },
+    })
+    await db.workflowStepExecution.create({
+      data: {
+        automationRunId: run.id,
+        stepIndex: 0,
+        actionType: 'create_task_like_notification',
+        status: 'succeeded',
+        output: JSON.stringify({ notification: true }),
+        finishedAt: minutesAgo(11),
+      },
+    })
+
+    try {
+      // Esta prueba usa únicamente una acción interna de notificación; retirar
+      // el mock global aquí permite verificar el recovery real del scheduler.
+      vi.doUnmock('@/lib/workflow-engine')
+      await runDueJobs({ orgId: FIX.orgA.id })
+      const persisted = await db.automationRun.findUnique({ where: { id: run.id } })
+      const count = await db.notification.count({
+        where: { organizationId: FIX.orgA.id, title: 'must not duplicate' },
+      })
+      expect(persisted?.status).toBe('success')
+      expect(count).toBe(0) // el paso confirmado se omite, no se ejecuta otra vez
+    } finally {
+      await db.automationRun.deleteMany({ where: { id: run.id } })
+      await db.automation.deleteMany({ where: { id: automation.id } })
+    }
+  })
+
 })

@@ -68,6 +68,13 @@ class ApiClient {
     return this.request('/super/overview')
   }
 
+  async switchSuperOrganization(organizationId: string) {
+    return this.request('/super/switch-organization', {
+      method: 'POST',
+      body: JSON.stringify({ organizationId }),
+    })
+  }
+
   async demoLogin() {
     return this.request('/auth/demo', { method: 'POST' })
   }
@@ -336,7 +343,7 @@ class ApiClient {
     return this.request(`/inbox?key=${encodeURIComponent(key)}`)
   }
 
-  async sendInboxMessage(data: { key: string; contactHandle: string; clientId?: string | null; text: string }) {
+  async sendInboxMessage(data: { key: string; contactHandle: string; clientId?: string | null; text: string; clientRequestId?: string }) {
     return this.request('/inbox/send', { method: 'POST', body: JSON.stringify(data) })
   }
 

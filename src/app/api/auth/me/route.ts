@@ -8,12 +8,18 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAuth(req)
     const user = await db.user.findFirst({
-      where: { id: auth.userId, organizationId: auth.orgId, isActive: true },
+      where: {
+        id: auth.userId,
+        isActive: true,
+        // Un superadmin puede tener contexto activo en otra organización sin
+        // cambiar su organización base persistida.
+        ...(auth.role === 'superadmin' ? {} : { organizationId: auth.orgId }),
+      },
       select: { id: true, name: true, email: true, company: true, phone: true, role: true, avatar: true, organizationId: true },
     })
     if (!user) {
       return json({ error: 'Sesión inválida' }, { status: 401 })
     }
-    return json({ user })
+    return json({ user: auth.role === 'superadmin' ? { ...user, organizationId: auth.orgId } : user })
   })
 }

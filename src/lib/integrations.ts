@@ -51,6 +51,15 @@ export function encodeTelegramState(state: TelegramState): string | null {
   return encryptSecret(JSON.stringify(state))
 }
 
+/** All channel auto-replies are opt-in globally; tenant preferences can further disable them. */
+export function isChannelAutoReplyGloballyEnabled(): boolean {
+  return process.env.CHANNEL_AUTOREPLY_ENABLED === 'true'
+}
+
+export function isTelegramAutoReplyEnabled(state: TelegramState): boolean {
+  return isChannelAutoReplyGloballyEnabled() && state.autoReply !== false && !!state.token
+}
+
 /**
  * Estado de Instagram guardado como JSON cifrado en instagramTokenEnc:
  * { token, webhookVerifyToken, webhookSecret, metaAppId }
@@ -252,7 +261,7 @@ export async function sendTelegramBotMessage(opts: {
   token: string
   chatId: string | number
   text: string
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; messageId?: string; error?: string }> {
   try {
     // TELEGRAM_API_BASE: override SOLO para pruebas E2E con mock local; en producción
     // siempre la oficial (https://api.telegram.org).
@@ -263,8 +272,8 @@ export async function sendTelegramBotMessage(opts: {
       body: JSON.stringify({ chat_id: opts.chatId, text: opts.text.slice(0, 4096) }),
       signal: AbortSignal.timeout(10_000),
     })
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string }
-    if (res.ok && data.ok) return { ok: true }
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string; result?: { message_id?: number } }
+    if (res.ok && data.ok && Number.isInteger(data.result?.message_id)) return { ok: true, messageId: String(data.result!.message_id) }
     return { ok: false, error: data.description || `HTTP ${res.status}` }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -377,6 +386,9 @@ export interface TikTokState {
   /** Token de acceso Login Kit (corto ~24h; renovar con refreshToken) */
   accessToken?: string
   refreshToken?: string
+  accessTokenExpiresAt?: number
+  refreshTokenExpiresAt?: number
+  scope?: string
   openId?: string
   displayName?: string
   /** client_key público de la app de TikTok */
@@ -405,6 +417,73 @@ export function encodeTikTokState(state: TikTokState): string | null {
   return encryptSecret(JSON.stringify(state))
 }
 
+export async function refreshTikTokUserAccessToken(opts: {
+  state: TikTokState
+  fetchImpl?: typeof fetch
+  now?: number
+}): Promise<{ ok: true; state: TikTokState } | { ok: false; error: string; reauthorizationRequired?: boolean }> {
+  const { state } = opts
+  if (!state.appKey || !state.appSecret || !state.refreshToken) {
+    return { ok: false, error: 'TIKTOK_REFRESH_CREDENTIALS_MISSING', reauthorizationRequired: !state.refreshToken }
+  }
+
+  const form = new URLSearchParams({
+    client_key: state.appKey,
+    client_secret: state.appSecret,
+    grant_type: 'refresh_token',
+    refresh_token: state.refreshToken,
+  })
+
+  try {
+    const response = await (opts.fetchImpl || fetch)(`${tiktokApiBase()}/v2/oauth/token/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Cache-Control': 'no-cache' },
+      body: form.toString(),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = await response.json().catch(() => ({})) as {
+      access_token?: string
+      expires_in?: number
+      refresh_token?: string
+      refresh_expires_in?: number
+      open_id?: string
+      scope?: string
+      error?: string
+    }
+    if (!response.ok || data.error) {
+      return {
+        ok: false,
+        error: data.error === 'invalid_grant' ? 'TIKTOK_REFRESH_INVALID_GRANT' : `TIKTOK_REFRESH_HTTP_${response.status}`,
+        reauthorizationRequired: data.error === 'invalid_grant',
+      }
+    }
+    if (
+      typeof data.access_token !== 'string' || !data.access_token ||
+      typeof data.refresh_token !== 'string' || !data.refresh_token ||
+      !Number.isFinite(data.expires_in) || Number(data.expires_in) <= 0 ||
+      !Number.isFinite(data.refresh_expires_in) || Number(data.refresh_expires_in) <= 0
+    ) {
+      return { ok: false, error: 'TIKTOK_REFRESH_INVALID_RESPONSE' }
+    }
+
+    const now = opts.now ?? Date.now()
+    return {
+      ok: true,
+      state: {
+        ...state,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        accessTokenExpiresAt: now + Number(data.expires_in) * 1000,
+        refreshTokenExpiresAt: now + Number(data.refresh_expires_in) * 1000,
+        openId: typeof data.open_id === 'string' && data.open_id ? data.open_id : state.openId,
+        scope: typeof data.scope === 'string' ? data.scope : state.scope,
+      },
+    }
+  } catch {
+    return { ok: false, error: 'TIKTOK_REFRESH_NETWORK_UNCERTAIN' }
+  }
+}
+
 /** Base del Login Kit / autorización de TikTok. Override SOLO para tests con mock. */
 export function tiktokAuthBase(): string {
   return (process.env.TIKTOK_AUTH_BASE || 'https://www.tiktok.com').replace(/\/+$/, '')
@@ -416,62 +495,94 @@ export function tiktokApiBase(): string {
 }
 
 /**
- * Envía un DM por el Business Messaging API de TikTok. Requiere que la
- * organización tenga asignado sendEndpoint (lo provee TikTok al aprobar el
- * acceso de socio). Sin él, devuelve un error estructurado — nunca inventa rutas.
+ * Envía texto por el endpoint oficial Business Messaging API v1.3.
+ * Requiere aprobación/acceso de Business Messaging y los IDs reales de la
+ * cuenta (open_id) y conversación; nunca acepta endpoints configurables.
  */
 export async function sendTikTokBusinessMessage(opts: {
   state: TikTokState
-  recipientId: string
+  conversationId: string
   text: string
-}): Promise<{ ok: boolean; error?: string; notAuthorized?: boolean }> {
+  fetchImpl?: typeof fetch
+}): Promise<{ ok: boolean; providerMessageId?: string; error?: string; notAuthorized?: boolean }> {
   const { state } = opts
-  if (!state.accessToken || !state.sendEndpoint) {
+  if (!state.accessToken || !state.openId || !opts.conversationId || !opts.text.trim()) {
     return {
       ok: false,
       notAuthorized: true,
-      error:
-        'TikTok Business Messaging no autorizado aún: requiere aprobación de la app en el programa de socios de TikTok y registrar el endpoint de envío en Ajustes → TikTok.',
+      error: 'TikTok Business Messaging requiere acceso aprobado, access token, open_id y conversation_id.',
     }
   }
+  const fetchImpl = opts.fetchImpl || fetch
   try {
-    const res = await fetch(`${tiktokApiBase()}${state.sendEndpoint}`, {
+    const res = await fetchImpl('https://business-api.tiktok.com/open_api/v1.3/business/message/send/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.accessToken}`,
+        'Access-Token': state.accessToken,
       },
       body: JSON.stringify({
-        conversation_id: opts.recipientId,
-        content: { text: opts.text.slice(0, 1000) },
+        business_id: state.openId,
+        recipient_type: 'CONVERSATION',
+        recipient: opts.conversationId,
+        message_type: 'TEXT',
+        text: { body: opts.text.slice(0, 6000) },
       }),
       signal: AbortSignal.timeout(10_000),
     })
-    const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } }
-    if (res.ok) return { ok: true }
-    return { ok: false, error: data?.error?.message || `HTTP ${res.status}` }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    const data = await res.json().catch(() => ({})) as {
+      code?: number
+      message?: string
+      data?: { message?: { message_id?: string } }
+    }
+    if (!res.ok) return { ok: false, error: `HTTP_${res.status}` }
+    if (data.code !== 0) return { ok: false, error: typeof data.code === 'number' ? `TIKTOK_CODE_${data.code}` : 'TIKTOK_INVALID_RESPONSE' }
+    const providerMessageId = data.data?.message?.message_id
+    if (typeof providerMessageId !== 'string' || !providerMessageId) {
+      return { ok: false, error: 'TIKTOK_RESPONSE_MISSING_MESSAGE_ID' }
+    }
+    return { ok: true, providerMessageId }
+  } catch {
+    return { ok: false, error: 'TIKTOK_NETWORK_RESULT_UNCERTAIN' }
   }
 }
 
 /**
- * Verifica la firma X-TikTok-Signature del webhook de TikTok. TikTok ha usado
- * variantes (secret sobre body, o sobre timestamp+body): se aceptan ambas en
- * tiempo constante. Devuelve true si alguna coincide.
+ * Verifica el header oficial TikTok-Signature: "t=<unix>,s=<hex>".
+ * TikTok firma HMAC-SHA256 de "<timestamp>.<raw body>" con el App Secret.
  */
+export const TIKTOK_WEBHOOK_MAX_AGE_MS = 5 * 60 * 1000
+const TIKTOK_WEBHOOK_FUTURE_SKEW_MS = 30 * 1000
+
+export function isTikTokWebhookTimestampFresh(timestamp: string | null, now = Date.now()): boolean {
+  if (!timestamp || !/^\d{10}$/.test(timestamp)) return false
+  const timestampMs = Number(timestamp) * 1000
+  const ageMs = now - timestampMs
+  return Number.isFinite(timestampMs) &&
+    ageMs <= TIKTOK_WEBHOOK_MAX_AGE_MS &&
+    ageMs >= -TIKTOK_WEBHOOK_FUTURE_SKEW_MS
+}
+
 export function verifyTikTokSignature(
   rawBody: string,
   appSecret: string,
-  signature: string | null,
-  timestamp: string | null,
+  signatureHeader: string | null,
+  legacyTimestamp?: string | null,
 ): boolean {
-  if (!signature) return false
-  const candidates: string[] = [rawBody]
-  if (timestamp) candidates.push(`${timestamp}${rawBody}`, `${timestamp}.${rawBody}`)
-  for (const msg of candidates) {
-    const mac = createHmac('sha256', appSecret).update(msg).digest('hex')
-    if (safeEquals(mac, signature)) return true
+  if (!signatureHeader) return false
+  let timestamp = legacyTimestamp || ''
+  let signature = signatureHeader
+  if (!legacyTimestamp) {
+    const parts: Record<string, string> = {}
+    for (const part of signatureHeader.split(',')) {
+      const separator = part.indexOf('=')
+      if (separator <= 0) continue
+      parts[part.slice(0, separator).trim()] = part.slice(separator + 1).trim()
+    }
+    timestamp = parts.t || ''
+    signature = parts.s || ''
   }
-  return false
+  if (!isTikTokWebhookTimestampFresh(timestamp) || !/^[a-f0-9]{64}$/i.test(signature)) return false
+  const expected = createHmac('sha256', appSecret).update(`${timestamp}.${rawBody}`, 'utf8').digest('hex')
+  return safeEquals(expected, signature.toLowerCase())
 }

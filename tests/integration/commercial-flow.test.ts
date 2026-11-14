@@ -13,8 +13,8 @@ import { FIX, jsonBody, req, tokenA } from '../helpers'
  *
  * Usa el CAMINO REAL de la app:
  *  1. POST /api/clients (API autenticada) dispara client_created en el motor.
- *  2. El motor crea la oportunidad (BD real), envía WhatsApp (fetch al daemon
- *     mockeado → entrega OK) y llega al 'wait' 1 día → run 'waiting' durable.
+ *  2. El motor crea la oportunidad (BD real), persiste WhatsApp en la outbox durable cifrada
+ *     (el worker permanece apagado por defecto) y llega al 'wait' 1 día.
  *  3. Se simula que pasó el día (resumeAt al pasado) y resumeWaitingRuns()
  *     (el mismo barrido del scheduler) reanuda: ai_followup redacta (LLM
  *     mockeado) y el run termina 'success'.
@@ -41,8 +41,10 @@ const AUTO_ID = 'auto-flujo-comercial'
 const NEW_CLIENT_NAME = 'Comercial E2E Cliente'
 let newClientId = ''
 let runId = ''
+const previousWorkflowExternalSendFlag = process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
 
 beforeAll(async () => {
+  process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = 'true'
   mockedLlm.mockReset()
   // Automatización EXACTA del flujo comercial del dueño
   await db.automation.create({
@@ -71,12 +73,14 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  if (previousWorkflowExternalSendFlag === undefined) delete process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED
+  else process.env.WORKFLOW_EXTERNAL_SENDS_ENABLED = previousWorkflowExternalSendFlag
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
 describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día → seguimiento', () => {
-  it('paso 1-2: cliente nuevo dispara el motor; oportunidad + WhatsApp ejecutados; run queda waiting por el wait de 1 día', async () => {
+  it('paso 1-2: crea oportunidad, deja WhatsApp pendiente sin enviar y pausa por wait de 1 día', async () => {
     const res = await clientsPOST(req('/api/clients', { method: 'POST', token: tokenA(), body: { name: NEW_CLIENT_NAME, phone: '+57 319 000 0001' } }))
     expect(res.status).toBe(201)
     const { client } = (await res.json()) as { client: { id: string } }
@@ -98,8 +102,8 @@ describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día 
     expect(states).toHaveLength(3)
     expect(states[0].type).toBe('create_opportunity')
     expect(states[0].status).toBe('success')
-    expect(states[1].type).toBe('send_whatsapp')
-    expect(states[1].status).toBe('success')
+    expect(states[1].type).toBe('send_whatsapp') // queued = intención durable, no entrega
+    expect(states[1].status).toBe('queued')
     expect(states[2].type).toBe('wait')
     expect(states[2].status).toBe('waiting')
     expect(run!.currentStep).toBe(3)
@@ -109,13 +113,17 @@ describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día 
     expect(opp).toBeTruthy()
     expect(opp!.title).toBe(`Oportunidad para ${NEW_CLIENT_NAME}`)
 
-    // WhatsApp: envío REAL interceptado (contrato daemon {to,text})
-    expect(daemonFetch).toHaveBeenCalledTimes(1)
-    const [url, init] = daemonFetch.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toContain('/send')
-    const sentBody = JSON.parse(String(init.body)) as { to: string; text: string }
-    expect(sentBody.to.replace(/\D/g, '')).toBe('573190000001')
-    expect(sentBody.text).toContain(NEW_CLIENT_NAME)
+    // WhatsApp no debe llamar al daemon, incluso con el flag legacy en true.
+    expect(daemonFetch).not.toHaveBeenCalled()
+    const pending = await db.notification.findFirst({
+      where: { organizationId: FIX.orgA.id, type: 'automation', title: 'Mensaje whatsapp en cola durable' },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(pending).not.toBeNull()
+    expect(pending?.data).toContain('"status":"queued"')
+    const outbound = await db.workflowOutboundMessage.findFirst({ where: { organizationId: FIX.orgA.id, automationRunId: runId } })
+    expect(outbound).toMatchObject({ channel: 'whatsapp', status: 'queued' })
+    expect(outbound?.payloadEnc).toMatch(/^v1:/)
   })
 
   it('paso 3: al vencer el día, el scheduler reanuda el run y el seguimiento IA se ejecuta → success', async () => {
@@ -148,20 +156,21 @@ describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día 
     expect(String(sysCall[1][1].content)).toContain(NEW_CLIENT_NAME)
   })
 
-  it('auditoría: el motor dejó timeline y notificación del WhatsApp enviado', async () => {
+  it('auditoría: el motor dejó timeline y notificación del WhatsApp encolado', async () => {
     const tl = await db.timelineEvent.findFirst({
       where: { organizationId: FIX.orgA.id, clientId: newClientId, source: 'automation', type: 'whatsapp' },
       orderBy: { createdAt: 'desc' },
     })
     expect(tl).toBeTruthy()
     expect(tl!.title).toContain('automatización')
-    expect(tl!.title).not.toContain('no entregado')
+    expect(tl!.title).toContain('en cola')
 
     const notif = await db.notification.findFirst({
       where: { organizationId: FIX.orgA.id, type: 'automation', title: { contains: 'whatsapp' } },
       orderBy: { createdAt: 'desc' },
     })
     expect(notif).toBeTruthy()
-    expect(notif!.title).toContain('enviado')
+    expect(notif!.title).toContain('en cola durable')
+    expect(notif!.data).toContain('"status":"queued"')
   })
 })

@@ -25,6 +25,12 @@ jobs:
         run: npm run security:scan
       - name: Generar cliente Prisma
         run: npm run db:generate
+      - name: Migraciones Prisma en SQLite temporal (instalación limpia)
+        run: |
+          rm -f /tmp/crm-albra-migration-ci.db
+          DATABASE_URL="file:/tmp/crm-albra-migration-ci.db" npm run db:migrate
+          DATABASE_URL="file:/tmp/crm-albra-migration-ci.db" npx prisma migrate status
+          DATABASE_URL="file:/tmp/crm-albra-migration-ci.db" npm run db:migrate
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Lint con baseline ratchet (errores NUEVOS bloquean, orden 7, sin continue-on-error)

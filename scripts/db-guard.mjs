@@ -1,11 +1,8 @@
 #!/usr/bin/env node
 /**
- * db-guard.mjs — Protector de comandos destructivos de base de datos.
- *
- * Evita la ejecución accidental de comandos como:
- *  - prisma db push --accept-data-loss
- *  - prisma migrate reset
- * contra entornos productivos o bases de datos reales.
+ * db-guard.mjs — Protege operaciones de esquema en bases de datos reales.
+ * En entornos protegidos exige ALLOW_DESTRUCTIVE_DB_OPERATION=true.
+ * 'migrate' usa migrate deploy (nunca migrate dev); 'dev' queda separado.
  */
 import { spawnSync } from 'node:child_process'
 
@@ -16,30 +13,25 @@ const isProdDb = /prod|production|amazonaws|neon\.tech|supabase|render|fly\.io/i
 const allowDestructive = process.env.ALLOW_DESTRUCTIVE_DB_OPERATION === 'true'
 
 if ((isProd || isProdDb) && !allowDestructive) {
-  console.error('\n=============================================================')
-  console.error('⛔ BLOQUEO DE SEGURIDAD DE BASE DE DATOS')
-  console.error('=============================================================')
-  console.error(`Se detectó un intento de ejecutar operación destructiva '${action}'`)
-  console.error(`en un entorno protegido (NODE_ENV=${process.env.NODE_ENV}, DB_URL=${dbUrl.replace(/:[^:@]+@/, ':***@')}).`)
-  console.error('Para prevenir pérdida irrecuperable de datos, esta acción ha sido abortada.')
-  console.error('Si realmente necesitas ejecutar esto, define explícitamente:')
-  console.error('  ALLOW_DESTRUCTIVE_DB_OPERATION=true')
-  console.error('=============================================================\n')
+  console.error('⛔ Operación de base de datos bloqueada en entorno protegido.')
+  console.error(`Acción: ${action}; NODE_ENV=${process.env.NODE_ENV}; DATABASE_URL configurada: ${Boolean(dbUrl)}`)
+  console.error('Para autorizar explícitamente la operación, define ALLOW_DESTRUCTIVE_DB_OPERATION=true.')
   process.exit(1)
 }
 
-let prismaArgs = []
-if (action === 'push') {
-  prismaArgs = ['db', 'push', '--accept-data-loss']
-} else if (action === 'reset') {
-  prismaArgs = ['migrate', 'reset']
-} else if (action === 'migrate') {
-  prismaArgs = ['migrate', 'dev']
-} else {
+let prismaArgs
+if (action === 'push') prismaArgs = ['db', 'push', '--accept-data-loss']
+else if (action === 'reset') prismaArgs = ['migrate', 'reset']
+else if (action === 'migrate') prismaArgs = ['migrate', 'deploy']
+else {
   console.error(`[db-guard] Acción no reconocida: ${action}`)
   process.exit(1)
 }
 
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
 const res = spawnSync(npx, ['prisma', ...prismaArgs], { stdio: 'inherit' })
-process.exit(res.status ?? 0)
+if (res.error) {
+  console.error(`[db-guard] No se pudo iniciar Prisma: ${res.error.message}`)
+  process.exit(1)
+}
+process.exit(res.status ?? 1)

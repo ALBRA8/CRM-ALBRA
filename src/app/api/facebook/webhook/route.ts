@@ -1,12 +1,16 @@
+import { createHash } from 'node:crypto'
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { json } from '@/lib/api-helpers'
-import { verifyMetaSignature, parseFacebookState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals } from '@/lib/integrations'
-import { decryptSecret } from '@/lib/crypto'
+import { verifyMetaSignature, parseFacebookState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals, isChannelAutoReplyGloballyEnabled } from '@/lib/integrations'
+import { decryptSecret, encryptSecret } from '@/lib/crypto'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
+import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
+import { createChannelOutboundIntent, getChannelOutboundIntentByRequestId } from '@/lib/channel-outbox'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getOrCreateMessengerWebhookConnection } from '@/lib/channel-webhook-events'
 
 /**
  * Webhook de Facebook (Messenger de la Página — Meta Graph).
@@ -19,7 +23,7 @@ import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
  *
  * Procesa mensajes: find-or-create Client (phone="fb:<psid>"), timeline facebook,
  * workflows message_received, auto-respuesta IA con NichoConfig.
- * Igual que Instagram: Meta exige 200 rápido (siempre 200 tras validar, sin 500).
+ * Los fallos de persistencia/claim devuelven 500 para que Meta pueda reintentar el evento.
  */
 
 interface FbMessaging {
@@ -81,96 +85,154 @@ export async function POST(req: NextRequest) {
       where: { facebookTokenEnc: { not: null }, metaAppSecretEnc: { not: null } },
       select: { organizationId: true, facebookTokenEnc: true, facebookPageId: true, metaAppSecretEnc: true },
     })
-    let matchedOrgId: string | null = null
-    let matchedEntries: FbEntry[] = []
+    const matchedTargets: Array<{ orgId: string; pageId: string; credentialsEnc: string; entries: FbEntry[] }> = []
 
     for (const candidate of candidates) {
       const appSecret = decryptSecret(candidate.metaAppSecretEnc)
-      if (!appSecret) continue
-      if (verifyMetaSignature(rawBody, appSecret, signature)) {
-        // (A2-12, auditoría 2026-11-11) TODAS las entry dirigidas a la Página
-        // de esta org (antes `.find()` tomaba solo la primera y el resto de un
-        // POST agrupado se perdía). Aislamiento multi-tenant intacto.
-        const entries = (body.entry || []).filter((e) => !candidate.facebookPageId || e.id === candidate.facebookPageId)
-        if (entries.length) {
-          matchedOrgId = candidate.organizationId
-          matchedEntries = entries
-          break
-        }
-      }
+      if (!appSecret || !verifyMetaSignature(rawBody, appSecret, signature)) continue
+      const state = parseFacebookState(candidate.facebookTokenEnc)
+      // Fail closed: a shared Meta App Secret is not enough to identify a tenant.
+      // Match the same Page identity and credential envelope used by the canonical backfill.
+      const pageId = state.pageId || candidate.facebookPageId
+      if (!pageId || !state.pageToken) continue
+      const entries = (body.entry || []).filter((entry) => entry.id === pageId)
+      const credentialsEnc = encryptSecret(JSON.stringify({
+        accessToken: state.pageToken,
+        appSecret,
+        webhookVerifyToken: state.webhookVerifyToken || null,
+      }))
+      if (entries.length && credentialsEnc) matchedTargets.push({ orgId: candidate.organizationId, pageId, credentialsEnc, entries })
     }
 
-    if (!matchedOrgId || !matchedEntries.length) {
+    if (!matchedTargets.length) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })
     }
 
-    const orgId = matchedOrgId
-    const messagingItems = matchedEntries.flatMap((entry) => entry.messaging || [])
-    for (const messaging of messagingItems) {
-      const msg = messaging.message
-      if (!msg?.text || msg.is_echo) continue
-      const senderId = messaging.sender?.id
-      if (!senderId) continue
-      // (A4-02, auditoría 2026-11-11) Dedup durable por mid: Meta reintenta el
-      // webhook ante timeouts; sin esto duplicaría timeline y respuestas IA.
-      if (msg.mid) {
-        const seen = await db.timelineEvent.findFirst({
-          where: { organizationId: orgId, type: 'facebook', metadata: { contains: `"mid":"${msg.mid}"` } },
-          select: { id: true },
-        })
-        if (seen) continue
-      }
-      const text = msg.text.slice(0, 3000)
-
-      // find-or-create Client (phone = "fb:<psid>" para deduplicar por canal)
-      const client = await findOrCreateChannelClient({ orgId, platformKey: `fb:${senderId}`, name: null, source: 'facebook' })
-
-      await recordTimelineEvent({
-        orgId,
-        clientId: client?.id || null,
-        type: 'facebook',
-        title: 'Mensaje recibido por Facebook',
-        description: text.slice(0, 500),
-        metadata: { senderId, mid: msg.mid || null, direction: 'in' },
-        source: 'integration',
+    // A single Meta batch can contain events for multiple Pages/tenants.
+    // Resolve and process each matching Page independently.
+    for (const target of matchedTargets) {
+      const orgId = target.orgId
+      const messagingItems = target.entries.flatMap((entry) => entry.messaging || [])
+      const connection = await getOrCreateMessengerWebhookConnection({
+        organizationId: orgId,
+        pageId: target.pageId,
+        credentialsEnc: target.credentialsEnc,
       })
+      for (const messaging of messagingItems) {
+        const msg = messaging.message
+        if (!msg?.text || msg.is_echo) continue
+        const senderId = messaging.sender?.id
+        if (!senderId) continue
+        if (!msg.mid) {
+          // Without a stable MID the event cannot be claimed atomically; do not create duplicate side effects.
+          console.warn('[messenger webhook] mensaje sin MID estable; se omite procesamiento')
+          continue
+        }
+        // A provider message ID is the stable identity. The canonical ledger
+        // atomically claims it before any CRM/workflow/auto-reply side effect.
+        // Without mid there is no stable provider identity, so this event cannot be durably deduplicated.
+        let eventClaim: { id: string; claimToken: string } | null = null
+        if (msg.mid) {
+          eventClaim = await claimChannelWebhookEvent({
+            organizationId: orgId,
+            connectionId: connection.id,
+            eventKey: 'message:' + msg.mid,
+            eventType: 'messenger.message',
+          })
+          if (!eventClaim) continue
+        }
 
-      try {
-        await runWorkflowsForTrigger({
-          orgId,
-          type: 'message_received',
-          payload: { channel: 'facebook', from: `fb:${senderId}`, text, conversationId: `fb:${senderId}`, clientId: client?.id },
-        })
-      } catch (err) {
-        console.error('[facebook webhook] workflows', err)
-      }
+        try {
+          const text = msg.text.slice(0, 3000)
+          const client = await findOrCreateChannelClient({ orgId, platformKey: 'fb:' + senderId, name: null, source: 'facebook' })
 
-      // Auto-respuesta IA
-      const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-      const state = parseFacebookState(integration?.facebookTokenEnc)
-      const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      if (state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
-        await llmReplyOrNotification({
-          orgId,
-          clientId: client?.id || null,
-          channelLabel: 'Facebook',
-          incomingText: text,
-          handoffKeywords: await getHandoffKeywords(orgId),
-          nichoContext: await buildNichoContext(orgId),
-          send: async (reply) => {
-            const { sendFacebookGraphMessage } = await import('@/lib/integrations')
-            const sent = await sendFacebookGraphMessage({ token: state.pageToken!, pageId: integration?.facebookPageId || '', recipientId: senderId, text: reply })
-            await recordTimelineEvent({
-              orgId,
-              clientId: client?.id || null,
-              type: 'facebook',
-              title: 'Respuesta automática del agente IA',
-              description: reply.slice(0, 500),
-              metadata: { senderId, direction: 'out', delivered: sent.ok },
-              source: 'agent',
+          await recordTimelineEvent({
+            orgId,
+            clientId: client?.id || null,
+            type: 'facebook',
+            title: 'Mensaje recibido por Facebook',
+            description: text.slice(0, 500),
+            metadata: { senderId, mid: msg.mid || null, direction: 'in' },
+            source: 'integration',
+          })
+
+          await runWorkflowsForTrigger({
+            orgId,
+            type: 'message_received',
+            payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id, ...(msg.mid ? { messageId: msg.mid } : {}) },
+          })
+
+          const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
+          const state = parseFacebookState(integration?.facebookTokenEnc)
+          const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
+          const canonicalConversation = msg.mid
+            ? await getOrCreateChannelConversation({
+                providerAccountKey: `meta:messenger:${target.pageId}`,
+                channel: 'messenger',
+                externalContactKey: senderId,
+              })
+            : null
+          // A disconnected/revoked canonical connection is not revived by a webhook;
+          // legacy inbound processing may continue, but no durable auto-reply is queued.
+          if (canonicalConversation && msg.mid) {
+            // Persist inbound identity in the canonical thread. Provider mid is
+            // unique per conversation and prevents duplicate canonical messages.
+            let insertedInbound = false
+            try {
+              await db.channelMessage.create({
+                data: {
+                  conversationId: canonicalConversation.id,
+                  externalMessageId: msg.mid,
+                  direction: 'in',
+                  senderType: 'contact',
+                  body: text,
+                  metadata: JSON.stringify({ senderId, source: 'messenger_webhook' }),
+                },
+              })
+              insertedInbound = true
+            } catch (error) {
+              if ((error as { code?: string } | null)?.code !== 'P2002') throw error
+            }
+            if (insertedInbound) {
+              await db.channelConversation.update({
+                where: { id: canonicalConversation.id },
+                data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
+              })
+            }
+          }
+
+          if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true) && canonicalConversation && msg.mid) {
+            const clientRequestId = `messenger-auto-reply:${createHash('sha256').update(msg.mid).digest('hex')}`
+            // A webhook retry after enqueue must reuse the first persisted reply,
+            // not regenerate different text under the same idempotency key.
+            const existingIntent = await getChannelOutboundIntentByRequestId({
+              conversationId: canonicalConversation.id,
+              clientRequestId,
             })
-          },
-        })
+            if (!existingIntent) {
+              await llmReplyOrNotification({
+                orgId,
+                clientId: client?.id || null,
+                channelLabel: 'Facebook',
+                incomingText: text,
+                handoffKeywords: await getHandoffKeywords(orgId),
+                nichoContext: await buildNichoContext(orgId),
+                send: async (reply) => {
+                  await createChannelOutboundIntent({
+                    organizationId: orgId,
+                    conversationId: canonicalConversation.id,
+                    clientRequestId,
+                    body: reply.slice(0, 2000),
+                  })
+                },
+              })
+            }
+          }
+          if (eventClaim) await completeChannelWebhookEvent(eventClaim)
+        } catch (err) {
+          if (eventClaim) await failChannelWebhookEvent(eventClaim, 'MESSENGER_HANDLER_FAILED')
+          throw err
+        }
       }
     }
 
@@ -178,6 +240,6 @@ export async function POST(req: NextRequest) {
     return json({ ok: true })
   } catch (err) {
     console.error('[facebook webhook]', err)
-    return json({ ok: true, processed: false })
+    return json({ ok: false, processed: false }, { status: 500 })
   }
 }

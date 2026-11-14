@@ -58,6 +58,11 @@ model Organization {
   apiKeys               ApiKey[]
   agentLeadEvents       AgentLeadEvent[]
   whatsappConnections   WhatsAppConnection[]
+  channelConnections    ChannelConnection[]
+  channelConnectionEvents ChannelConnectionEvent[]
+  channelWebhookEvents ChannelWebhookEvent[]
+  channelConversations ChannelConversation[]
+  workflowOutboundMessages WorkflowOutboundMessage[]
 }
 
 model User {
@@ -409,9 +414,16 @@ model AutomationRun {
   startedAt      DateTime     @default(now())
   finishedAt     DateTime?
   idempotencyKey String? // trigger:entidad — evita doble ejecución por retry/webhook duplicado
+  stepLedgerVersion Int           @default(0) // 1 = write-ahead ledger habilitado; 0 = run histórico
+  // Lease durable y fencing monotónico: cada reclamación incrementa la versión.
+  leaseToken       String?
+  leaseExpiresAt   DateTime?
+  fencingVersion  Int           @default(0)
+  stepExecutions  WorkflowStepExecution[]
 
   @@index([automationId, startedAt])
   @@index([status, resumeAt])
+  @@index([status, leaseExpiresAt])
   @@unique([automationId, idempotencyKey])
 }
 
@@ -574,6 +586,7 @@ model ActivityLog {
 }
 
 model TimelineEvent {
+  sourceEventKey String? // Stable provider event key for retry-safe timeline writes
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -591,6 +604,7 @@ model TimelineEvent {
 
   @@index([organizationId, clientId, createdAt])
   @@index([organizationId, opportunityId, createdAt])
+  @@unique([organizationId, sourceEventKey])
 }
 
 // ---------- Vistas guardadas (inspirado en Twenty) ----------
@@ -758,6 +772,159 @@ model WhatsAppConnectionEvent {
   @@index([connectionId, createdAt])
 }
 
+// ---------- Conexiones canónicas multicuenta de canales ----------
+// Fase 0: modelo aditivo. Las tablas legacy (Integration y WhatsAppConnection)
+// permanecen intactas hasta completar backfill, dual-read y pruebas de paridad.
+model ChannelConnection {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  channel           String   // whatsapp | instagram | facebook | telegram | tiktok
+  provider          String   // adaptador/proveedor concreto; no inferirlo del canal
+  providerAccountKey String  @unique // clave externa namespaced, normalizada y no secreta
+  externalAccountId String   // ID de cuenta/página/número/bot en el proveedor
+  displayName       String?
+  status            String   @default("pending") // pending | connected | reconnect_required | disconnected | revoked | error
+  scopes            String?  // JSON serializado; nunca contiene credenciales
+  credentialsEnc    String   // blob cifrado AES-256-GCM; nunca exponer por API/logs
+  metadata          String?  // JSON allowlisted no secreto
+  tokenExpiresAt    DateTime?
+  lastVerifiedAt    DateTime?
+  lastErrorAt       DateTime?
+  lastErrorCode     String?  // código sanitizado; nunca guardar respuesta/token del proveedor
+  // Lease durable para rotación OAuth. "uncertain" requiere recuperación explícita;
+  // un lease vencido en "refreshing" nunca autoriza reutilizar el refresh token viejo.
+  refreshState          String   @default("idle") // idle | refreshing | uncertain
+  refreshLeaseToken     String?
+  refreshLeaseExpiresAt DateTime?
+  refreshFencingVersion Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  events            ChannelConnectionEvent[]
+  webhookEvents     ChannelWebhookEvent[]
+  conversations     ChannelConversation[]
+
+  @@index([organizationId, channel, status])
+  @@index([organizationId, createdAt])
+  @@index([provider, externalAccountId])
+  @@index([refreshState, refreshLeaseExpiresAt])
+  @@unique([id, organizationId])
+}
+
+model ChannelConnectionEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectionId   String?
+  connection     ChannelConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  type           String   // connected | disconnected | revoked | token_rotated | verified | error
+  detail         String?  // detalle sanitizado, sin tokens ni PII innecesaria
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([connectionId, createdAt])
+}
+
+
+
+ // Registro durable de recepción por conexión. No almacena payloads ni secretos.
+model ChannelWebhookEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectionId   String
+  connection     ChannelConnection @relation(fields: [connectionId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  eventKey       String
+  eventType      String
+  status         String   @default("processing") // processing | processed | failed
+  claimToken     String?  // fencing token del propietario vigente del lease
+  attemptCount   Int      @default(1)
+  lastErrorCode  String?
+  receivedAt     DateTime @default(now())
+  processedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([connectionId, eventKey])
+  @@index([organizationId, receivedAt])
+  @@index([status, updatedAt])
+}
+
+// Conversación canónica aislada por conexión. Se introduce en paralelo a
+// WhatsAppConversation para permitir migración expand/contract sin reasignar
+// históricos ambiguos ni cambiar de golpe las consultas legacy.
+model ChannelConversation {
+  id                  String   @id @default(cuid())
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectionId        String
+  connection          ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  channel             String
+  externalContactKey  String
+  contactName         String?
+  lastMessage         String?
+  lastMessageAt       DateTime?
+  unreadCount         Int      @default(0)
+  status              String   @default("active")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  messages            ChannelMessage[]
+  outboundMessages     ChannelOutboundMessage[]
+
+  @@unique([connectionId, externalContactKey])
+  @@index([organizationId, channel, lastMessageAt])
+  @@index([connectionId, lastMessageAt])
+}
+
+
+// Mensajes canónicos: conservan el hilo y la cuenta exacta del proveedor.
+// Se añaden en paralelo a WhatsAppMessage/TimelineEvent durante expand.
+model ChannelMessage {
+  id                String   @id @default(cuid())
+  conversationId    String
+  conversation      ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  externalMessageId String?
+  direction         String   // in | out
+  senderType        String   // contact | agent | user
+  body              String
+  messageType       String   @default("text")
+  metadata          String?  // JSON no secreto, allowlisted
+  outboundId        String?  @unique
+  outbound          ChannelOutboundMessage? @relation(fields: [outboundId], references: [id], onDelete: SetNull)
+  createdAt         DateTime @default(now())
+
+  @@unique([conversationId, externalMessageId])
+  @@index([conversationId, createdAt])
+}
+
+
+ 
+// Intención/outbox de mensajes salientes. Un intento incierto NUNCA se reenvía
+// automáticamente: sin idempotencia garantizada por el proveedor podría duplicar.
+model ChannelOutboundMessage {
+  id                String   @id @default(cuid())
+  conversationId    String
+  conversation      ChannelConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  clientRequestId   String
+  body              String
+  status            String   @default("queued") // queued | sending | sent | failed | unknown
+  attemptCount      Int      @default(0)
+  requestedByUserId String?
+  providerMessageId String?
+  providerErrorCode String?  // código sanitizado, nunca cuerpo/token de respuesta
+  startedAt         DateTime?
+  sentAt            DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  message           ChannelMessage?
+
+  @@unique([conversationId, clientRequestId])
+  @@index([status, createdAt])
+  @@index([conversationId, createdAt])
+}
+
 // ---------- AGENTE-LEADS (webhook de eventos de prospección) ----------
 // Receptor oficial de los eventos emitidos por AGENTE-LEADS (contrato §26):
 // lead.created / lead.scored / lead.intelligenced / lead.outreach_sent /
@@ -847,4 +1014,53 @@ model Knowledge {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, isActive])
+}
+
+
+// Outbox durable para acciones externas originadas en workflows.
+// El payload se cifra porque contiene destinatarios y contenido del mensaje.
+model WorkflowOutboundMessage {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  automationId      String?
+  automationRunId   String?
+  stepIndex         Int
+  idempotencyKey    String
+  channel           String   // whatsapp | telegram | email
+  payloadEnc        String
+  status            String   @default("queued") // queued | sending | sent | failed | unknown
+  attemptCount      Int      @default(0)
+  claimToken        String?
+  providerMessageId String?
+  providerErrorCode String?
+  startedAt         DateTime?
+  sentAt            DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([automationRunId, stepIndex])
+}
+
+
+// Registro write-ahead de cada acción de workflow. Un paso en started tras un
+// crash es ambiguo y nunca se reejecuta automáticamente.
+model WorkflowStepExecution {
+  id               String        @id @default(cuid())
+  automationRunId  String
+  automationRun    AutomationRun @relation(fields: [automationRunId], references: [id], onDelete: Cascade)
+  stepIndex        Int
+  actionType       String
+  status           String        @default("started") // started | succeeded | failed | unknown
+  output           String?
+  error            String?
+  startedAt        DateTime      @default(now())
+  finishedAt       DateTime?
+
+  @@unique([automationRunId, stepIndex])
+  @@index([status, startedAt])
 }

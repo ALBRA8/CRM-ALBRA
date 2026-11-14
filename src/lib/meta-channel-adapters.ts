@@ -1,0 +1,93 @@
+import type { ChannelProviderAdapter, ChannelProviderAdapters } from '@/lib/channel-outbound-dispatcher'
+
+const GRAPH_BASE = 'https://graph.facebook.com'
+const configuredVersion = process.env.META_CHANNELS_GRAPH_VERSION
+export const META_CHANNELS_GRAPH_VERSION =
+  configuredVersion && /^v\d+\.\d+$/.test(configuredVersion) ? configuredVersion : 'v27.0'
+
+interface MetaSendResponse {
+  messages?: Array<{ id?: string }>
+  message_id?: string
+  error?: { code?: number }
+}
+
+function makeMetaAdapter(
+  channel: 'whatsapp' | 'instagram' | 'messenger',
+  provider: 'meta_cloud' | 'meta_graph',
+  fetchImpl: typeof fetch
+): ChannelProviderAdapter {
+  return async (input) => {
+    const validRecipient = channel === 'whatsapp'
+      ? /^\d{7,15}$/.test(input.recipientKey)
+      : /^\d{5,30}$/.test(input.recipientKey)
+    if (
+      input.channel !== channel ||
+      input.provider !== provider ||
+      !input.credentials.accessToken ||
+      !/^\d{5,30}$/.test(input.externalAccountId) ||
+      !validRecipient
+    ) {
+      return { ok: false, definitive: true, errorCode: 'INVALID_PROVIDER_INPUT' }
+    }
+
+    const endpoint = `${GRAPH_BASE}/${META_CHANNELS_GRAPH_VERSION}/${encodeURIComponent(input.externalAccountId)}/messages`
+    const payload = channel === 'whatsapp'
+      ? {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: input.recipientKey,
+          type: 'text',
+          text: { preview_url: false, body: input.body },
+          // Meta devuelve este identificador opaco en el webhook de estado,
+          // permitiendo correlacionar incluso si el callback llega antes del ACK.
+          biz_opaque_callback_data: input.outboundId,
+        }
+      : {
+          recipient: { id: input.recipientKey },
+          messaging_type: 'RESPONSE',
+          message: { text: input.body },
+        }
+
+    const response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.credentials.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = await response.json().catch(() => ({})) as MetaSendResponse
+    if (response.ok) {
+      const providerMessageId = channel === 'whatsapp' ? data.messages?.[0]?.id : data.message_id
+      // A 2xx without the provider's message ID cannot be reconciled against
+      // later delivery callbacks. Treat it as ambiguous, never as confirmed.
+      if (typeof providerMessageId !== 'string' || !providerMessageId) {
+        return { ok: false, definitive: false, errorCode: 'META_RESPONSE_MISSING_MESSAGE_ID' }
+      }
+      return { ok: true, providerMessageId }
+    }
+
+    // 5xx and rate limiting may occur after provider-side processing; quarantine.
+    if (response.status >= 500 || response.status === 429) {
+      return { ok: false, definitive: false, errorCode: `META_HTTP_${response.status}` }
+    }
+    const providerCode = typeof data.error?.code === 'number' ? data.error.code : response.status
+    return { ok: false, definitive: true, errorCode: `META_ERROR_${providerCode}` }
+  }
+}
+
+/**
+ * Official Meta Graph text adapters (WhatsApp Cloud / Instagram Messaging).
+ * API references: developers.facebook.com/documentation/business-messaging/whatsapp/overview
+ * and developers.facebook.com/documentation/business-messaging/instagram-messaging.
+ * They are intentionally only a factory; no route/worker registers or invokes
+ * them until outbound sending is approved.
+ */
+export function createMetaChannelAdapters(fetchImpl: typeof fetch = fetch): ChannelProviderAdapters {
+  return {
+    'meta_cloud:whatsapp': makeMetaAdapter('whatsapp', 'meta_cloud', fetchImpl),
+    'meta_graph:instagram': makeMetaAdapter('instagram', 'meta_graph', fetchImpl),
+    'meta_graph:messenger': makeMetaAdapter('messenger', 'meta_graph', fetchImpl),
+  }
+}

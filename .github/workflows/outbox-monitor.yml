@@ -1,0 +1,41 @@
+name: Outbox health monitor (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outbox-health-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validar configuración
+        id: config
+        env:
+          BASE_URL: ${{ secrets.OUTBOX_MONITOR_BASE_URL }}
+          CHANNEL_SECRET: ${{ secrets.CHANNEL_OUTBOX_WORKER_SECRET }}
+          WORKFLOW_SECRET: ${{ secrets.WORKFLOW_OUTBOX_WORKER_SECRET }}
+        run: |
+          if [ -z "$BASE_URL" ] || [ -z "$CHANNEL_SECRET" ] || [ -z "$WORKFLOW_SECRET" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Monitor omitido: faltan secretos de entorno. No se hizo ninguna petición."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Consultar métricas y enviar alertas si corresponde
+        if: steps.config.outputs.configured == 'true'
+        env:
+          OUTBOX_MONITOR_BASE_URL: ${{ secrets.OUTBOX_MONITOR_BASE_URL }}
+          CHANNEL_OUTBOX_WORKER_SECRET: ${{ secrets.CHANNEL_OUTBOX_WORKER_SECRET }}
+          WORKFLOW_OUTBOX_WORKER_SECRET: ${{ secrets.WORKFLOW_OUTBOX_WORKER_SECRET }}
+          OUTBOX_ALERT_WEBHOOK_URL: ${{ secrets.OUTBOX_ALERT_WEBHOOK_URL }}
+        run: node scripts/monitor-outbox.mjs

@@ -15,6 +15,7 @@ import { FIX } from '../helpers'
 let automationId: string
 let staleId: string
 let freshId: string
+let leasedId: string
 let waitingId: string
 
 const minutesAgo = (n: number): Date => new Date(Date.now() - n * 60_000)
@@ -52,6 +53,21 @@ beforeAll(async () => {
     })
   ).id
 
+  leasedId = (
+    await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId,
+        status: 'processing',
+        startedAt: minutesAgo(20),
+        leaseToken: 'active-worker-lease',
+        leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+        fencingVersion: 3,
+        stepLedgerVersion: 1,
+      },
+    })
+  ).id
+
   waitingId = (
     await db.automationRun.create({
       data: {
@@ -83,6 +99,10 @@ describe('runDueJobs — recuperación de runs huérfanos', () => {
   it('NO toca un run running reciente ni un waiting con DELAY futuro', async () => {
     const fresh = await db.automationRun.findUnique({ where: { id: freshId } })
     expect(fresh?.status).toBe('running')
+
+    const leased = await db.automationRun.findUnique({ where: { id: leasedId } })
+    expect(leased?.status).toBe('processing')
+    expect(leased?.leaseToken).toBe('active-worker-lease')
 
     const waiting = await db.automationRun.findUnique({ where: { id: waitingId } })
     expect(waiting?.status).toBe('waiting')

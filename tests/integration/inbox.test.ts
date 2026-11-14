@@ -1,6 +1,9 @@
-import { describe, expect, it, beforeAll } from 'vitest'
+import { describe, expect, it, beforeAll, afterEach, vi } from 'vitest'
 import { GET as inboxGET } from '@/app/api/inbox/route'
 import { POST as inboxSendPOST } from '@/app/api/inbox/send/route'
+import { POST as telegramSendPOST } from '@/app/api/telegram/send/route'
+import { POST as instagramSendPOST } from '@/app/api/instagram/send/route'
+import { POST as facebookSendPOST } from '@/app/api/facebook/send/route'
 import { db } from '@/lib/db'
 import { FIX, jsonBody, req, tokenA, tokenB } from '../helpers'
 
@@ -117,7 +120,7 @@ describe('GET /api/inbox — listado unificado', () => {
 })
 
 describe('GET /api/inbox?key=... — hilo y marca de leída', () => {
-  it('key inválida → 400', async () => {
+  it('key legacy válida pero no migrada → 409', async () => {
     const res = await inboxGET(req('/inbox?key=facebook:x', { token: tokenA() }))
     expect(res.status).toBe(400)
   })
@@ -162,7 +165,8 @@ describe('POST /api/inbox/send', () => {
 
   it('key inválida → 400', async () => {
     const res = await inboxSendPOST(req('/inbox/send', { method: 'POST', token: tokenA(), body: { key: 'fb:x', contactHandle: 'y', text: 'hola' } }))
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(409)
+    expect(await jsonBody(res)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
   })
 
   it('texto vacío → 400 (nunca envía)', async () => {
@@ -172,11 +176,191 @@ describe('POST /api/inbox/send', () => {
     expect(String(body.error)).toMatch(/vacío/i)
   })
 
-  it('canal sin configurar → 400 descriptivo (no 500)', async () => {
-    // org-a no tiene token de Telegram en la BD de test → degradación elegante
-    const res = await inboxSendPOST(req('/inbox/send', { method: 'POST', token: tokenA(), body: { key: `tg:${tgClientId}`, contactHandle: '555001', clientId: tgClientId, text: 'respuesta humana' } }))
+  it('bloquea envíos legacy de WhatsApp y Telegram sin llamar a ningún proveedor', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const whatsapp = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `wa:${waConvId}`, contactHandle: waPhone, text: 'No debe salir' },
+      }))
+      const telegram = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `tg:${tgClientId}`, contactHandle: '555001', clientId: tgClientId, text: 'No debe salir' },
+      }))
+      const instagram = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `ig:${tgClientId}`, contactHandle: 'ig-recipient', clientId: tgClientId, text: 'No debe salir' },
+      }))
+      const facebook = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `fb:${tgClientId}`, contactHandle: 'fb-recipient', clientId: tgClientId, text: 'No debe salir' },
+      }))
+      for (const response of [whatsapp, telegram, instagram, facebook]) {
+        expect(response.status).toBe(409)
+        expect(await jsonBody(response)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
+      }
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+
+describe('legacy direct provider send endpoints', () => {
+  it('Telegram, Instagram y Messenger rechazan envíos directos sin llamar proveedores', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const responses = await Promise.all([
+        telegramSendPOST(req('/telegram/send', { method: 'POST', token: tokenA(), body: { chatId: '555001', text: 'No debe salir' } })),
+        instagramSendPOST(req('/instagram/send', { method: 'POST', token: tokenA(), body: { recipientId: 'ig-recipient', text: 'No debe salir' } })),
+        facebookSendPOST(req('/facebook/send', { method: 'POST', token: tokenA(), body: { recipientId: 'fb-recipient', text: 'No debe salir' } })),
+      ])
+      for (const response of responses) {
+        expect(response.status).toBe(409)
+        expect(await jsonBody(response)).toMatchObject({ code: 'LEGACY_PROVIDER_SEND_DISABLED' })
+      }
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('POST /api/inbox/send — conversaciones canónicas (outbox)', () => {
+  const connectionIds: string[] = []
+  const conversationIds: string[] = []
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    if (conversationIds.length) {
+      await db.channelOutboundMessage.deleteMany({ where: { conversationId: { in: conversationIds } } })
+      await db.channelMessage.deleteMany({ where: { conversationId: { in: conversationIds } } })
+      await db.channelConversation.deleteMany({ where: { id: { in: conversationIds } } })
+      conversationIds.length = 0
+    }
+    if (connectionIds.length) {
+      await db.channelConnectionEvent.deleteMany({ where: { connectionId: { in: connectionIds } } })
+      await db.channelConnection.deleteMany({ where: { id: { in: connectionIds } } })
+      connectionIds.length = 0
+    }
+  })
+
+  async function createCanonicalConversation(orgId: string = FIX.orgA.id) {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const connection = await db.channelConnection.create({
+      data: {
+        id: `route-outbox-connection-${suffix}`,
+        organizationId: orgId,
+        channel: 'instagram',
+        provider: 'meta_graph',
+        providerAccountKey: `meta:instagram:route-outbox:${suffix}`,
+        externalAccountId: `route-outbox-account-${suffix}`,
+        displayName: 'Instagram de pruebas',
+        credentialsEnc: 'v1:test-ciphertext',
+        status: 'connected',
+      },
+    })
+    connectionIds.push(connection.id)
+    const conversation = await db.channelConversation.create({
+      data: {
+        id: `route-outbox-conversation-${suffix}`,
+        organizationId: orgId,
+        connectionId: connection.id,
+        channel: 'instagram',
+        externalContactKey: `contact-${suffix}`,
+      },
+    })
+    conversationIds.push(conversation.id)
+    return { connection, conversation }
+  }
+
+  it('encola y responde 202 sin llamar al proveedor ni al envío legacy', async () => {
+    const { conversation } = await createCanonicalConversation()
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await inboxSendPOST(req('/inbox/send', {
+      method: 'POST',
+      token: tokenA(),
+      body: {
+        key: `cc:${conversation.id}`,
+        clientRequestId: 'route-request-0001',
+        contactHandle: 'no-se-usa-en-canonico',
+        text: 'Respuesta persistida, todavía no enviada',
+      },
+    }))
+
+    expect(res.status).toBe(202)
+    expect(await jsonBody(res)).toMatchObject({
+      success: true,
+      queued: true,
+      sent: false,
+      status: 'queued',
+      clientRequestId: 'route-request-0001',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(1)
+  })
+
+  it('reintento HTTP con el mismo requestId devuelve la misma intención; cuerpo distinto entra en conflicto', async () => {
+    const { conversation } = await createCanonicalConversation()
+    const request = (text: string) => inboxSendPOST(req('/inbox/send', {
+      method: 'POST',
+      token: tokenA(),
+      body: { key: `cc:${conversation.id}`, clientRequestId: 'route-request-idem-01', text },
+    }))
+
+    const first = await request('Mensaje idempotente')
+    const firstBody = await jsonBody(first)
+    const retry = await request('Mensaje idempotente')
+    const retryBody = await jsonBody(retry)
+    expect(first.status).toBe(202)
+    expect(retry.status).toBe(202)
+    expect(retryBody.outboundId).toBe(firstBody.outboundId)
+
+    const conflict = await request('Texto diferente')
+    expect(conflict.status).toBe(409)
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(1)
+  })
+
+  it('requiere clientRequestId y no crea una intención incompleta', async () => {
+    const { conversation } = await createCanonicalConversation()
+    const res = await inboxSendPOST(req('/inbox/send', {
+      method: 'POST',
+      token: tokenA(),
+      body: { key: `cc:${conversation.id}`, text: 'No encolar sin clave' },
+    }))
     expect(res.status).toBe(400)
-    const body = await jsonBody(res)
-    expect(String(body.error)).toMatch(/Telegram no configurado/i)
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(0)
+  })
+
+  it('no permite encolar una conversación de otro tenant', async () => {
+    const { conversation } = await createCanonicalConversation(FIX.orgB.id)
+    const res = await inboxSendPOST(req('/inbox/send', {
+      method: 'POST',
+      token: tokenA(),
+      body: { key: `cc:${conversation.id}`, clientRequestId: 'route-request-0002', text: 'No cruzar tenants' },
+    }))
+    expect(res.status).toBe(404)
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(0)
+  })
+
+  it('rechaza provider/canal incompatibles y no cae al envío legacy', async () => {
+    const { connection, conversation } = await createCanonicalConversation()
+    await db.channelConnection.update({ where: { id: connection.id }, data: { provider: 'meta_cloud' } })
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await inboxSendPOST(req('/inbox/send', {
+      method: 'POST',
+      token: tokenA(),
+      body: { key: `cc:${conversation.id}`, clientRequestId: 'route-request-0003', text: 'No fallback' },
+    }))
+    expect(res.status).toBe(409)
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(0)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

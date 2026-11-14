@@ -11,7 +11,7 @@ import {
   metaGraphBase,
   META_GRAPH_VERSION,
 } from '@/lib/integrations'
-import { decryptSecret } from '@/lib/crypto'
+import { decryptSecret, encryptSecret } from '@/lib/crypto'
 
 /**
  * GET /api/instagram/oauth/callback — retorno de Meta tras autorizar.
@@ -26,10 +26,21 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
     const url = new URL(req.url)
+    const clearCsrfCookie = (response: NextResponse) => {
+      const forwardedProto = req.headers.get('x-forwarded-proto')?.split(',')[0].trim()
+      response.cookies.set('ig_oauth_csrf', '', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: forwardedProto === 'https' || url.protocol === 'https:',
+        path: '/api/instagram/oauth',
+        maxAge: 0,
+      })
+      return response
+    }
     const fail = (code: string) => {
       const u = new URL('/settings?tab=instagram', req.url)
       u.searchParams.set('ig_error', code)
-      return NextResponse.redirect(u)
+      return clearCsrfCookie(NextResponse.redirect(u))
     }
 
     const qState = url.searchParams.get('state') || ''
@@ -105,32 +116,103 @@ export async function GET(req: NextRequest) {
       }>
     }
     const pages = pagesJson.data || []
-    const hit = pages.find((p) => p.instagram_business_account?.id)
-    if (!hit) return fail('no_ig_business_linked')
+    const eligiblePages = pages.filter((page) => page.instagram_business_account?.id && page.access_token)
+    if (!eligiblePages.length) return fail('no_ig_business_linked')
 
-    const igAccount = hit.instagram_business_account!
-    const pageToken = hit.access_token || longToken
+    // Una sola autorización Meta puede devolver varias páginas con Instagram.
+    // Registrar todas evita perder las cuentas secundarias; la primera sigue
+    // siendo la seleccionada en Integration hasta que la UI permita elegir.
+    const accountKeys = eligiblePages.map((page) => `meta:instagram:${page.instagram_business_account!.id}`)
+    const existingConnections = await db.channelConnection.findMany({
+      where: { providerAccountKey: { in: accountKeys } },
+      select: { providerAccountKey: true, organizationId: true },
+    })
+    if (existingConnections.some((connection) => connection.organizationId !== auth.orgId)) {
+      return fail('instagram_account_in_use')
+    }
 
-    // 4) guardar cifrado y activar
-    const next = encodeInstagramState({ ...ig, token: pageToken })
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: {
-        instagramTokenEnc: next,
-        instagramAccountId: igAccount.id,
-        enableInstagram: true,
-      },
+    const selectedPage = eligiblePages[0]
+    const selectedAccount = selectedPage.instagram_business_account!
+    const selectedToken = selectedPage.access_token || longToken
+    const next = encodeInstagramState({ ...ig, token: selectedToken })
+
+    const prepared = eligiblePages.map((page) => {
+      const account = page.instagram_business_account!
+      const pageToken = page.access_token || longToken
+      const credentialsEnc = encryptSecret(JSON.stringify({
+        accessToken: pageToken,
+        appSecret,
+        webhookVerifyToken: ig.webhookVerifyToken || null,
+      }))
+      return { page, account, pageToken, credentialsEnc }
+    })
+    if (prepared.some((item) => !item.credentialsEnc)) return fail('credential_encryption_failed')
+
+    // Todas las cuentas se registran atómicamente. Integration conserva solo
+    // la primera por compatibilidad hasta completar selector y dual-read.
+    await db.$transaction(async (tx) => {
+      for (const item of prepared) {
+        const providerAccountKey = `meta:instagram:${item.account.id}`
+        // No usar upsert global por providerAccountKey: el chequeo previo de
+        // ownership puede quedar obsoleto antes de esta transacción. Un upsert
+        // podría actualizar credenciales de una cuenta que otro tenant acaba
+        // de reclamar. Actualizar solo una fila ya scoped; si la clave global
+        // aparece en otro tenant, el create colisiona y aborta la transacción.
+        const existingForTenant = await tx.channelConnection.findFirst({
+          where: { providerAccountKey, organizationId: auth.orgId, channel: 'instagram', provider: 'meta_graph' },
+          select: { id: true },
+        })
+        const connectionData = {
+          displayName: item.account.username || item.page.name || null,
+          status: 'connected',
+          credentialsEnc: item.credentialsEnc!,
+          metadata: JSON.stringify({ pageId: item.page.id, pageName: item.page.name || null, username: item.account.username || null }),
+          lastVerifiedAt: new Date(),
+          lastErrorAt: null,
+          lastErrorCode: null,
+        }
+        const connection = existingForTenant
+          ? await tx.channelConnection.update({ where: { id: existingForTenant.id }, data: connectionData })
+          : await tx.channelConnection.create({
+              data: {
+                organizationId: auth.orgId,
+                channel: 'instagram',
+                provider: 'meta_graph',
+                providerAccountKey,
+                externalAccountId: item.account.id,
+                ...connectionData,
+              },
+            })
+        await tx.channelConnectionEvent.create({
+          data: {
+            organizationId: auth.orgId,
+            connectionId: connection.id,
+            type: 'connected',
+            detail: 'instagram_oauth_connected',
+          },
+        })
+      }
+      await tx.integration.update({
+        where: { organizationId: auth.orgId },
+        data: {
+          instagramTokenEnc: next,
+          instagramAccountId: selectedAccount.id,
+          enableInstagram: true,
+        },
+      })
     })
 
-    // 5) best-effort: suscribir la cuenta IG a los webhooks de la app
-    try {
-      await fetch(`${graph}/${v}/${encodeURIComponent(igAccount.id)}/subscribed_apps`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${pageToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscribed_fields: 'messages,messaging_postbacks,message_reactions' }),
-      })
-    } catch {
-      // no fatal: la suscripción también puede hacerse desde Meta Developers
+    // 5) best-effort: suscribir todas las cuentas registradas.
+    for (const item of prepared) {
+      try {
+        await fetch(`${graph}/${v}/${encodeURIComponent(item.account.id)}/subscribed_apps`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${item.pageToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscribed_fields: 'messages,messaging_postbacks,message_reactions' }),
+        })
+      } catch {
+        // no fatal: la suscripción también puede hacerse desde Meta Developers
+      }
     }
 
     await auditAndTimeline({
@@ -141,18 +223,16 @@ export async function GET(req: NextRequest) {
       details: {
         provider: 'instagram',
         via: 'meta_oauth',
-        igAccountId: igAccount.id,
-        igUsername: igAccount.username || null,
-        pageId: hit.id,
-        tokenMasked: pageToken ? `${pageToken.slice(0, 4)}••••` : null,
+        igAccountIds: prepared.map((item) => item.account.id),
+        selectedIgAccountId: selectedAccount.id,
+        pageCount: prepared.length,
       },
     })
 
     const ok = new URL('/settings?tab=instagram', req.url)
-    ok.searchParams.set('ig_connected', igAccount.username || igAccount.id)
+    ok.searchParams.set('ig_connected', selectedAccount.username || selectedAccount.id)
     const res = NextResponse.redirect(ok)
-    res.cookies.delete('ig_oauth_csrf')
-    return res
+    return clearCsrfCookie(res)
   })
 }
 

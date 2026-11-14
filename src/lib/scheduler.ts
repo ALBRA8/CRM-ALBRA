@@ -30,20 +30,111 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
   try {
     const now = new Date()
 
-    // 0) Sweeper: runs 'running' huérfanos (crash/reinicio a mitad de acción)
-    //    → 'failed' determinista. Sin esto quedaban atascados para siempre.
+    // 0) Recuperación conservadora de runs interrumpidos.
+    // Solo se reanuda un run nuevo con ledger habilitado y todos sus pasos
+    // previamente confirmados como succeeded. Un paso started/unknown es
+    // ambiguo; runs históricos (ledgerVersion=0) tampoco se reejecutan.
+    let recovered = 0
     try {
-      const orphaned = await db.automationRun.updateMany({
+      const cutoff = new Date(Date.now() - STALE_RUNNING_MS)
+      const staleRuns = await db.automationRun.findMany({
         where: {
-          status: 'running',
-          startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) },
+          status: { in: ['running', 'processing'] },
+          startedAt: { lt: cutoff },
           ...(orgId ? { organizationId: orgId } : {}),
         },
-        data: { status: 'failed', error: 'interrumpido (interrupted): proceso reiniciado a mitad del run (sweeper)', finishedAt: new Date() },
+        take: 50,
       })
-      if (orphaned.count > 0) console.warn(`[scheduler] runs huérfanos marcados failed: ${orphaned.count}`)
+
+      for (const stale of staleRuns) {
+        const steps = await db.workflowStepExecution.findMany({
+          where: { automationRunId: stale.id },
+          orderBy: { stepIndex: 'asc' },
+        })
+        // A stale startedAt is not proof of a dead worker: an active worker
+        // renews leaseExpiresAt while processing. Never fail or reclaim a run
+        // whose currently observed lease is still valid.
+        const observedAt = new Date()
+        if (stale.leaseExpiresAt && stale.leaseExpiresAt > observedAt) continue
+
+        // Every recovery decision is compare-and-swap against the exact lease
+        // snapshot read above. A heartbeat or a competing reclaim invalidates it.
+        const staleSnapshotWhere = {
+          id: stale.id,
+          organizationId: stale.organizationId,
+          status: { in: ['running', 'processing'] },
+          startedAt: { lt: cutoff },
+          leaseToken: stale.leaseToken,
+          leaseExpiresAt: stale.leaseExpiresAt,
+          fencingVersion: stale.fencingVersion,
+        }
+        // Fail closed after lease expiry unless the write-ahead ledger proves
+        // every step completed. Revoke ownership first; only then quarantine
+        // started steps, so a racing heartbeat cannot be overwritten.
+        const safeToResume = stale.stepLedgerVersion === 1
+          && stale.fencingVersion > 0
+          && stale.leaseExpiresAt !== null
+          && stale.leaseExpiresAt <= observedAt
+          && steps.length > 0
+          && steps.every((step) => step.status === 'succeeded')
+        if (!safeToResume) {
+          const failed = await db.automationRun.updateMany({
+            where: staleSnapshotWhere,
+            data: {
+              status: 'failed',
+              leaseToken: null,
+              leaseExpiresAt: new Date(),
+              error: stale.stepLedgerVersion === 1
+                ? 'interrumpido: existe un paso con resultado ambiguo; requiere revisión'
+                : 'interrumpido: run histórico sin ledger de pasos; no se reejecuta automáticamente',
+              finishedAt: new Date(),
+            },
+          })
+          if (failed.count !== 1) continue
+          if (steps.some((step) => step.status === 'started')) {
+            await db.workflowStepExecution.updateMany({
+              where: { automationRunId: stale.id, status: 'started' },
+              data: { status: 'unknown', error: 'interrupted: resultado no verificable; no reintentar', finishedAt: new Date() },
+            })
+          }
+          continue
+        }
+
+        const automation = await db.automation.findFirst({
+          where: { id: stale.automationId, organizationId: stale.organizationId, isActive: true },
+        })
+        if (!automation) {
+          await db.automationRun.updateMany({
+            where: staleSnapshotWhere,
+            data: { status: 'failed', leaseToken: null, leaseExpiresAt: new Date(), error: 'interrumpido: automatización inactiva; no se reanudó', finishedAt: new Date() },
+          })
+          continue
+        }
+
+        const claim = await db.automationRun.updateMany({
+          where: staleSnapshotWhere,
+          data: { status: 'running', startedAt: new Date(), finishedAt: null, error: null },
+        })
+        if (claim.count === 0) continue
+
+        try {
+          const payload = stale.input ? JSON.parse(stale.input) as Record<string, unknown> : {}
+          const { runWorkflowsForTrigger } = await import('./workflow-engine')
+          const out = await runWorkflowsForTrigger({
+            orgId: stale.organizationId,
+            type: automation.triggerType as 'client_created' | 'opportunity_stage_changed' | 'message_received' | 'reservation_created' | 'quote_status_changed' | 'schedule',
+            payload,
+            automationId: automation.id,
+            existingRunId: stale.id,
+          })
+          results.push({ automationId: automation.id, recoveredRunId: stale.id, out })
+          recovered++
+        } catch (err) {
+          console.error('[scheduler] fallo recuperando run', stale.id, err)
+        }
+      }
     } catch (err) {
-      console.error('[scheduler] fallo sweeper', err)
+      console.error('[scheduler] fallo recuperación de runs interrumpidos', err)
     }
 
     // 1) Reanudar runs en espera cuyo "Esperar" venció (patrón DELAY de Twenty)
@@ -67,31 +158,62 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
       take: 25,
     })
 
+    let claimed = 0
     for (const automation of due) {
-      // CLAIM atómico: solo el worker que logre mover nextRunAt ejecuta.
-      // Con dos instancias (Next + cron externo), la segunda recibe count=0
-      // y salta — la automatización NO corre dos veces.
+      // CLAIM + run durable en una sola transacción: si falla la creación del
+      // run, también se revierte el avance de nextRunAt. Así no se pierde el
+      // disparo entre ambas escrituras.
       const intervalMinutes = intervalFromConfig(automation.triggerConfig)
-      const next = new Date(Date.now() + intervalMinutes * 60_000)
-      const claim = await db.automation.updateMany({
-        where: { id: automation.id, isActive: true, triggerType: 'schedule', nextRunAt: { lte: now } },
-        data: { nextRunAt: next },
-      })
-      if (claim.count === 0) continue
+      const next = new Date(now.getTime() + intervalMinutes * 60_000)
+      const scheduledAt = now.toISOString()
+      const payload = { automationId: automation.id, scheduledAt }
+      let durableRunId: string | null = null
+      try {
+        durableRunId = await db.$transaction(async (tx) => {
+          const claim = await tx.automation.updateMany({
+            where: {
+              id: automation.id,
+              organizationId: automation.organizationId,
+              isActive: true,
+              triggerType: 'schedule',
+              nextRunAt: { lte: now },
+            },
+            data: { nextRunAt: next },
+          })
+          if (claim.count === 0) return null
+          const run = await tx.automationRun.create({
+            data: {
+              organizationId: automation.organizationId,
+              automationId: automation.id,
+              input: JSON.stringify(payload).slice(0, 5000),
+              stepLedgerVersion: 1,
+              idempotencyKey: `schedule:${scheduledAt}`.slice(0, 180),
+            },
+          })
+          return run.id
+        })
+      } catch (err) {
+        console.error('[scheduler] fallo creando claim/run durable', automation.id, err)
+        continue
+      }
+      if (!durableRunId) continue
+      claimed++
 
       try {
         const { runWorkflowsForTrigger } = await import('./workflow-engine')
         const out = await runWorkflowsForTrigger({
           orgId: automation.organizationId,
           type: 'schedule',
-          payload: { automationId: automation.id, scheduledAt: now.toISOString() },
+          payload,
+          automationId: automation.id,
+          existingRunId: durableRunId,
         })
         results.push({ automationId: automation.id, out })
       } catch (err) {
         console.error('[scheduler] fallo ejecutando', automation.id, err)
       }
     }
-    return { processed: due.length + resumed, results }
+    return { processed: claimed + resumed + recovered, results }
   } finally {
     running = false
   }

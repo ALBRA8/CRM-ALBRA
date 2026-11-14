@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
     res.cookies.set('ig_oauth_csrf', state, {
       httpOnly: true,
       sameSite: 'lax', // navegación superior de vuelta desde Meta: la cookie SÍ viaja
-      secure: proto === 'https',
+      secure: origin.startsWith('https://'),
       path: '/api/instagram/oauth',
       maxAge: 600,
     })

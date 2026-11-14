@@ -1,14 +1,16 @@
 import type { NextRequest } from 'next/server'
 import { json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
-import { safeEquals, parseTelegramState, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
+import { safeEquals, parseTelegramState, isTelegramAutoReplyEnabled, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
 import { notifyOrganization } from '@/lib/push'
 import { llmChat } from '@/lib/ai'
 import { transcribeAudioBase64 } from '@/lib/asr'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
+import { enqueueTelegramWebhookReply } from '@/lib/workflow-outbox'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
 import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection, type ChannelWebhookEventClaim } from '@/lib/channel-webhook-events'
 
 /**
  * POST /api/telegram/webhook — PÚBLICO pero con validación ESTRICTA del header
@@ -17,7 +19,7 @@ import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
  * mensaje se aísla por Integration→organizationId.
  *
  * Procesa: message_received (workflows) + auto-respuesta IA con NichoConfig + timeline.
- * Siempre responde 200 a Telegram tras validar (evita reintentos infinitos).
+ * Los duplicados se confirman con 200; fallos posteriores al claim responden 500 para permitir reintento seguro.
  */
 
 interface TgMessage {
@@ -38,6 +40,7 @@ interface TgUpdate {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
+  let activeClaim: ChannelWebhookEventClaim | null = null
   try {
     const secretHeader = req.headers.get('x-telegram-bot-api-secret-token')
     if (!secretHeader) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
@@ -77,6 +80,35 @@ export async function POST(req: NextRequest) {
     const update = JSON.parse(rawBody) as TgUpdate
     const message = update.message || update.edited_message || update.channel_post
     if (!message) return json({ ok: true })
+    if (!Number.isSafeInteger(update.update_id) || update.update_id < 0) return json({ ok: true, processed: false })
+
+    // Claim the provider update before any timeline, workflow, ASR or reply side effect.
+    // The bot key matches the canonical channel backfill identity.
+    const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
+    const telegramState = parseTelegramState(integrationFull?.telegramBotTokenEnc)
+    const botId = telegramState.token?.match(/^(\d+):/)?.[1]
+    if (!botId || !telegramState.token) return json({ ok: true, processed: false })
+    const connectionCredentialsEnc = encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader }))
+    if (!connectionCredentialsEnc) return json({ ok: true, processed: false })
+    const connection = await getOrCreateTelegramWebhookConnection({
+      organizationId: orgId,
+      botId,
+      credentialsEnc: connectionCredentialsEnc,
+    })
+    activeClaim = await claimChannelWebhookEvent({
+      organizationId: orgId,
+      connectionId: connection.id,
+      eventKey: `update:${update.update_id}`,
+      eventType: 'telegram.update',
+    })
+    if (!activeClaim) {
+      const status = await getChannelWebhookEventStatus(connection.id, `update:${update.update_id}`)
+      // A completed duplicate is safely acknowledged. An in-flight duplicate
+      // stays retryable so a crashed original handler can be recovered by lease.
+      return status === 'processed'
+        ? json({ ok: true, duplicate: true })
+        : json({ ok: false, duplicate: true, retry: true }, { status: 503 })
+    }
 
     const senderName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || null
     const platformKey = `tg:${message.chat.id}`
@@ -104,6 +136,7 @@ export async function POST(req: NextRequest) {
           orgId,
           clientId: fbClient?.id || null,
           type: 'telegram',
+          sourceEventKey: `telegram:update:${update.update_id}:inbound`,
           title: `Nota de voz recibida de ${senderName || platformKey} (no transcrita)`,
           description: 'No se pudo transcribir la nota de voz automáticamente. Revísala en la app de Telegram.',
           metadata: { chatId: String(message.chat.id), direction: 'in', voice: true, reason: err instanceof Error ? err.message : 'desconocido' },
@@ -115,10 +148,16 @@ export async function POST(req: NextRequest) {
           body: `${senderName || platformKey} envió una nota de voz que no se pudo transcribir. Revisa el chat en Telegram.`,
           data: JSON.stringify({ clientId: fbClient?.id, channel: 'telegram' }),
         })
+        await completeChannelWebhookEvent(activeClaim)
+        activeClaim = null
         return json({ ok: true })
       }
     }
-    if (!text) return json({ ok: true })
+    if (!text) {
+      await completeChannelWebhookEvent(activeClaim)
+      activeClaim = null
+      return json({ ok: true })
+    }
 
     // 1) Cliente asociado (find-or-create, aislado por org)
     const client = await findOrCreateChannelClient({ orgId, platformKey, name: senderName, source: 'telegram' })
@@ -128,6 +167,7 @@ export async function POST(req: NextRequest) {
       orgId,
       clientId: client?.id || null,
       type: 'telegram',
+      sourceEventKey: `telegram:update:${update.update_id}:inbound`,
       title: isVoice ? `Nota de voz de ${senderName || platformKey} (transcrita)` : `Mensaje recibido de ${senderName || platformKey}`,
       description: text.slice(0, 500),
       metadata: { chatId: String(message.chat.id), direction: 'in', messageId: message.message_id, ...(isVoice ? { voice: true } : {}) },
@@ -135,52 +175,56 @@ export async function POST(req: NextRequest) {
     })
 
     // 3) Workflows del negocio
-    try {
-      await runWorkflowsForTrigger({
-        orgId,
-        type: 'message_received',
-        payload: { channel: 'telegram', from: platformKey, text, conversationId: platformKey, clientId: client?.id },
-      })
-    } catch (err) {
-      console.error('[telegram webhook] workflows', err)
-    }
+    await runWorkflowsForTrigger({
+      orgId,
+      type: 'message_received',
+      payload: { channel: 'telegram', from: platformKey, text, conversationId: platformKey, clientId: client?.id, messageId: `tg_update_${update.update_id}` },
+    })
 
     // 4) Auto-respuesta IA (si está habilitada y no pide humano)
-    const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
-    const state = parseTelegramState(integrationFull?.telegramBotTokenEnc)
-    if (state.autoReply !== false && state.token && message.chat.type === 'private') {
+    const state = telegramState
+    const telegramToken = state.token
+    if (isTelegramAutoReplyEnabled(state) && telegramToken && message.chat.type === 'private') {
       const handoffKeywords = await getHandoffKeywords(orgId)
       const wantsHuman = handoffKeywords.some((k) => text.toLowerCase().includes(k.toLowerCase()))
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
 
       if (!wantsHuman && (nicho?.autoReplyEnabled ?? true)) {
+        let reply = ''
         try {
           const nichoCtx = await buildNichoContext(orgId)
-          const reply = await llmChat(
+          reply = await llmChat(
             orgId,
             [
               {
                 role: 'system',
-                content: `Eres el agente comercial por Telegram de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\n\n${SALES_STRATEGY_PROMPT}\nCONTEXTO DEL NEGOCIO:\n${nichoCtx}\n\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
+                content: `Eres el agente comercial por Telegram de un negocio. Responde SIEMPRE en español, breve (máx 3 oraciones), cordial y orientado a agendar una cita o cotizar.\\n\\n${SALES_STRATEGY_PROMPT}\\nCONTEXTO DEL NEGOCIO:\\n${nichoCtx}\\n\\nResponde solo con el texto del mensaje; sin comillas ni prefijos.`,
               },
               { role: 'user', content: text },
             ],
             { temperature: 0.5 }
           )
-          if (reply.trim()) {
-            const sent = await sendTelegramBotMessage({ token: state.token, chatId: message.chat.id, text: reply.trim() })
-            await recordTimelineEvent({
-              orgId,
-              clientId: client?.id || null,
-              type: 'telegram',
-              title: 'Respuesta automática del agente IA',
-              description: reply.trim().slice(0, 500),
-              metadata: { chatId: String(message.chat.id), direction: 'out', delivered: sent.ok },
-              source: 'agent',
-            })
-          }
         } catch (err) {
-          console.error('[telegram webhook] auto-respuesta IA falló', err)
+          // Un fallo de IA no debe impedir registrar el mensaje inbound.
+          console.error('[telegram webhook] generación de auto-respuesta falló', err)
+        }
+        if (reply.trim()) {
+          // Si no se puede persistir la intención, el claim falla y Telegram reintenta.
+          const queued = await enqueueTelegramWebhookReply({
+            organizationId: orgId,
+            updateId: update.update_id,
+            chatId: message.chat.id,
+            text: reply.trim(),
+          })
+          await recordTimelineEvent({
+            orgId,
+            clientId: client?.id || null,
+            type: 'telegram',
+            title: 'Respuesta automática del agente IA en cola',
+            description: queued.replyText.slice(0, 500),
+            metadata: { chatId: String(message.chat.id), direction: 'out', deliveryStatus: 'queued', outboxId: queued.id },
+            source: 'agent',
+          }).catch((err) => console.error('[telegram webhook] timeline de respuesta en cola', err))
         }
       } else if (wantsHuman && state.token) {
         // Transferencia a humano: notificación in-app + web-push (no responde la IA)
@@ -193,11 +237,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    await completeChannelWebhookEvent(activeClaim)
+    activeClaim = null
     return json({ ok: true })
   } catch (err) {
+    const shouldRetry = activeClaim !== null
+    if (activeClaim) {
+      await failChannelWebhookEvent(activeClaim, 'TELEGRAM_WEBHOOK_PROCESSING_FAILED').catch(() => null)
+    }
     console.error('[telegram webhook]', err)
-    // Nunca 500 a Telegram: evita reintentos infinitos
-    return json({ ok: true, processed: false })
+    // Tras reclamar el update, un 5xx permite que Telegram reintente; el ledger
+    // evita concurrencia y permite reclamar de nuevo el evento fallido.
+    return shouldRetry
+      ? json({ ok: false, processed: false }, { status: 500 })
+      : json({ ok: true, processed: false })
   }
 }
 

@@ -43,6 +43,126 @@ interface IgStatus {
   config: IgConfig | null
 }
 
+
+interface InstagramConnection {
+  id: string
+  accountId: string
+  displayName: string | null
+  username: string | null
+  pageName: string | null
+  status: string
+  lastVerifiedAt: string | null
+}
+
+/** Selector tenant-scoped de cuentas OAuth registradas en ChannelConnection. */
+function InstagramConnectionsCard() {
+  const [connections, setConnections] = useState<InstagramConnection[]>([])
+  const [selectedId, setSelectedId] = useState('')
+  const [loadingConnections, setLoadingConnections] = useState(true)
+  const [savingSelection, setSavingSelection] = useState(false)
+
+  const loadConnections = useCallback(async () => {
+    setLoadingConnections(true)
+    try {
+      const token = api.getToken()
+      const response = await fetch('/api/instagram/connections', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!response.ok) throw new Error('No se pudieron cargar las cuentas')
+      const data = await response.json() as { connections?: InstagramConnection[]; selectedConnectionId?: string | null }
+      setConnections(data.connections ?? [])
+      setSelectedId(data.selectedConnectionId || '')
+    } catch {
+      toast.error('No se pudieron cargar las cuentas Instagram')
+    } finally {
+      setLoadingConnections(false)
+    }
+  }, [])
+
+  useEffect(() => { void loadConnections() }, [loadConnections])
+
+  const selectConnection = async () => {
+    if (!selectedId) return
+    setSavingSelection(true)
+    try {
+      const token = api.getToken()
+      const response = await fetch('/api/instagram/connections', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ connectionId: selectedId }),
+      })
+      const data = await response.json().catch(() => ({})) as { error?: string }
+      if (!response.ok) throw new Error(data.error || 'No se pudo seleccionar la cuenta')
+      toast.success('Cuenta seleccionada para el canal Instagram')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo seleccionar la cuenta')
+    } finally {
+      setSavingSelection(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Cuentas de Instagram conectadas</CardTitle>
+        <CardDescription>
+          Meta puede devolver varias cuentas durante la autorización. Selecciona cuál utilizará el flujo actual de mensajes.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loadingConnections ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> Cargando cuentas…</div>
+        ) : connections.length === 0 ? (
+          <p className="text-sm text-slate-500">Aún no hay cuentas OAuth registradas. Conecta Meta para listar las cuentas autorizadas.</p>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {connections.map((connection) => (
+                <label key={connection.id} className="flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-slate-50">
+                  <input
+                    type="radio"
+                    name="instagram-connection"
+                    value={connection.id}
+                    checked={selectedId === connection.id}
+                    onChange={() => setSelectedId(connection.id)}
+                    disabled={connection.status !== 'connected'}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-slate-900">
+                      {connection.username ? `@${connection.username}` : connection.displayName || connection.accountId}
+                    </span>
+                    <span className="block text-xs text-slate-500">
+                      {connection.pageName ? `Página: ${connection.pageName} · ` : ''}ID: {connection.accountId}
+                    </span>
+                  </span>
+                  <Badge variant="outline" className={connection.status === 'connected' ? 'border-emerald-200 text-emerald-700' : 'border-slate-200 text-slate-500'}>
+                    {connection.status === 'connected' ? 'Conectada' : connection.status}
+                  </Badge>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => void selectConnection()} disabled={!selectedId || savingSelection}>
+                {savingSelection ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+                Usar esta cuenta
+              </Button>
+              <Button type="button" variant="outline" onClick={() => void loadConnections()} disabled={loadingConnections}>
+                <RefreshCw className="w-4 h-4 mr-2" /> Actualizar
+              </Button>
+            </div>
+            <p className="text-xs text-amber-700">
+              La selección cambia la cuenta activa del flujo legacy; el enrutamiento de webhooks y conversaciones por conexión aún está pendiente.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function InstagramTab() {
   const [status, setStatus] = useState<IgStatus>({ configured: false, config: null })
   const [loading, setLoading] = useState(true)
@@ -180,6 +300,7 @@ export function InstagramTab() {
 
   return (
     <div className="space-y-6">
+      <InstagramConnectionsCard />
       {/* ============ Conexión automática estilo ManyChat (OAuth Meta) ============ */}
       <Card>
         <CardHeader>

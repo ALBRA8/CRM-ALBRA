@@ -43,7 +43,6 @@ const VALID_LLM_JSON = JSON.stringify({
   reasoning: 'Cliente con teléfono válido y sin conversación previa.',
 })
 
-const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
 
 beforeAll(async () => {
   // Cliente CON teléfono y SIN conversación WhatsApp ni timeline TG/IG.
@@ -93,22 +92,14 @@ describe('normalizeWaPhone (formato del daemon: E.164 sin +)', () => {
 })
 
 describe('POST /api/opportunities/:id/ai-suggest — canal directo wa-new', () => {
-  it('cliente con phone y sin conversación → channels ofrece "wa-new:<teléfono>"', async () => {
+  it('cliente con phone y sin conversación legacy → no ofrece envío directo', async () => {
     mockedLlm.mockResolvedValueOnce(VALID_LLM_JSON)
     const res = await aiSuggestPOST(req(`/api/opportunities/${OPP_ID}`, { method: 'POST', token: tokenA() }), routeParams(OPP_ID))
     expect(res.status).toBe(200)
     const body = await jsonBody(res)
-    const channels = body.channels as Array<{ key: string; channel: string; channelLabel: string; contactHandle: string }>
-    // Solo WhatsApp directo: sin conversación ni timeline TG/IG no hay más canales.
-    expect(channels).toHaveLength(1)
-    expect(channels[0]).toMatchObject({
-      key: `wa-new:${CLIENT_PHONE}`,
-      channel: 'whatsapp',
-      channelLabel: 'WhatsApp',
-      contactHandle: CLIENT_PHONE, // normalizado (sin '+' ni espacios)
-    })
-    // Nunca ofrece una key de conversación inexistente.
-    expect(channels.some((c) => c.key.startsWith('wa:'))).toBe(false)
+    const channels = body.channels as Array<{ key: string; channel: string }>
+    // Sin conversación canónica no se debe ofrecer un destino legacy de envío.
+    expect(channels).toHaveLength(0)
   })
 })
 
@@ -123,58 +114,46 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
     return fetchMock
   }
 
-  it('daemon OK → 200, payload { to, text } y conversación creada con nombre y lastMessage saliente', async () => {
+  it('key wa-new legacy → 409 y no contacta al daemon ni crea conversación', async () => {
     const fetchMock = stubDaemon(() => new Response(JSON.stringify({ success: true, messageId: 'MSG-TEST-1' }), { status: 200 }))
     const res = await inboxSendPOST(req('/inbox/send', {
       method: 'POST',
       token: tokenA(),
       body: { key: `wa-new:${CLIENT_PHONE}`, contactHandle: CLIENT_PHONE, clientId: CLIENT_ID, text: SEND_TEXT },
     }))
-    expect(res.status).toBe(200)
-    expect(await jsonBody(res)).toMatchObject({ success: true, sent: true })
-
-    // Mismo camino daemon que wa:<convId>: POST /send con { to, text } + Bearer secreto.
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [url, init] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string>; body: string }]
-    expect(url).toBe(`${daemonUrl}/send`)
-    expect(init.headers.Authorization).toMatch(/^Bearer /)
-    expect(JSON.parse(init.body)).toEqual({ to: CLIENT_PHONE, text: SEND_TEXT })
-
-    // find-or-create: conversación creada con el nombre del cliente y trazabilidad
-    // de último mensaje saliente (igual que deja el daemon en los entrantes).
+    expect(res.status).toBe(409)
+    expect(await jsonBody(res)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
+    expect(fetchMock).not.toHaveBeenCalled()
     const conv = await db.whatsAppConversation.findUnique({
       where: { organizationId_contactPhone: { organizationId: FIX.orgA.id, contactPhone: CLIENT_PHONE } },
     })
-    expect(conv).not.toBeNull()
-    expect(conv?.contactName).toBe('Cliente Solo Teléfono')
-    expect(conv?.clientId).toBe(CLIENT_ID)
-    expect(conv?.lastMessage).toBe(SEND_TEXT)
-    expect(conv?.lastMessageFrom).toBe('out')
-    expect(conv?.lastMessageAt).not.toBeNull()
+    expect(conv).toBeNull()
   })
 
-  it('segundo envío al mismo teléfono reutiliza la conversación (find, no duplica)', async () => {
-    stubDaemon(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
+  it('segundo envío legacy también queda bloqueado sin crear conversación', async () => {
+    const fetchMock = stubDaemon(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
     const res = await inboxSendPOST(req('/inbox/send', {
       method: 'POST',
       token: tokenA(),
       body: { key: `wa-new:${CLIENT_PHONE}`, contactHandle: CLIENT_PHONE, clientId: CLIENT_ID, text: 'Segundo mensaje' },
     }))
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(409)
+    expect(fetchMock).not.toHaveBeenCalled()
     const convs = await db.whatsAppConversation.findMany({ where: { organizationId: FIX.orgA.id, contactPhone: CLIENT_PHONE } })
-    expect(convs).toHaveLength(1)
+    expect(convs).toHaveLength(0)
   })
 
-  it('daemon caído → 400 descriptivo y SIN crear conversación', async () => {
-    stubDaemon(() => new Response(JSON.stringify({ error: 'WhatsApp no conectado' }), { status: 400 }))
+  it('wa-new legacy bloqueado incluso si el daemon respondería error', async () => {
+    const fetchMock = stubDaemon(() => new Response(JSON.stringify({ error: 'WhatsApp no conectado' }), { status: 400 }))
     const res = await inboxSendPOST(req('/inbox/send', {
       method: 'POST',
       token: tokenA(),
       body: { key: 'wa-new:573109998877', contactHandle: '573109998877', text: 'hola' },
     }))
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(409)
+    expect(fetchMock).not.toHaveBeenCalled()
     const body = await jsonBody(res)
-    expect(String(body.error)).toMatch(/WhatsApp no conectado/)
+    expect(body).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
     const conv = await db.whatsAppConversation.findUnique({
       where: { organizationId_contactPhone: { organizationId: FIX.orgA.id, contactPhone: '573109998877' } },
     })
@@ -192,14 +171,15 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('multi-tenant: org-b envía por wa-new y la conversación se crea en SU org (no en org-a)', async () => {
-    stubDaemon(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
+  it('multi-tenant: wa-new de org-b se bloquea sin llamar proveedor ni crear datos', async () => {
+    const fetchMock = stubDaemon(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
     const res = await inboxSendPOST(req('/inbox/send', {
       method: 'POST',
       token: tokenB(),
       body: { key: 'wa-new:573201234567', contactHandle: '573201234567', clientId: null, text: 'hola desde org-b' },
     }))
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(409)
+    expect(fetchMock).not.toHaveBeenCalled()
     const inA = await db.whatsAppConversation.findUnique({
       where: { organizationId_contactPhone: { organizationId: FIX.orgA.id, contactPhone: '573201234567' } },
     })
@@ -207,8 +187,6 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
       where: { organizationId_contactPhone: { organizationId: FIX.orgB.id, contactPhone: '573201234567' } },
     })
     expect(inA).toBeNull()
-    expect(inB).not.toBeNull()
-    // Sin clientId el nombre cae al teléfono (igual que el daemon).
-    expect(inB?.contactName).toBe('573201234567')
+    expect(inB).toBeNull()
   })
 })

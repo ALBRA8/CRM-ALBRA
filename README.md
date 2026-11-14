@@ -55,8 +55,8 @@ npm install
 cp .env.example .env
 #    Edita .env con tus valores reales (APP_SECRET, APP_ENCRYPTION_KEY, etc.)
 
-# 3. Base de datos
-npx prisma db push
+# 3. Base de datos (migraciones versionadas; no usar db push)
+npm run db:migrate
 
 # 4. Desarrollo
 npm run dev          # http://localhost:3000
@@ -104,6 +104,8 @@ openssl rand -base64 32   # → APP_ENCRYPTION_KEY  (cifrado de credenciales por
 openssl rand -base64 32   # → INTERNAL_API_SECRET (auth mutua app ↔ daemon; mínimo 24 caracteres)
 ```
 
+En Docker, el contenedor opera con `NODE_ENV=production`: antes de levantarlo, configura `ALLOW_DESTRUCTIVE_DB_OPERATION=true` en `.env` **solo después de verificar que `DATABASE_URL` apunta a la BD correcta y tener un backup**. Esta variable autoriza el paso protegido de `migrate deploy`; no autoriza `db push` ni `migrate reset`.
+
 Opcionales: `SMTP_*` (correos transaccionales y automatizaciones) y `WHATSAPP_VERIFY_TOKEN` (webhook de WhatsApp Cloud API).
 
 > En Docker **no** edites `DATABASE_URL` ni `WHATSAPP_DAEMON_URL` del `.env`: Compose los fija (`file:/app/db/custom.db` y `http://wa-daemon:3002`) para que apunten al volumen y a la red interna.
@@ -114,7 +116,7 @@ Opcionales: `SMTP_*` (correos transaccionales y automatizaciones) y `WHATSAPP_VE
 docker compose up -d --build
 ```
 
-Al arrancar, el servicio `app` sincroniza el esquema (`prisma db push`) y sirve en `http://localhost:3000`. En un VPS, abre `http://IP-DEL-SERVIDOR:3000`.
+Al arrancar, el servicio `app` aplica únicamente las migraciones versionadas pendientes (`prisma migrate deploy`) y sirve en `http://localhost:3000`. En un VPS, abre `http://IP-DEL-SERVIDOR:3000`. En entornos protegidos el guard exige `ALLOW_DESTRUCTIVE_DB_OPERATION=true`; configura esa autorización solo después de revisar el destino y tener un backup.
 
 ### 3. Primera conexión de WhatsApp (QR)
 
@@ -146,11 +148,7 @@ git pull
 docker compose up -d --build
 ```
 
-En cada arranque, `app` ejecuta `prisma db push --skip-generate`: el esquema de `prisma/schema.prisma` se aplica sobre tu SQLite (idempotente; no-op si ya está en sync). **Seguro por defecto (hardening pre-venta):** si un cambio de esquema exigiría destruir datos, el arranque **falla ruidoso** en vez de aplicarlos — haz backup del volumen y decide. Para aceptar la pérdida explícitamente, descomenta `ALLOW_DATA_LOSS=1` en `docker-compose.yml`; para congelar del todo, `SKIP_DB_PUSH=1` y aplica a mano:
-
-```bash
-docker compose exec app npx prisma db push
-```
+En cada arranque, `app` ejecuta `prisma migrate deploy`: aplica las migraciones versionadas pendientes y no genera migraciones nuevas ni sincroniza cambios fuera del historial. Antes de actualizar, haz backup del volumen de datos. Para omitir temporalmente la aplicación automática, configura `SKIP_DB_MIGRATE=1` solo si un operador aplicará las migraciones por un procedimiento controlado. Las bases antiguas que no tengan `_prisma_migrations` pueden requerir revisión y baseline manual; consulta [docs/MIGRACIONES.md](./docs/MIGRACIONES.md). No uses `db push` para actualizar instalaciones.
 
 ### Comandos útiles
 

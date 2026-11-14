@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
 
     const email = (str(body.email) as string).toLowerCase()
     const password = str(body.password) as string
-    if (password.length < 6) throw new HttpError(400, 'La contraseña debe tener al menos 6 caracteres')
+    if (password.length < 8) throw new HttpError(400, 'La contraseña debe tener al menos 8 caracteres')
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, 'Email inválido')
 
     const existing = await db.user.findUnique({ where: { email }, select: { id: true } })

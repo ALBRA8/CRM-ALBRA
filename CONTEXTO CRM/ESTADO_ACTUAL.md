@@ -175,3 +175,59 @@ Revisión de lectura sobre los heads publicados de las tres ramas correctivas. N
 ### Siguiente acción requerida
 
 No preparar ni abrir los PR todavía. Cerrar B2 primero: el daemon debe recibir y persistir una clave de idempotencia scoped por organización antes del envío; solicitudes repetidas de una clave ya PENDING/IN_FLIGHT/UNCERTAIN deben devolver estado incierto sin reenviar. Si Baileys no ofrece una clave externa consultable/deduplicable, la caída tras aceptación debe permanecer UNCERTAIN y requerir reconciliación con evidencia, nunca reenvío automático. Añadir una prueba de crash-window que simule aceptación real del stub antes de perder la respuesta y demuestre que el segundo intento no produce un segundo envío. Después ejecutar una prueba integrada con 2A, ULTRA y daemon en procesos separados y etiquetar los mocks restantes.
+
+## Actualización — Selector multiempresa de Super Admin (2026-11-13)
+
+**Estado de entrega:** implementado en la rama `fix/migration-safety-audit` y publicado en la [PR #3](https://github.com/ALBRA8/CRM-ALBRA/pull/3), abierta/en draft según el último registro. No integrado en `main` y no desplegado.
+
+### Cambios incluidos
+- `src/lib/auth.ts`: validación de sesión contra BD, estado activo del usuario, `tokenVersion`, rol vigente y organización activa; excepción de contexto cross-organization reservada al superadmin.
+- `src/app/api/super/switch-organization/route.ts`: endpoint protegido para cambiar el contexto de organización del superadmin.
+- `src/lib/api.ts`: método `switchSuperOrganization(organizationId)`.
+- `src/components/super/super-page.tsx`: botón **Ingresar** por organización activa, bloqueo mientras cambia, sincronización de token y usuario, recarga de sesión y navegación al dashboard.
+- `tests/integration/superadmin-organization-switch.test.ts`: pruebas para cambio permitido, usuario normal denegado y organización inexistente (404).
+
+### Límites de verificación
+- La consulta de GitHub para el SHA `27870abcc9b6c27e843ff17a48dde18068c0c0d6` no mostró statuses ni workflow runs asociados.
+- Build y suite de pruebas de esta versión no han sido ejecutados/verificados de forma reproducible en esta sesión.
+- Por tanto, el estado correcto es **implementado en rama / pendiente de validación**, no “100 % funcional”.
+- La PR agrupa 15 archivos, incluyendo trabajo anterior de seguridad, migraciones, Docker, CI y guardas de BD; revisar el diff completo antes de integrar.
+
+### Próximos criterios de cierre
+1. Confirmar el head y el estado actual de PR #3.
+2. Ejecutar CI, build, TypeScript y pruebas unitarias/de integración.
+3. Probar que un usuario normal no puede cambiar ni consultar otra organización, incluso manipulando el body o el token.
+4. Probar que el superadmin puede entrar a otra organización, que el contexto se refleja en `/me` y que los datos del dashboard quedan correctamente limitados a esa organización.
+5. Revisar expiración/rotación del token y regreso al contexto administrativo.
+6. Integrar solo con verificaciones satisfactorias y autorización; desplegar por separado, con plan de rollback.
+
+
+## Validación correctiva de CI y selector multiempresa (2026-11-13)
+
+- PR #3, rama `fix/migration-safety-audit`, head validado: `040d8875ff9b10b5179313bbc374a5e7795af8ed`.
+- GitHub Actions `CI CRM-ALBRA` (run `43379605573`): **success**.
+- Resultado: TypeScript, lint, escáner de secretos, migraciones Prisma en SQLite temporal, suite completa y build de producción aprobados.
+- Suite: **64/64 archivos y 580/580 pruebas aprobadas**.
+- Causa de los 9 fallos anteriores: algunas pruebas fabricaban JWT con rol `owner` para el usuario B mientras la BD de test conservaba `member`. La validación del rol vigente en `assertSessionState` rechazaba correctamente esos tokens. Se corrigieron las pruebas para persistir el rol requerido durante cada escenario y restaurar `member` al finalizar; no se debilitó la autenticación.
+- El error del PDF era consecuencia del 401 de la sesión owner B; con rol persistido la prueba de aislamiento y cifras volvió a pasar.
+- Las pruebas de integración del selector Super Admin también están incluidas en la suite aprobada: cambio de contexto a org B, lectura de datos de org B, conservación de la organización base, denegación de usuario normal y rechazo de organización inexistente.
+- **Límite:** esto acredita CI y pruebas automatizadas, no una prueba visual en navegador ni una prueba en staging/producción. PR sigue abierta/en draft; no merge ni despliegue.
+
+
+## Ajuste final de sesión Super Admin (/auth/me) — 2026-11-13
+
+- Se corrigió `src/app/api/auth/me/route.ts`: para superadmin vigente, la consulta ya no exige que la organización base persistida sea igual al contexto activo. La respuesta proyecta `organizationId=auth.orgId` como contexto de sesión sin modificar la membresía/organización base guardada en BD.
+- Se amplió `tests/integration/superadmin-organization-switch.test.ts` para invocar `GET /api/auth/me` con el token emitido y comprobar que devuelve la organización B seleccionada.
+- Head final de PR #3: `5c1e73e0c99c488c843d42aff6fe8cef6928bf23`.
+- CI `43380198626`: **success**; 64/64 archivos, 580/580 pruebas; TypeScript, lint, migraciones, escáner y build aprobados.
+- Estado: cambio de contexto + lectura de sesión + lectura de datos de organización B acreditados por integración automatizada. Sigue pendiente la prueba manual/visual en navegador/staging y el ciclo de retorno al panel Super Admin.
+
+
+## Tanda de cierre multiusuario — 2026-11-13
+
+- Se unificó la política de contraseñas de invitación de equipo en 8 caracteres mínimos (igual que registro).
+- Se amplió `tests/integration/team-multitenant.test.ts` para cubrir asignación de organización desde sesión, rechazo de member sin permisos, no concesión de superadmin, listado aislado, mutaciones cross-tenant con admin de org B y revocación de JWT al cambiar rol.
+- La prueba cross-tenant se ajustó después de observar un 403 legítimo para member: ahora usa un admin de org B, verifica 404 y restaura su rol al finalizar.
+- CI run `43384116466`: success sobre commit de código `268a124ce8ee2d3a06d33978d3cc31a509efa8a8`; 65/65 archivos, 587/587 pruebas, TypeScript, lint, migraciones Prisma, escáner de secretos y build aprobados.
+- Preparación SaaS: `CONTEXTO CRM/PREPARACION_SAAS.md`. Brechas principales: multicuenta general de canales no-WA, más de una sesión Baileys por org, invitación por enlace/verificación de email, billing/entitlements, PostgreSQL y pruebas operativas en staging.
+- PR #3 continúa abierta/en draft, sin merge ni despliegue.

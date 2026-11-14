@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { GET as reportsPdfGET } from '@/app/api/reports/pdf/route'
+import { db } from '@/lib/db'
 import { FIX, digitsOf, jsonBody, pdfLines, req, tokenA, tokenB, tokenFor } from '../helpers'
 
 /**
@@ -67,11 +68,17 @@ describe('reportes PDF — /api/reports/pdf', () => {
   })
 
   it('aislamiento multi-tenant: el dueño de org B solo ve sus propias cifras', async () => {
-    // reports.read es admin/owner → el aislamiento se prueba con un owner de org B
-    const ownerB = tokenFor({ ...FIX.userB, role: 'owner' })
-    const res = await reportsPdfGET(req('/api/reports/pdf?period=all', { token: ownerB }))
-    const lines = pdfLines(Buffer.from(await res.arrayBuffer()))
-    expect(digitsOf(findLine(lines, 'Ingresos:')!)).toBe('500')
-    expect(digitsOf(findLine(lines, 'Balance:')!)).toBe('500')
+    // El rol del token debe coincidir con el rol persistido que valida auth.
+    await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'owner' } })
+    try {
+      const ownerB = tokenFor({ ...FIX.userB, role: 'owner' })
+      const res = await reportsPdfGET(req('/api/reports/pdf?period=all', { token: ownerB }))
+      expect(res.status).toBe(200)
+      const lines = pdfLines(Buffer.from(await res.arrayBuffer()))
+      expect(digitsOf(findLine(lines, 'Ingresos:')!)).toBe('500')
+      expect(digitsOf(findLine(lines, 'Balance:')!)).toBe('500')
+    } finally {
+      await db.user.update({ where: { id: FIX.userB.id }, data: { role: 'member' } })
+    }
   })
 })

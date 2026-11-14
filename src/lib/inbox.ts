@@ -1,7 +1,4 @@
 import { db } from './db'
-import { decryptSecret } from './crypto'
-import { sendTelegramBotMessage, sendInstagramGraphMessage, sendFacebookGraphMessage, getIntegration, parseTelegramState, parseInstagramState, parseFacebookState } from './integrations'
-import { recordTimelineEvent } from './timeline'
 
 /**
  * Bandeja omnicanal (Fase 4 del plan maestro).
@@ -24,12 +21,14 @@ import { recordTimelineEvent } from './timeline'
  *  - Nunca lanza: si un canal falla, se degrada a lista vacía de ese canal.
  */
 
-export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram' | 'facebook'
+export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram' | 'facebook' | 'tiktok'
 
 export interface InboxConversation {
   key: string
+  /** Nombre seguro de la cuenta conectada; solo presente en conversaciones canónicas. */
+  connectionName?: string | null
   channel: InboxChannel
-  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Messenger'
+  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Messenger' | 'TikTok'
   contactName: string
   /** Handle real para ENVIAR: teléfono WA / chatId TG / recipientId IG. */
   contactHandle: string
@@ -50,6 +49,7 @@ export interface InboxMessage {
   createdAt: string
   /** 'voice' si es una nota de voz transcrita (chip 🎙 en la UI). */
   messageType?: string
+  deliveryStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'delivery_failed' | 'unknown'
 }
 
 const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = {
@@ -57,6 +57,7 @@ const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = 
   telegram: 'Telegram',
   instagram: 'Instagram',
   facebook: 'Messenger',
+  tiktok: 'TikTok',
 }
 
 /** Prefijo de la key del canal WhatsApp directo (sin conversación previa). */
@@ -94,13 +95,14 @@ export function makeInboxKey(channel: InboxChannel, id: string): string {
 }
 
 /** Parseo estricto: devuelve null ante cualquier key malformada (fail-closed). */
-export function parseInboxKey(key: string): { channel: InboxChannel; id: string } | null {
+export function parseInboxKey(key: string): { channel: InboxChannel | null; id: string } | null {
   if (typeof key !== 'string' || key.length < 3 || key.length > 200) return null
   const idx = key.indexOf(':')
   if (idx < 1) return null
   const prefix = key.slice(0, idx)
   const id = key.slice(idx + 1)
   if (!id || /[\s]/.test(id)) return null
+  if (prefix === 'cc') return { channel: null, id }
   if (prefix === 'wa') return { channel: 'whatsapp', id }
   if (prefix === 'tg') return { channel: 'telegram', id }
   if (prefix === 'ig') return { channel: 'instagram', id }
@@ -247,15 +249,51 @@ async function listTimelineConversations(
   }
 }
 
-/** Lista unificada, ordenada por actividad reciente. */
+/** Conversaciones nuevas: identidad estable por ChannelConversation y conexión exacta. */
+async function listCanonicalChannelConversations(orgId: string, limit: number): Promise<InboxConversation[]> {
+  try {
+    const rows = await db.channelConversation.findMany({
+      where: { organizationId: orgId, status: 'active', connection: { is: { organizationId: orgId } } },
+      include: {
+        connection: { select: { organizationId: true, displayName: true, status: true, channel: true } },
+        messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { direction: true } },
+      },
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+      take: limit,
+    })
+    return rows
+      .filter((row) => ['whatsapp', 'instagram', 'facebook', 'telegram', 'tiktok'].includes(row.channel))
+      .filter((row) => row.connection.status === 'connected' && row.connection.channel === row.channel)
+      .map((row) => ({
+        key: 'cc:' + row.id,
+        channel: row.channel as InboxChannel,
+        channelLabel: CHANNEL_LABELS[row.channel as InboxChannel] || 'WhatsApp',
+        connectionName: row.connection.displayName || null,
+        contactName: row.contactName || row.externalContactKey,
+        contactHandle: row.externalContactKey,
+        clientId: null,
+        lastMessage: row.lastMessage || '',
+        lastMessageAt: row.lastMessageAt?.toISOString() || null,
+        lastMessageFrom: row.messages[0]?.direction === 'out' ? 'out' as const : 'in' as const,
+        unreadCount: row.unreadCount,
+        isAutoReply: false,
+      }))
+  } catch (err) {
+    console.error('[inbox] conversaciones canónicas no disponibles', err)
+    return []
+  }
+}
+
+/** Lista unificada, ordenada por actividad reciente. Las fuentes legacy siguen visibles durante expand. */
 export async function listInbox(orgId: string, limit = 100): Promise<InboxConversation[]> {
-  const [wa, tg, ig, fb] = await Promise.all([
+  const [canonical, wa, tg, ig, fb] = await Promise.all([
+    listCanonicalChannelConversations(orgId, limit),
     listWhatsAppConversations(orgId, limit),
     listTimelineConversations(orgId, 'telegram', limit),
     listTimelineConversations(orgId, 'instagram', limit),
     listTimelineConversations(orgId, 'facebook', limit),
   ])
-  return [...wa, ...tg, ...ig, ...fb]
+  return [...canonical, ...wa, ...tg, ...ig, ...fb]
     .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
     .slice(0, limit)
 }
@@ -296,31 +334,11 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
   } catch (err) {
     console.error('[inbox] canal whatsapp (cliente) no disponible', err)
   }
-  if (!options.some((o) => o.channel === 'whatsapp')) {
-    // Task 19-b: cliente SIN conversación activa pero CON teléfono → canal
-    // directo "wa-new:<teléfono>". El envío crea la conversación bajo demanda
-    // (find-or-create) y manda por el mismo camino daemon que wa:<convId>.
-    try {
-      const client = await db.client.findFirst({
-        where: { organizationId: orgId, id: clientId },
-        select: { phone: true },
-      })
-      const phone = normalizeWaPhone(client?.phone)
-      if (phone) {
-        options.push({
-          key: `${WA_NEW_PREFIX}:${phone}`,
-          channel: 'whatsapp',
-          channelLabel: 'WhatsApp',
-          contactHandle: phone,
-        })
-      }
-    } catch (err) {
-      console.error('[inbox] teléfono del cliente no disponible', err)
-    }
-  }
+  // No se ofrecen destinos WhatsApp directos legacy sin conversación canónica.
+
   try {
     const events = await db.timelineEvent.findMany({
-      where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram', 'facebook'] } },
+      where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram', 'facebook', 'tiktok'] } },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: { type: true, metadata: true },
@@ -360,6 +378,19 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
         contactHandle: String(m.senderId || m.recipientId),
       })
     }
+    const tt = events.find((e) => {
+      const m = safeMetadata(e.metadata)
+      return e.type === 'tiktok' && !!m.canonicalConversationId && !!m.conversationId
+    })
+    if (tt) {
+      const m = safeMetadata(tt.metadata)
+      options.push({
+        key: `cc:${String(m.canonicalConversationId)}`,
+        channel: 'tiktok',
+        channelLabel: 'TikTok',
+        contactHandle: String(m.conversationId),
+      })
+    }
   } catch (err) {
     console.error('[inbox] canales timeline (cliente) no disponibles', err)
   }
@@ -371,6 +402,59 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
 export async function getInboxMessages(orgId: string, key: string): Promise<InboxMessage[]> {
   const parsed = parseInboxKey(key)
   if (!parsed) return []
+
+  if (key.startsWith('cc:')) {
+    const conversation = await db.channelConversation.findFirst({
+      where: { id: parsed.id, organizationId: orgId, connection: { is: { organizationId: orgId } } },
+      select: { id: true, channel: true, connection: { select: { organizationId: true, status: true, channel: true } } },
+    })
+    if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return []
+    const [rows, pending] = await Promise.all([
+      db.channelMessage.findMany({
+        where: { conversationId: conversation.id },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        select: { id: true, direction: true, senderType: true, body: true, createdAt: true, messageType: true, metadata: true },
+      }),
+      db.channelOutboundMessage.findMany({
+        where: { conversationId: conversation.id, status: { in: ['queued', 'sending', 'failed', 'unknown'] } },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        select: { id: true, body: true, status: true, createdAt: true },
+      }),
+    ])
+    const persisted = rows.reverse().map((message) => ({
+      id: message.id,
+      direction: message.direction === 'out' ? 'out' as const : 'in' as const,
+      senderType: message.senderType === 'agent' ? 'agent' as const : message.senderType === 'user' ? 'user' as const : 'contact' as const,
+      text: message.body,
+      createdAt: message.createdAt.toISOString(),
+      ...(message.messageType === 'voice' ? { messageType: 'voice' } : {}),
+      ...(() => {
+        try {
+          const metadata = message.metadata ? JSON.parse(message.metadata) as { deliveryStatus?: string } : {}
+          return ['sent', 'delivered', 'read'].includes(metadata.deliveryStatus || '')
+            ? { deliveryStatus: metadata.deliveryStatus as 'sent' | 'delivered' | 'read' }
+            : metadata.deliveryStatus === 'failed'
+              ? { deliveryStatus: 'delivery_failed' as const }
+              : {}
+        } catch {
+          return {}
+        }
+      })(),
+    }))
+    const pendingMessages = pending.map((message) => ({
+      id: `outbox:${message.id}`,
+      direction: 'out' as const,
+      senderType: 'user' as const,
+      text: message.body,
+      createdAt: message.createdAt.toISOString(),
+      deliveryStatus: message.status as 'queued' | 'sending' | 'failed' | 'unknown',
+    }))
+    return [...persisted, ...pendingMessages].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  if (!parsed.channel) return []
 
   if (parsed.channel === 'whatsapp') {
     const rows = await db.whatsAppMessage.findMany({
@@ -404,6 +488,23 @@ export async function markInboxRead(orgId: string, key: string): Promise<void> {
   const parsed = parseInboxKey(key)
   if (!parsed) return
   try {
+    if (key.startsWith('cc:')) {
+      const conversation = await db.channelConversation.findFirst({
+        where: { id: parsed.id, organizationId: orgId, connection: { is: { organizationId: orgId } } },
+        select: { channel: true, connection: { select: { organizationId: true, channel: true, status: true } } },
+      })
+      if (!conversation || conversation.connection.status !== 'connected' || conversation.channel !== conversation.connection.channel) return
+      await db.channelConversation.updateMany({
+        where: {
+          id: parsed.id,
+          organizationId: orgId,
+          connection: { is: { organizationId: orgId, status: 'connected' } },
+        },
+        data: { unreadCount: 0 },
+      })
+      return
+    }
+    if (!parsed.channel) return
     if (parsed.channel === 'whatsapp') {
       await db.whatsAppConversation.updateMany({
         where: { organizationId: orgId, id: parsed.id },
@@ -439,84 +540,8 @@ export interface InboxSendResult {
 }
 
 /**
- * Envía por el daemon Baileys con el contrato { to, text } y el secreto
- * server-to-server. Único camino de envío WhatsApp (lo usan tanto las
- * conversaciones existentes "wa:<convId>" como las directas "wa-new:<teléfono>").
- */
-async function sendViaDaemon(to: string, text: string): Promise<InboxSendResult> {
-  const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
-  const secret = process.env.INTERNAL_API_SECRET
-  if (!secret) return { ok: false, error: 'INTERNAL_API_SECRET no configurado en el servidor' }
-  const res = await fetch(`${daemonUrl}/send`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
-    body: JSON.stringify({ to, text }),
-    signal: AbortSignal.timeout(5000),
-  })
-  const data = (await res.json().catch(() => ({}))) as { error?: string }
-  if (!res.ok || data.error) return { ok: false, error: data.error || `WhatsApp no pudo enviar (HTTP ${res.status})` }
-  return { ok: true }
-}
-
-/**
- * Envío WhatsApp DIRECTO (Task 19-b) a un teléfono sin conversación previa:
- * primero manda por el MISMO camino daemon que "wa:<convId>" (si el daemon
- * falla no se crea nada) y, solo si el envío salió, find-or-create de la
- * conversación (unique organizationId+contactPhone) con el nombre del cliente
- * y lastMessage/lastMessageAt/lastMessageFrom ('out') igual que deja el daemon
- * en los mensajes entrantes (texto truncado a 100). Trazabilidad idéntica al
- * caso existente: sin timeline ni fila de mensaje (los dueña el daemon).
- */
-async function sendWhatsAppDirect(opts: {
-  orgId: string
-  userId: string
-  phone: string
-  clientId?: string | null
-  text: string
-}): Promise<InboxSendResult> {
-  const text = opts.text.trim().slice(0, 4000)
-  if (!text) return { ok: false, error: 'El mensaje está vacío' }
-  try {
-    const sent = await sendViaDaemon(opts.phone, text)
-    if (!sent.ok) return sent
-
-    let contactName: string | null = null
-    if (opts.clientId) {
-      const client = await db.client.findFirst({
-        where: { organizationId: opts.orgId, id: opts.clientId },
-        select: { name: true },
-      })
-      contactName = client?.name || null
-    }
-    await db.whatsAppConversation.upsert({
-      where: {
-        organizationId_contactPhone: { organizationId: opts.orgId, contactPhone: opts.phone },
-      },
-      create: {
-        organizationId: opts.orgId,
-        clientId: opts.clientId || null,
-        contactPhone: opts.phone,
-        contactName: contactName || opts.phone,
-        lastMessage: text.slice(0, 100),
-        lastMessageAt: new Date(),
-        lastMessageFrom: 'out',
-      },
-      // Ya existía conversación para ese teléfono → no se toca (igual que wa:<convId>).
-      update: {},
-    })
-    return { ok: true }
-  } catch (err) {
-    console.error('[inbox] envío WhatsApp directo falló', err)
-    return { ok: false, error: 'No se pudo enviar el mensaje. Intenta de nuevo.' }
-  }
-}
-
-/**
- * Envía un mensaje por el canal de la conversación. Reutiliza las mismas
- * funciones de lib/integrations que los endpoints /telegram/send y /instagram/send
- * (misma trazabilidad en timeline, source="manual"), y el mismo contrato
- * { to, text } del daemon para WhatsApp (también para la key directa
- * "wa-new:<teléfono>" de clientes sin conversación previa).
+ * Los envíos legacy directos se han retirado. El endpoint de bandeja solo
+ * admite conversaciones canónicas y persiste una intención en la outbox.
  */
 export async function sendInboxMessage(opts: {
   orgId: string
@@ -526,104 +551,8 @@ export async function sendInboxMessage(opts: {
   clientId?: string | null
   text: string
 }): Promise<InboxSendResult> {
-  // Canal WhatsApp directo (Task 19-b): sin conversación previa, se crea al vuelo.
-  const waNewPhone = parseWaNewKey(opts.key)
-  if (waNewPhone) {
-    return sendWhatsAppDirect({
-      orgId: opts.orgId,
-      userId: opts.userId,
-      phone: waNewPhone,
-      clientId: opts.clientId,
-      text: opts.text,
-    })
+  if (opts.key.startsWith('cc:')) {
+    return { ok: false, error: 'Usa el endpoint de la bandeja para encolar la conversación canónica.' }
   }
-
-  const parsed = parseInboxKey(opts.key)
-  if (!parsed) return { ok: false, error: 'Conversación inválida' }
-  const text = opts.text.trim().slice(0, 4000)
-  if (!text) return { ok: false, error: 'El mensaje está vacío' }
-
-  try {
-    if (parsed.channel === 'whatsapp') {
-      return await sendViaDaemon(opts.contactHandle, text)
-    }
-
-    const integration = await getIntegration(opts.orgId)
-
-    if (parsed.channel === 'telegram') {
-      const state = parseTelegramState(integration.telegramBotTokenEnc)
-      if (!state.token) return { ok: false, error: 'Telegram no configurado. Guarda el Bot Token en Configuración → Telegram.' }
-      const result = await sendTelegramBotMessage({ token: state.token, chatId: opts.contactHandle, text })
-      if (!result.ok) return { ok: false, error: `Telegram no pudo enviar: ${result.error}` }
-      await recordTimelineEvent({
-        orgId: opts.orgId,
-        clientId: opts.clientId || null,
-        type: 'telegram',
-        title: 'Mensaje enviado por Telegram',
-        description: text.slice(0, 300),
-        metadata: { chatId: String(opts.contactHandle), direction: 'out' },
-        source: 'manual',
-        userId: opts.userId,
-      })
-      return { ok: true }
-    }
-
-    // Instagram
-    if (parsed.channel === 'instagram') {
-      const igState = parseInstagramState(integration.instagramTokenEnc)
-      if (!igState.token) return { ok: false, error: 'Instagram no configurado. Guarda el Access Token en Configuración → Instagram.' }
-      const result = await sendInstagramGraphMessage({
-        token: igState.token,
-        accountId: integration.instagramAccountId || '',
-        recipientId: opts.contactHandle,
-        text,
-      })
-      if (!result.ok) return { ok: false, error: `Instagram no pudo enviar: ${result.error}` }
-      await recordTimelineEvent({
-        orgId: opts.orgId,
-        clientId: opts.clientId || null,
-        type: 'instagram',
-        title: 'Mensaje enviado por Instagram',
-        description: text.slice(0, 300),
-        metadata: { recipientId: String(opts.contactHandle), direction: 'out' },
-        source: 'manual',
-        userId: opts.userId,
-      })
-      return { ok: true }
-    }
-
-    // Facebook (Messenger de la Página)
-    if (parsed.channel === 'facebook') {
-      const fbState = parseFacebookState(integration.facebookTokenEnc)
-      if (!fbState.pageToken || !integration.facebookPageId) {
-        return { ok: false, error: 'Facebook no configurado. Guarda el Page Token y el Page ID en Configuración → Facebook.' }
-      }
-      const result = await sendFacebookGraphMessage({
-        token: fbState.pageToken,
-        pageId: integration.facebookPageId,
-        recipientId: opts.contactHandle,
-        text,
-      })
-      if (!result.ok) return { ok: false, error: `Facebook no pudo enviar: ${result.error}` }
-      await recordTimelineEvent({
-        orgId: opts.orgId,
-        clientId: opts.clientId || null,
-        type: 'facebook',
-        title: 'Mensaje enviado por Facebook',
-        description: text.slice(0, 300),
-        metadata: { recipientId: String(opts.contactHandle), direction: 'out' },
-        source: 'manual',
-        userId: opts.userId,
-      })
-      return { ok: true }
-    }
-
-    // Canal desconocido (parseInboxKey solo produce los 4 de arriba; fail-closed)
-    return { ok: false, error: 'Canal no soportado' }
-  } catch (err) {
-    console.error('[inbox] sendInboxMessage falló', err)
-    return { ok: false, error: 'No se pudo enviar el mensaje. Intenta de nuevo.' }
-  }
+  return { ok: false, error: 'El envío legacy está deshabilitado; usa una conversación canónica de la outbox.' }
 }
-
-

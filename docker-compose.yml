@@ -58,14 +58,12 @@ services:
       ALBRA_AGENT_URL: ${ALBRA_AGENT_URL:-http://host.docker.internal:9000}
       PORT: "3000"
       HOSTNAME: 0.0.0.0
-      # Descomenta para NO aplicar el esquema en cada arranque (recomendado
-      # una vez la BD está en producción; aplica cambios a mano con
-      #   docker compose exec app npx prisma db push):
-      # SKIP_DB_PUSH: "1"
-      # Solo si aceptas pérdida de datos en un upgrade destructivo del
-      # esquema (el entrypoint SIN esta var FALLA RUIDOSO antes de tocar
-      # datos — auditoría pre-venta, revisión de migraciones):
-      # ALLOW_DATA_LOSS: "1"
+      # En producción, db-guard exige autorización explícita para ejecutar
+      # migrate deploy. Configúrala en .env solo tras revisar migraciones
+      # y respaldar la BD; no autoriza db reset ni db push.
+      # ALLOW_DESTRUCTIVE_DB_OPERATION: "true"
+      # Para aplicar migraciones manualmente y omitir el arranque automático:
+      # SKIP_DB_MIGRATE: "1"
     volumes:
       - db-data:/app/db
     healthcheck:

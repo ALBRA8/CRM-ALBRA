@@ -34,6 +34,7 @@ import {
   UserCog,
   User,
   Activity,
+  LogIn,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -205,10 +206,11 @@ function KpiCard({ icon: Icon, label, value, hint }: { icon: typeof Building2; l
 }
 
 export function SuperPage() {
-  const { user } = useAppStore()
+  const { user, setToken, setUser, setView } = useAppStore()
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null)
 
   const load = useCallback(async (isRefresh = false) => {
     try {
@@ -227,6 +229,26 @@ export function SuperPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  const enterOrganization = async (org: OrgRow) => {
+    if (!org.isActive || switchingOrgId) return
+    setSwitchingOrgId(org.id)
+    try {
+      const result = (await api.switchSuperOrganization(org.id)) as { token: string }
+      if (!result?.token) throw new Error('El servidor no devolvió una sesión válida')
+      // Mantener sincronizados el cliente API y el estado global de la sesión.
+      api.setToken(result.token)
+      setToken(result.token)
+      const session = (await api.getMe()) as { user: Parameters<typeof setUser>[0] }
+      setUser(session.user)
+      setView('dashboard')
+      toast.success(`Ahora estás trabajando en ${org.name}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo ingresar a la organización')
+    } finally {
+      setSwitchingOrgId(null)
+    }
+  }
 
   if (loading) {
     return (
@@ -460,6 +482,7 @@ export function SuperPage() {
                     <TableHead className="text-center">Servicios</TableHead>
                     <TableHead className="text-center">Conv. WA</TableHead>
                     <TableHead>Estado</TableHead>
+                    <TableHead className="text-right">Acceso</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -485,11 +508,27 @@ export function SuperPage() {
                           <Badge className="bg-red-50 text-red-700 border-red-200" variant="outline">Inactiva</Badge>
                         )}
                       </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5"
+                          disabled={!org.isActive || switchingOrgId !== null}
+                          onClick={() => enterOrganization(org)}
+                        >
+                          {switchingOrgId === org.id ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <LogIn className="w-3.5 h-3.5" />
+                          )}
+                          {switchingOrgId === org.id ? 'Ingresando…' : 'Ingresar'}
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                   {data.organizations.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-slate-400 py-8">
+                      <TableCell colSpan={10} className="text-center text-slate-400 py-8">
                         Aún no hay organizaciones registradas.
                       </TableCell>
                     </TableRow>

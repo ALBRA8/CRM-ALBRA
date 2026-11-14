@@ -1,41 +1,59 @@
 import type { NextRequest } from 'next/server'
+import { requireAuth } from '@/lib/auth'
+import { handle, json, requireFields } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
-import { requireAdmin } from '@/lib/auth'
-import { handle, json } from '@/lib/api-helpers'
-import { getIntegration, parseTikTokState, sendTikTokBusinessMessage } from '@/lib/integrations'
-import { recordTimelineEvent } from '@/lib/timeline'
+import { ChannelOutboundError, createChannelOutboundIntent } from '@/lib/channel-outbox'
 
 /**
- * POST /api/tiktok/send — { to: conversationId|userId, text }
- * Envía un DM por el Business Messaging API de TikTok. Sin acceso de socio
- * aprobado devuelve un error estructurado (notAuthorized), nunca un fallo silencioso.
+ * POST /api/tiktok/send
+ * Compatibility endpoint that now queues a canonical outbox intent.
+ * It never sends directly; the guarded internal worker performs delivery.
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = await requireAdmin(req)
-    const body = (await req.json().catch(() => ({}))) as { to?: string; text?: string }
-    const to = String(body.to || '').trim()
-    const text = String(body.text || '').trim()
-    if (!to || !text) return json({ error: 'Faltan to y text' }, { status: 400 })
-
-    const integration = await getIntegration(auth.orgId)
-    const state = parseTikTokState(integration.tiktokTokenEnc)
-
-    const sent = await sendTikTokBusinessMessage({ state, recipientId: to, text })
-
-    await recordTimelineEvent({
-      orgId: auth.orgId,
-      clientId: null,
-      type: 'tiktok',
-      title: sent.ok ? 'Mensaje enviado por TikTok' : 'Intento de envío por TikTok fallido',
-      description: text.slice(0, 500),
-      metadata: { to, direction: 'out', delivered: sent.ok, error: sent.error || null, notAuthorized: sent.notAuthorized || false },
-      source: 'manual',
-    })
-
-    if (!sent.ok) {
-      return json({ ok: false, notAuthorized: sent.notAuthorized || false, error: sent.error }, { status: sent.notAuthorized ? 409 : 502 })
+    const auth = await requireAuth(req)
+    const body = await req.json().catch(() => ({})) as {
+      conversationId?: string
+      clientRequestId?: string
+      text?: string
     }
-    return json({ ok: true })
+    requireFields(body as unknown as Record<string, unknown>, ['conversationId', 'clientRequestId', 'text'])
+
+    const conversation = await db.channelConversation.findFirst({
+      where: {
+        id: String(body.conversationId),
+        organizationId: auth.orgId,
+        channel: 'tiktok',
+        connection: { is: { organizationId: auth.orgId, channel: 'tiktok', provider: 'tiktok_business' } },
+      },
+      select: { id: true },
+    })
+    if (!conversation) return json({ error: 'Conversación TikTok no encontrada', code: 'NOT_FOUND' }, { status: 404 })
+
+    try {
+      const intent = await createChannelOutboundIntent({
+        organizationId: auth.orgId,
+        conversationId: conversation.id,
+        clientRequestId: String(body.clientRequestId),
+        body: String(body.text || ''),
+        requestedByUserId: auth.userId,
+      })
+      return json({
+        success: true,
+        queued: true,
+        sent: false,
+        outboundId: intent.id,
+        status: intent.status,
+        clientRequestId: intent.clientRequestId,
+      }, { status: 202 })
+    } catch (error) {
+      if (error instanceof ChannelOutboundError) {
+        const status = error.code === 'NOT_FOUND' ? 404
+          : error.code === 'NOT_SENDABLE' || error.code === 'IDEMPOTENCY_CONFLICT' ? 409
+          : 400
+        return json({ error: error.message, code: error.code }, { status })
+      }
+      throw error
+    }
   })
 }
