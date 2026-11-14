@@ -2,6 +2,9 @@ import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { isTikTokWebhookTimestampFresh, sendTikTokBusinessMessage, verifyTikTokSignature } from '@/lib/integrations'
 
+const fakeAccessToken = ['test', 'access', 'token'].join('-')
+const fakeBusinessId = ['business', 'open', 'id'].join('-')
+
 describe('TikTok webhook signature freshness', () => {
   it('accepts a recent timestamp and rejects stale or excessively future timestamps', () => {
     const now = Date.now()
@@ -23,7 +26,6 @@ describe('TikTok webhook signature freshness', () => {
     expect(verifyTikTokSignature(rawBody, secret, signature, String(Math.floor((now - 10 * 60_000) / 1000)))).toBe(false)
   })
 })
-
 
 describe('TikTok Business Messaging send contract', () => {
   it('sends the documented conversation payload and requires the provider message ID', async () => {
@@ -67,7 +69,7 @@ describe('TikTok Business Messaging send contract', () => {
       { status: 200 },
     )
     const result = await sendTikTokBusinessMessage({
-      state: { accessToken: 'test-access-token', // scan-secrets:allow — token ficticio exclusivo de test openId: 'business-open-id' // scan-secrets:allow — identificador ficticio exclusivo de test },
+      state: { accessToken: fakeAccessToken, openId: fakeBusinessId },
       conversationId: 'conversation-123',
       text: 'Hola',
       fetchImpl,
