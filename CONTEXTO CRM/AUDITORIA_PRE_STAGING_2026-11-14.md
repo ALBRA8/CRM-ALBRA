@@ -233,3 +233,12 @@ El diseño aún requiere revisión de todas las rutas de escritura del motor y u
 - El script declara que usa BD demo aislada, pero toma primero una copia del archivo configurado por `DATABASE_URL` (o `db/custom.db`) antes de sembrar datos. La copia evita mutar el archivo de origen, pero si el origen es producción contiene una copia de datos reales dentro de `/tmp`; por tanto, no es correcto describir el drill como libre de datos reales sin restringir y validar explícitamente el origen.
 - `BACKUP_REMOTE_DEST` solo usa rclone cuando está configurado y disponible; de lo contrario copia a un directorio local que simula remoto. Un PASS sin evidencia de esa variable/rclone solo demuestra copia local, no restauración desde almacenamiento remoto.
 - El script se documenta como ensayo aislado, pero no se ejecutó en esta revisión. Antes de usarlo, exigir una BD fixture/sintética explícita y un destino remoto de prueba; bloquear URLs/rutas de producción, validar el destino y limpiar/retener el sandbox según política de datos.
+
+
+## Corrección conservadora TikTok — 92669ae52675b4cf7471e6a7e15e2086496a86b4
+
+- El parser ya no usa `conversation_id` como fallback de `senderId`.
+- Conserva `senderId` y `conversationId` como campos separados; si el evento no trae remitente identificable, no genera efectos CRM/workflow.
+- El workflow solo recibe `conversationId` cuando el payload realmente lo incluye; se elimina el identificador sintético `tt:<senderId>`.
+- Esto corrige una mezcla de identidades, pero **no cierra TikTok**: sigue pendiente fixture/contrato de socio validado, prueba HTTP de replay/fallos, persistencia de conversación/conexión y adaptador de outbox canónica.
+- No se habilitó despacho ni se contactó TikTok.
