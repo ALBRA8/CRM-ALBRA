@@ -360,3 +360,12 @@ Esta sección supersede los snapshots de HEAD/CI y los bloqueos de scheduler des
 - TypeScript y lint finalizaron correctamente en ambos runs; la suite de tests y build todavía estaban ejecutándose al registrar esta actualización. No se acredita CI verde hasta completar todos los pasos de ambos workflows.
 - PR #3 permanece abierta, draft y sin merge. No se realizaron migraciones reales, backfill aplicado, deploy ni envíos externos.
 - Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
+
+
+## Endurecimiento adicional del reclaim de webhooks — 2026-11-14
+
+- El reclaim de un evento webhook vencido ahora compara también el `claimToken` observado, además de ID, estado y `updatedAt`, en el mismo `updateMany` condicional.
+- Esto hace explícito que solo el propietario/token leído puede ser reemplazado por el nuevo claim; reduce la dependencia exclusiva de la precisión/estabilidad de `updatedAt` ante concurrencia y evita que una fila cuyo token cambió sea reclamada con un snapshot anterior.
+- La suite existente `tests/integration/channel-webhook-events.test.ts` ya cubre reclaim concurrente, fencing del propietario anterior (complete/fail devuelven count 0), y un único reclaimer; esta modificación refuerza el predicado CAS usado por esos escenarios.
+- No se amplía el alcance a atomicidad de efectos de negocio externos ni a validación multiinstancia real; los workers y envíos permanecen desactivados.
+- Commit de código: `98e4aa4f6999fd4287733e746d268a53902f2b59`. La validación CI de este commit y del HEAD documental posterior debe verificarse en ambos eventos (push y pull_request) antes de certificar el estado final.
