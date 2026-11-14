@@ -20,8 +20,8 @@ describe('TikTok webhook signature freshness', () => {
     const now = 1_800_000_000_000
     expect(isTikTokWebhookTimestampFresh(null, now)).toBe(false)
     expect(isTikTokWebhookTimestampFresh('not-a-timestamp', now)).toBe(false)
-    expect(isTikTokWebhookTimestampFresh(String(now - 6 * 60 * 1000), now)).toBe(false)
-    expect(isTikTokWebhookTimestampFresh(String(now + 60 * 1000), now)).toBe(false)
+    expect(isTikTokWebhookTimestampFresh(String(Math.floor((now - 6 * 60 * 1000) / 1000)), now)).toBe(false)
+    expect(isTikTokWebhookTimestampFresh(String(Math.floor((now + 60 * 1000) / 1000)), now)).toBe(false)
   })
 
   it('accepts a fresh timestamp bound to the signed body', () => {
