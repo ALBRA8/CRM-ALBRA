@@ -96,4 +96,10 @@ describe('TikTok inbound message identity parsing', () => {
       message: { conversation_id: 'conversation-456', text: 'Hola' },
     })).toBeNull()
   })
+
+  it('rejects messages without a provider conversation ID instead of creating an unthreaded CRM event', () => {
+    expect(extractTikTokMessage({
+      message: { sender: { id: 'person-123' }, text: 'Hola' },
+    })).toBeNull()
+  })
 })
