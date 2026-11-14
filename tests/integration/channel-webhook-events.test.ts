@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { db } from '@/lib/db'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection } from '@/lib/channel-webhook-events'
 import { FIX } from '../setup/seed-data'
 
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -32,6 +32,49 @@ async function createConnection(organizationId: string = FIX.orgA.id) {
   connectionIds.push(id)
   return connection
 }
+
+describe('Telegram webhook event identity', () => {
+  it('reuses the canonical bot connection and claims one update only once', async () => {
+    const botId = `900000${String(Date.now()).slice(-8)}`
+    const [a, b] = await Promise.all([
+      getOrCreateTelegramWebhookConnection({ organizationId: FIX.orgA.id, botId, credentialsEnc: 'v1:synthetic-encrypted-credentials' }),
+      getOrCreateTelegramWebhookConnection({ organizationId: FIX.orgA.id, botId, credentialsEnc: 'v1:synthetic-encrypted-credentials' }),
+    ])
+    connectionIds.push(a.id)
+    expect(a.id).toBe(b.id)
+
+    const input = {
+      organizationId: FIX.orgA.id,
+      connectionId: a.id,
+      eventKey: 'update:987654321',
+      eventType: 'telegram.update',
+    }
+    const claims = await Promise.all([
+      claimChannelWebhookEvent(input),
+      claimChannelWebhookEvent(input),
+    ])
+    expect(claims.filter(Boolean)).toHaveLength(1)
+    const claim = claims.find(Boolean)!
+    expect((await completeChannelWebhookEvent(claim)).count).toBe(1)
+    expect(await claimChannelWebhookEvent(input)).toBeNull()
+    expect(await getChannelWebhookEventStatus(a.id, input.eventKey)).toBe('processed')
+  })
+
+  it('fails closed when a Telegram bot identity is already owned by another tenant', async () => {
+    const botId = `910000${String(Date.now()).slice(-8)}`
+    const connection = await getOrCreateTelegramWebhookConnection({
+      organizationId: FIX.orgA.id,
+      botId,
+      credentialsEnc: 'v1:synthetic-encrypted-credentials',
+    })
+    connectionIds.push(connection.id)
+    await expect(getOrCreateTelegramWebhookConnection({
+      organizationId: FIX.orgB.id,
+      botId,
+      credentialsEnc: 'v1:other-tenant-credentials',
+    })).rejects.toThrow('Telegram bot connection ownership conflict')
+  })
+})
 
 describe('Channel webhook event ledger', () => {
   it('allows only one concurrent claimant and never reclaims a processed event', async () => {
