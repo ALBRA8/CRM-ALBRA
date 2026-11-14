@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     db.channelWebhookEvent.count({ where: { status: 'failed' } }),
     db.channelWebhookEvent.count({ where: { status: 'processing', updatedAt: { lt: staleBefore } } }),
     db.channelConnection.count({
-      where: { status: 'connected', channel: { in: ['whatsapp', 'instagram'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
+      where: { status: 'connected', channel: { in: ['whatsapp', 'instagram', 'messenger'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
     }),
   ])
 
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
         is: {
           status: 'active',
           connection: {
-            is: { status: 'connected', channel: { in: ['whatsapp', 'instagram'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
+            is: { status: 'connected', channel: { in: ['whatsapp', 'instagram', 'messenger'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
           },
         },
       },
