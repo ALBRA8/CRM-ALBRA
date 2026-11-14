@@ -59,6 +59,56 @@ export async function getOrCreateTelegramWebhookConnection(input: {
   }
 }
 
+/**
+ * Resolves the legacy Facebook Page to the canonical Messenger connection.
+ * The provider key matches the conservative backfill identity.
+ */
+export async function getOrCreateMessengerWebhookConnection(input: {
+  organizationId: string
+  pageId: string
+  credentialsEnc: string
+}): Promise<{ id: string }> {
+  if (!/^\\d{1,30}$/.test(input.pageId) || !input.organizationId || !input.credentialsEnc) {
+    throw new Error('Invalid Messenger Page identity')
+  }
+  const providerAccountKey = `meta:messenger:${input.pageId}`
+  const existing = await db.channelConnection.findUnique({
+    where: { providerAccountKey },
+    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+  })
+  if (existing) {
+    if (existing.organizationId !== input.organizationId || existing.channel !== 'messenger' ||
+      existing.provider !== 'meta_graph' || existing.externalAccountId !== input.pageId) {
+      throw new Error('Messenger Page connection ownership conflict')
+    }
+    return { id: existing.id }
+  }
+
+  try {
+    return await db.channelConnection.create({
+      data: {
+        organizationId: input.organizationId,
+        channel: 'messenger',
+        provider: 'meta_graph',
+        providerAccountKey,
+        externalAccountId: input.pageId,
+        status: 'pending',
+        credentialsEnc: input.credentialsEnc,
+        metadata: JSON.stringify({ legacyWebhook: true, source: 'Integration.facebook' }),
+      },
+      select: { id: true },
+    })
+  } catch (error) {
+    const raced = await db.channelConnection.findUnique({
+      where: { providerAccountKey },
+      select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+    })
+    if (!raced || raced.organizationId !== input.organizationId || raced.channel !== 'messenger' ||
+      raced.provider !== 'meta_graph' || raced.externalAccountId !== input.pageId) throw error
+    return { id: raced.id }
+  }
+}
+
 /** A fencing token prevents a stale lease owner from closing a newer claim. */
 export async function claimChannelWebhookEvent(input: { organizationId: string; connectionId: string; eventKey: string; eventType: string }): Promise<ChannelWebhookEventClaim | null> {
   if (!EVENT_KEY_PATTERN.test(input.eventKey) || !EVENT_TYPE_PATTERN.test(input.eventType)) throw new Error('Invalid channel webhook event identity')
