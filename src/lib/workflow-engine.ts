@@ -35,6 +35,8 @@ export interface WorkflowTriggerEvent {
   payload: Record<string, unknown>
   /** Limita la ejecución a una automatización concreta (scheduler). */
   automationId?: string
+  /** Run de schedule creado en la misma transacción que el claim. */
+  existingRunId?: string
 }
 
 export interface Condition {
@@ -433,14 +435,21 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
     const idempotencyKey = entityKey ? `${event.type}:${entityKey}`.slice(0, 180) : null
     let run
     try {
-      run = await db.automationRun.create({
-        data: {
-          organizationId: event.orgId,
-          automationId: automation.id,
-          input: JSON.stringify(event.payload).slice(0, 5000),
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-        },
-      })
+      if (event.existingRunId) {
+        run = await db.automationRun.findFirst({
+          where: { id: event.existingRunId, organizationId: event.orgId, automationId: automation.id },
+        })
+        if (!run) throw new Error('El run durable no pertenece a esta automatización/organización')
+      } else {
+        run = await db.automationRun.create({
+          data: {
+            organizationId: event.orgId,
+            automationId: automation.id,
+            input: JSON.stringify(event.payload).slice(0, 5000),
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          },
+        })
+      }
     } catch (err) {
       // P2002: ese MISMO evento ya ejecutó esta automatización → no duplicar
       if ((err as { code?: string }).code === 'P2002') {
