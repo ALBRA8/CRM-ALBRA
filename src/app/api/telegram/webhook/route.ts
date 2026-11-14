@@ -219,7 +219,7 @@ export async function POST(req: NextRequest) {
             clientId: client?.id || null,
             type: 'telegram',
             title: 'Respuesta automática del agente IA en cola',
-            description: reply.trim().slice(0, 500),
+            description: queued.replyText.slice(0, 500),
             metadata: { chatId: String(message.chat.id), direction: 'out', deliveryStatus: 'queued', outboxId: queued.id },
             source: 'agent',
           }).catch((err) => console.error('[telegram webhook] timeline de respuesta en cola', err))
