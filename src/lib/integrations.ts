@@ -51,9 +51,13 @@ export function encodeTelegramState(state: TelegramState): string | null {
   return encryptSecret(JSON.stringify(state))
 }
 
-/** Telegram auto-replies are opt-in globally and may be disabled per integration. */
+/** All channel auto-replies are opt-in globally; tenant preferences can further disable them. */
+export function isChannelAutoReplyGloballyEnabled(): boolean {
+  return process.env.CHANNEL_AUTOREPLY_ENABLED === 'true'
+}
+
 export function isTelegramAutoReplyEnabled(state: TelegramState): boolean {
-  return process.env.CHANNEL_AUTOREPLY_ENABLED === 'true' && state.autoReply !== false && !!state.token
+  return isChannelAutoReplyGloballyEnabled() && state.autoReply !== false && !!state.token
 }
 
 /**
