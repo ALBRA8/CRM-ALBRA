@@ -82,7 +82,7 @@ describe('distributed workflow run leases', () => {
       runWorkflowsForTrigger(event),
     ])
 
-    expect([...first, ...second].some((result) => result.status === 'success')).toBe(true)
+    expect([...first, ...second].some((result) => result.status === 'success'), JSON.stringify({ first, second })).toBe(true)
     const runs = await db.automationRun.findMany({
       where: { automationId: triggerAutomationId, idempotencyKey: 'client_created:lease-concurrency-fixture' },
     })
@@ -94,10 +94,10 @@ describe('distributed workflow run leases', () => {
   })
 
   it('reclaims an expired generation without re-running completed steps', async () => {
-    await runDueJobs()
+    const schedulerResult = await runDueJobs()
     const recovered = await db.automationRun.findUnique({ where: { id: recoveredRunId } })
 
-    expect(recovered?.status).toBe('success')
+    expect(recovered?.status, JSON.stringify({ schedulerResult, recovered })).toBe('success')
     expect(recovered?.fencingVersion).toBe(2)
     expect(recovered?.leaseToken).toBeTruthy()
     expect(recovered?.leaseToken).not.toBe(originalLeaseToken)
