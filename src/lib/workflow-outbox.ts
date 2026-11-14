@@ -68,7 +68,17 @@ export async function enqueueTelegramWebhookReply(input: {
       where: { organizationId_idempotencyKey: { organizationId: input.organizationId, idempotencyKey } },
     })
     if (!existing) throw error
-    if (existing.channel !== 'telegram' || decryptSecret(existing.payloadEnc) !== plain) {
+    let existingPayload: Record<string, unknown> = {}
+    try {
+      const existingPlain = decryptSecret(existing.payloadEnc)
+      existingPayload = existingPlain ? JSON.parse(existingPlain) as Record<string, unknown> : {}
+    } catch {
+      existingPayload = {}
+    }
+    // A retry may generate different LLM wording. The first persisted reply wins;
+    // identity must match the same provider update and chat, not the generated text.
+    if (existing.channel !== 'telegram' || existingPayload.source !== 'telegram_webhook' ||
+      existingPayload.updateId !== input.updateId || String(existingPayload.chatId) !== String(input.chatId)) {
       throw new Error('WORKFLOW_OUTBOX_IDEMPOTENCY_CONFLICT')
     }
     return existing
