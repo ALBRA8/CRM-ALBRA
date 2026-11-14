@@ -168,6 +168,7 @@ export async function POST(req: NextRequest) {
               send: async (reply) => {
                 const { sendFacebookGraphMessage } = await import('@/lib/integrations')
                 const sent = await sendFacebookGraphMessage({ token: state.pageToken!, pageId: target.pageId, recipientId: senderId, text: reply })
+                if (!sent.ok) throw new Error('MESSENGER_AUTO_REPLY_SEND_FAILED')
                 await recordTimelineEvent({
                   orgId,
                   clientId: client?.id || null,
