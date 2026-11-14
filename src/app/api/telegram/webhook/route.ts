@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
-import { safeEquals, parseTelegramState, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
+import { safeEquals, parseTelegramState, isTelegramAutoReplyEnabled, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
 import { notifyOrganization } from '@/lib/push'
 import { llmChat } from '@/lib/ai'
 import { transcribeAudioBase64 } from '@/lib/asr'
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
     // 4) Auto-respuesta IA (si está habilitada y no pide humano)
     const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
     const state = parseTelegramState(integrationFull?.telegramBotTokenEnc)
-    if (state.autoReply !== false && state.token && message.chat.type === 'private') {
+    if (isTelegramAutoReplyEnabled(state) && message.chat.type === 'private') {
       const handoffKeywords = await getHandoffKeywords(orgId)
       const wantsHuman = handoffKeywords.some((k) => text.toLowerCase().includes(k.toLowerCase()))
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
