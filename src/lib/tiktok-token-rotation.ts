@@ -71,7 +71,7 @@ export async function prepareTikTokAccessTokenForSend(
 
   const rotated = await refreshTikTokUserAccessToken({ state, fetchImpl, now })
   if (!rotated.ok) {
-    const invalidGrant = rotated.error === 'TIKTOK_REFRESH_INVALID_GRANT'
+    const invalidGrant = rotated.error === 'TIKTOK_REFRESH_INVALID_GRANT' || rotated.reauthorizationRequired === true
     await db.channelConnection.updateMany({
       where: {
         id: connection.id,
