@@ -122,12 +122,19 @@ export async function dispatchChannelOutboundMessage(
   }
 
   if (connection.channel === 'tiktok' && connection.provider === 'tiktok_business') {
-    const prepared = await prepareTikTokAccessTokenForSend(connection.id)
-    if (!prepared.ok) {
-      await markChannelOutboundFailed(outboundId, prepared.errorCode)
-      return { status: 'failed', errorCode: prepared.errorCode }
+    try {
+      const prepared = await prepareTikTokAccessTokenForSend(connection.id)
+      if (!prepared.ok) {
+        await markChannelOutboundFailed(outboundId, prepared.errorCode)
+        return { status: 'failed', errorCode: prepared.errorCode }
+      }
+      credentials.accessToken = prepared.accessToken
+    } catch {
+      // Coordination/persistence errors must stop this send. A refresh lease,
+      // if already claimed, remains fail-closed for explicit recovery.
+      await markChannelOutboundFailed(outboundId, 'TIKTOK_REFRESH_COORDINATION_FAILED')
+      return { status: 'failed', errorCode: 'TIKTOK_REFRESH_COORDINATION_FAILED' }
     }
-    credentials.accessToken = prepared.accessToken
   }
 
   try {
