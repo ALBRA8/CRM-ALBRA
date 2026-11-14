@@ -132,3 +132,27 @@ Validación pendiente para estos commits: CI completo en el HEAD resultante, inc
 - Se añadió `tests/integration/whatsapp-webhook.test.ts`: conexión WhatsApp canónica sintética, firma HMAC y comprobación de que un inbound sin `message.id` no crea claim, conversación ni timeline.
 - La matriz de pruebas negativas para identidad estable ya incluye Instagram, Messenger y WhatsApp. TikTok requiere una prueba de contrato del payload oficial y de conservación separada de `sender_id`/`conversation_id`.
 - HEAD de esta ampliación: `00b5f7e4f0ee8a0d66e1c9ae8c83a0c46ccd4c31`. CI de este SHA aún debe completar tests y build.
+
+
+## Revisión continuada — HEAD 5d6c51707e28e8a8d9280893dda92b4757b23bfc
+
+### CI confirmado para el HEAD exacto
+
+- El workflow `pull_request` run [43566986559](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43566986559) terminó con `success` sobre el SHA exacto `5d6c51707e28e8a8d9280893dda92b4757b23bfc`.
+- El job `ci` terminó correctamente en todos sus pasos: instalación de dependencias, escáner de secretos, generación Prisma, migraciones limpias SQLite, TypeScript, lint, suite completa de tests y build de producción.
+- Esto valida el pipeline automatizado del SHA; no sustituye pruebas PostgreSQL/staging, aislamiento multiinstancia, sandbox de proveedores ni backup/restauración.
+
+### Inspección adicional del código en ese HEAD
+
+- **TikTok:** el parser `extractMessage` todavía sustituye un sender ausente por `conversation_id`; además el workflow fabrica `conversationId` como `tt:<senderId>`. No se considera contrato válido ni se corrige sin una fixture autorizada del payload Business Messaging. El webhook no envía respuestas, pero tampoco persiste aún la conversación real necesaria para el adaptador de outbox. TikTok sigue bloqueado para staging.
+- **Outbox de canales:** `dispatchChannelOutboundMessage` solo despacha cuando el caller inyecta un adaptador exacto `provider:channel`; valida tenant/conexión antes de descifrar credenciales y clasifica resultados ambiguos como `unknown`. En el código inspeccionado no hay adaptador TikTok integrado al worker canónico. La existencia del dispatcher genérico no equivale a soporte TikTok.
+- **Scheduler:** `src/lib/scheduler.ts` conserva un booleano `running` en memoria de proceso. La recuperación de stale runs cambia estado/fecha mediante condiciones CAS, pero no hay token de lease distribuido asociado al worker y exigido en cada escritura del motor. No es seguro declarar resuelta la carrera entre réplicas; implementar fencing requiere un diseño coordinado con el workflow engine y sus escrituras de ledger/resultado.
+- **Conciliación:** existe resolución manual conservadora para outbound `unknown`, con estados no reintentables automáticamente. Aún falta demostrar una matriz completa de reconciliación para ambas outboxes, todos los proveedores/canales, ACK tardío frente a lease y procedimientos operativos/alertas.
+- **Multitenancy y recuperación de datos:** el CI SQLite no prueba la totalidad de consultas/relaciones con tenants cruzados, PostgreSQL real, backfill sobre datos existentes ni restauración verificable. Se mantienen como puertas independientes; no se ejecutó backfill ni operación de backup/restore.
+
+### Decisión operativa
+
+- CI del HEAD indicado: **verde**.
+- Auditoría global: **incompleta**; staging: **no aprobado**.
+- Sin merge, despliegue, migración aplicada, backfill aplicado, workers activados ni envíos reales.
+- Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
