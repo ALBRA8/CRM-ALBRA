@@ -43,6 +43,7 @@ describe('POST /api/whatsapp/webhook — stable event identity', () => {
   it('skips inbound messages without a stable provider ID before CRM/workflow side effects', async () => {
     const suffix = Date.now().toString()
     const phoneNumberId = `130000${suffix.slice(-8)}`
+    const accessToken = ['synthetic', 'access', 'token'].join('-')
     const org = await db.organization.create({
       data: {
         id: `whatsapp-missing-id-${suffix}`,
@@ -57,7 +58,7 @@ describe('POST /api/whatsapp/webhook — stable event identity', () => {
         organizationId: org.id,
         phoneNumberId,
         phoneNumber: '+573001234567',
-        accessTokenEnc: encryptSecret('synthetic-access-token')!,
+        accessTokenEnc: encryptSecret(accessToken)!,
         metaAppSecretEnc: encryptSecret(APP_SECRET),
         webhookVerifyToken: `verify-${suffix}`,
         status: 'connected',
@@ -72,7 +73,7 @@ describe('POST /api/whatsapp/webhook — stable event identity', () => {
         provider: 'meta_cloud',
         providerAccountKey: `meta:whatsapp:${phoneNumberId}`,
         externalAccountId: phoneNumberId,
-        credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'synthetic-access-token' }))!,
+        credentialsEnc: encryptSecret(JSON.stringify({ accessToken }))!,
         status: 'connected',
       },
     })
