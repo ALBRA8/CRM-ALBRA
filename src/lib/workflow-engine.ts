@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { Prisma } from '@prisma/client'
 import { db } from './db'
 import { recordTimelineEvent } from './timeline'
 import { enqueueWorkflowOutboundMessage } from './workflow-outbox'
@@ -173,11 +174,11 @@ async function recordWorkflowOutboundPending(orgId: string, channel: string, ctx
   })
 }
 
-async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<string, unknown>, execution: { automationId: string; runId: string; stepIndex: number }): Promise<Record<string, unknown>> {
+async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<string, unknown>, execution: { automationId: string; runId: string; stepIndex: number; orgId: string; leaseToken: string; fencingVersion: number }): Promise<Record<string, unknown>> {
   const config = action.config || {}
   switch (action.type) {
     case 'create_task_like_notification': {
-      await db.notification.create({
+      await withWorkflowLeaseMutation(execution, (tx) => tx.notification.create({
         data: {
           organizationId: orgId,
           userId: null,
@@ -186,18 +187,18 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
           body: renderTemplate(String(config.body || ''), ctx),
           data: JSON.stringify({ clientId: ctx.clientId ?? null, source: 'automation' }),
         },
-      })
+      }))
       return { notification: true }
     }
     case 'notify_admin': {
-      await db.notification.create({
+      await withWorkflowLeaseMutation(execution, (tx) => tx.notification.create({
         data: {
           organizationId: orgId,
           type: 'automation',
           title: String(config.title || 'Aviso de automatización'),
           body: renderTemplate(String(config.body || ''), ctx),
         },
-      })
+      }))
       return { notified: true }
     }
     case 'send_whatsapp':
@@ -270,7 +271,7 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
           : Promise.resolve(null),
         db.pipelineStage.findFirst({ where: { organizationId: orgId }, orderBy: { order: 'asc' }, select: { id: true } }),
       ])
-      const opp = await db.opportunity.create({
+      const opp = await withWorkflowLeaseMutation(execution, (tx) => tx.opportunity.create({
         data: {
           organizationId: orgId,
           title: renderTemplate(String(config.title || 'Nueva oportunidad'), ctx),
@@ -279,13 +280,13 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
           amount: Number(config.amount || 0),
           source: 'automation',
         },
-      })
+      }))
       return { opportunityId: opp.id }
     }
     case 'update_client_status': {
       const clientId = ctx.clientId as string | undefined
       if (clientId) {
-        await db.client.updateMany({ where: { id: clientId, organizationId: orgId }, data: { status: String(config.status || 'active') } })
+        await withWorkflowLeaseMutation(execution, (tx) => tx.client.updateMany({ where: { id: clientId, organizationId: orgId }, data: { status: String(config.status || 'active') } }))
         return { updated: clientId }
       }
       return { skipped: 'sin clientId' }
@@ -300,14 +301,16 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
         ])
         if (!validOpportunity) return { skipped: 'oportunidad no pertenece a la organización' }
         if (!validStage) return { skipped: 'etapa no pertenece a la organización' }
-        await db.opportunity.updateMany({ where: { id: validOpportunity.id, organizationId: orgId }, data: { stageId: validStage.id } })
-        await recordTimelineEvent({
-          orgId,
-          opportunityId,
-          clientId: (ctx.clientId as string) || null,
-          type: 'stage_change',
-          title: 'Etapa actualizada por automatización',
-          source: 'automation',
+        await withWorkflowLeaseMutation(execution, async (tx) => {
+          await tx.opportunity.updateMany({ where: { id: validOpportunity.id, organizationId: orgId }, data: { stageId: validStage.id } })
+          await tx.timelineEvent.create({ data: {
+            organizationId: orgId,
+            opportunityId,
+            clientId: (ctx.clientId as string) || null,
+            type: 'stage_change',
+            title: 'Etapa actualizada por automatización',
+            source: 'automation',
+          } })
         })
         return { moved: opportunityId }
       }
@@ -322,7 +325,7 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
         { role: 'system', content: 'Eres un asistente comercial. Responde SOLO con el mensaje listo para enviar, sin comillas ni prefijos.' },
         { role: 'user', content: `${instruction}\nCliente: ${client}\nContexto: ${JSON.stringify(ctx).slice(0, 500)}` },
       ])
-      await db.notification.create({
+      await withWorkflowLeaseMutation(execution, (tx) => tx.notification.create({
         data: {
           organizationId: orgId,
           type: 'agent',
@@ -330,7 +333,7 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
           body: text.slice(0, 500),
           data: JSON.stringify({ clientId: ctx.clientId ?? null }),
         },
-      })
+      }))
       return { drafted: true, text: text.slice(0, 200) }
     }
     default:
@@ -355,6 +358,30 @@ function renderTemplate(body: string, ctx: Record<string, unknown>): string {
     if (v === undefined || v === null) return `{{${key}}}`
     if (v instanceof Date) return v.toLocaleDateString('es-CO')
     return String(v)
+  })
+}
+
+// All first-party database side effects must be fenced in the same transaction
+// as their write. A preflight lease check alone leaves a race with lease reclaim.
+async function withWorkflowLeaseMutation<T>(
+  execution: { runId: string; orgId: string; leaseToken: string; fencingVersion: number },
+  mutate: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return db.$transaction(async (tx) => {
+    const now = new Date()
+    const owner = await tx.automationRun.updateMany({
+      where: {
+        id: execution.runId,
+        organizationId: execution.orgId,
+        status: 'processing',
+        leaseToken: execution.leaseToken,
+        fencingVersion: execution.fencingVersion,
+        leaseExpiresAt: { gt: now },
+      },
+      data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+    })
+    if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: side effect rejected by fencing')
+    return mutate(tx)
   })
 }
 
@@ -483,7 +510,7 @@ async function runActionSteps(
     }
 
     try {
-      const out = await executeAction(orgId, action, ctx, { automationId: execution.automationId, runId: execution.runId, stepIndex: i })
+      const out = await executeAction(orgId, action, ctx, { automationId: execution.automationId, runId: execution.runId, stepIndex: i, orgId: execution.orgId, leaseToken: execution.leaseToken, fencingVersion: execution.fencingVersion })
       await updateStepWithLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion,
         stepRecord.id, { status: 'succeeded', output: JSON.stringify(out).slice(0, 5000), finishedAt: new Date() })
       outputs.push(out)
