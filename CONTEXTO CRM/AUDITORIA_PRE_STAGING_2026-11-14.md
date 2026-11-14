@@ -280,3 +280,45 @@ No se declara staging aprobado en este commit. La evidencia de CI de los cambios
 - La recuperación del artefacto remoto se hace con `rclone copy` hacia el sandbox local antes de restaurar y verificar el hash.
 - El drill **no se ejecutó** en esta sesión. No hay evidencia de RPO/RTO ni de restore remoto; solo se eliminó el riesgo de copiar por defecto una base posiblemente real. Debe probarse primero en entorno aislado.
 - HEAD del código al registrar esta nota: `8c243ba2b898227a2818e5bd19004dd9b0cc27b5`. CI push de ese SHA seguía `in_progress`; no certificar el resultado hasta verificar CI de PR y push del SHA final.
+
+
+## Actualización de cierre de revisión — HEAD `de20d912bf3d7aa2a9526191d891856534919ba2`
+
+Esta sección **reemplaza cualquier estado anterior de CI** que describa los workflows recientes como queued/in_progress y corrige el hallazgo antiguo del script de backup que indicaba que copiaba el archivo de `DATABASE_URL`.
+
+### CI verificado en el SHA exacto
+
+- Push: [run 43568878176](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43568878176) — `success`.
+- Pull request: [run 43568881717](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43568881717) — `success`.
+- En ambos runs el job `ci` y todos sus pasos terminaron en `success`: checkout/setup, instalación, secret scan, Prisma generate, migraciones limpias SQLite, TypeScript, lint ratchet, suite completa de tests y build de producción.
+- Esta evidencia es específica del SHA indicado. No prueba PostgreSQL real, migraciones con datos existentes, staging, proveedores externos ni restore remoto.
+
+### Estado actual de la PR
+
+- PR #3: abierta, `draft=true`, `merged=false`, mergeable según el último snapshot de GitHub.
+- Conteo observado frente a `main`: 601 commits y 105 archivos.
+- La descripción de la PR se normalizó para retirar snapshots históricos contradictorios y dejar explícitos el HEAD, ambos runs verdes, los bloqueos y las restricciones operativas.
+- No se realizó merge, deploy, backfill aplicado, activación de workers ni envío externo real.
+
+### Corrección del backup drill
+
+- El script actual `scripts/backup-restore-drill.sh` **ya no lee ni copia el archivo indicado por `DATABASE_URL` ni `db/custom.db`**. Crea una SQLite vacía en el directorio temporal mediante `prisma db push` y siembra registros sintéticos.
+- Para acreditar copia/restauración remota exige `BACKUP_REMOTE_DEST` y `rclone`; la rama local requiere opt-in explícito `BACKUP_DRILL_ALLOW_LOCAL_SIMULATION=1` y termina como `PASS LOCAL`, sin acreditar remoto.
+- La ruta remota copia el snapshot con rclone, vuelve a descargarlo al sandbox, compara SHA-256, restaura y verifica integridad/conteos; después arranca el standalone contra la base restaurada y comprueba health y autenticación.
+- **El drill sigue sin ejecutarse** en esta revisión. Por tanto no hay RPO/RTO medidos ni prueba operativa de restauración remota. Los apartados anteriores que describían la copia del archivo `DATABASE_URL` son históricos y quedan superados por esta corrección del script.
+
+### Cambios incrementales confirmados en el HEAD
+
+- Idempotencia de timeline por `(organizationId, sourceEventKey)`, usada en inbound Telegram/TikTok, con tests de deduplicación y aislamiento entre tenants.
+- Parser TikTok con sender y conversation separados, y pruebas unitarias para impedir que `conversation_id` suplante al sender.
+- Backup drill limitado a datos sintéticos y guardas explícitas para almacenamiento remoto.
+- La clave de timeline evita duplicar esa fila concreta; no garantiza atomicidad de todo el pipeline de webhook ni de notificaciones/workflows/ASR.
+
+### Bloqueos que siguen vigentes
+
+- Scheduler: falta lease/fencing distribuido monotónico comprobado en todas las escrituras del workflow engine y pruebas multiinstancia/worker antiguo.
+- TikTok: falta fixture oficial de socio, prueba HTTP firmada/replay y pipeline completo de conversación/outbox/ACK/conciliación.
+- Outboxes: faltan matriz completa de ACK tardío/lease, evidencia y actor en conciliación y alertas operativas demostradas.
+- Multitenancy: falta inventario sistemático y pruebas negativas exhaustivas de endpoints, jobs, relaciones y callbacks.
+- Datos/operación: faltan dry-run revisado, ensayo aislado de migraciones/rollback, backup remoto ejecutado y sandbox de proveedores.
+- Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`. No aprobar staging, merge ni deploy en esta fase.
