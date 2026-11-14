@@ -31,7 +31,7 @@ async function createConnection(overrides: { refreshState?: string; refreshLease
   const state = {
     accessToken: ['synthetic', 'old', 'access', 'token'].join('-'),
     refreshToken: ['synthetic', 'old', 'refresh', 'token'].join('-'),
-    accessTokenExpiresAt: now - 60_000,
+    accessTokenExpiresAt: Date.now() - 60_000,
     refreshTokenExpiresAt: now + 86_400_000,
     appKey: 'synthetic-client-key',
     appSecret: ['synthetic', 'client', 'secret'].join('-'),
