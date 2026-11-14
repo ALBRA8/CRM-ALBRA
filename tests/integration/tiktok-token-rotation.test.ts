@@ -1,15 +1,25 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/lib/db'
 import { encryptSecret } from '@/lib/crypto'
 import { parseTikTokState } from '@/lib/integrations'
 import { prepareTikTokAccessTokenForSend } from '@/lib/tiktok-token-rotation'
+import { createChannelOutboundIntent } from '@/lib/channel-outbox'
+import { dispatchChannelOutboundMessage } from '@/lib/channel-outbound-dispatcher'
 import { FIX } from '../setup/seed-data'
 
 const connectionIds: string[] = []
+const conversationIds: string[] = []
 const now = 1_800_000_000_000
 const suffix = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
+  if (conversationIds.length) {
+    await db.channelOutboundMessage.deleteMany({ where: { conversationId: { in: conversationIds } } })
+    await db.channelMessage.deleteMany({ where: { conversationId: { in: conversationIds } } })
+    await db.channelConversation.deleteMany({ where: { id: { in: conversationIds } } })
+    conversationIds.length = 0
+  }
   if (connectionIds.length) {
     await db.channelConnection.deleteMany({ where: { id: { in: connectionIds } } })
     connectionIds.length = 0
@@ -76,6 +86,41 @@ describe('TikTok durable OAuth refresh lease', () => {
       refreshFencingVersion: 1,
       tokenExpiresAt: new Date(now + 7_200_000),
     })
+  })
+
+  it('uses the durably rotated access token before invoking the TikTok send adapter', async () => {
+    const connection = await createConnection()
+    const conversation = await db.channelConversation.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        connectionId: connection.id,
+        channel: 'tiktok',
+        externalContactKey: 'synthetic-conversation-id',
+      },
+    })
+    conversationIds.push(conversation.id)
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'tiktok-refresh-dispatch-01',
+      body: 'Mensaje con token renovado',
+    })
+    vi.stubGlobal('fetch', async () => rotatedResponse())
+
+    let adapterToken = ''
+    let persistedRefreshToken = ''
+    const result = await dispatchChannelOutboundMessage(intent.id, {
+      'tiktok_business:tiktok': async (input) => {
+        adapterToken = input.credentials.accessToken
+        const stored = await db.channelConnection.findUnique({ where: { id: connection.id } })
+        persistedRefreshToken = parseTikTokState(stored?.credentialsEnc).refreshToken || ''
+        return { ok: true, providerMessageId: 'synthetic-provider-message-id' }
+      },
+    })
+
+    expect(result.status).toBe('sent')
+    expect(adapterToken).toBe(['synthetic', 'new', 'access', 'token'].join('-'))
+    expect(persistedRefreshToken).toBe(['synthetic', 'rotated', 'refresh', 'token'].join('-'))
   })
 
   it('allows at most one provider refresh across concurrent workers', async () => {
