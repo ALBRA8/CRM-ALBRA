@@ -27,7 +27,7 @@ import { claimChannelWebhookEvent, completeChannelWebhookEvent, getChannelWebhoo
  * ubicaciones conocidas; cualquier evento se registra en timeline.
  */
 
-interface TikTokEventBody {
+export interface TikTokEventBody {
   event?: string
   challenge?: string
   // ubicaciones posibles del mensaje según versiones del API de socios
@@ -50,7 +50,7 @@ function extractEventId(body: TikTokEventBody): string | null {
   return null
 }
 
-function extractMessage(body: TikTokEventBody): { senderId: string; conversationId: string | null; text: string } | null {
+export function extractTikTokMessage(body: TikTokEventBody): { senderId: string; conversationId: string | null; text: string } | null {
   const m = body.message || body.data?.message || body.event_data?.message
   if (!m || typeof m !== 'object') return null
   const rec = m as Record<string, unknown>
@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
         : json({ error: 'Evento TikTok ya está en procesamiento' }, { status: 503 })
     }
 
-    const msg = extractMessage(body)
+    const msg = extractTikTokMessage(body)
     if (msg) {
       const client = await findOrCreateChannelClient({ orgId, platformKey: `tt:${msg.senderId}`, name: null, source: 'tiktok' })
 
