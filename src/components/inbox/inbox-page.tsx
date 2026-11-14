@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2, Mic } from 'lucide-react'
+import { Inbox as InboxIcon, MessageCircle, Send as SendIcon, Instagram, RefreshCw, Loader2, Mic, Music2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -29,6 +29,7 @@ const CHANNEL_ICON = {
   telegram: SendIcon,
   instagram: Instagram,
   facebook: MessengerIcon,
+  tiktok: Music2,
 } as const
 
 const CHANNEL_BADGE = {
@@ -36,6 +37,7 @@ const CHANNEL_BADGE = {
   telegram: 'bg-sky-100 text-sky-700',
   instagram: 'bg-pink-100 text-pink-700',
   facebook: 'bg-blue-100 text-blue-700',
+  tiktok: 'bg-slate-900 text-white',
 } as const
 
 type ChannelFilter = 'all' | InboxConversation['channel']
@@ -128,7 +130,7 @@ export function InboxPage() {
 
   async function handleSend() {
     if (!selected || !draft.trim() || sending) return
-    if (selected.key.startsWith('cc:') && selected.channel !== 'whatsapp' && selected.channel !== 'instagram') return
+    if (selected.key.startsWith('cc:') && selected.channel !== 'whatsapp' && selected.channel !== 'instagram' && selected.channel !== 'messenger' && selected.channel !== 'tiktok') return
     setSending(true)
     const optimistic: InboxMessage = {
       id: `tmp-${Date.now()}`,
@@ -189,6 +191,7 @@ export function InboxPage() {
     { id: 'telegram', label: 'Telegram' },
     { id: 'instagram', label: 'Instagram' },
     { id: 'facebook', label: 'Messenger' },
+    { id: 'tiktok', label: 'TikTok' },
   ]
 
   return (
@@ -197,7 +200,7 @@ export function InboxPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Bandeja</h1>
           <p className="text-xs text-slate-500">
-            WhatsApp · Telegram · Instagram · Messenger {totalUnread > 0 ? `— ${totalUnread} sin leer` : '— todo al día'}
+            WhatsApp · Telegram · Instagram · Messenger · TikTok {totalUnread > 0 ? `— ${totalUnread} sin leer` : '— todo al día'}
           </p>
         </div>
         <Button variant="ghost" size="sm" className="text-slate-500 h-8 w-8 p-0" onClick={() => loadList()} title="Actualizar">
@@ -232,7 +235,7 @@ export function InboxPage() {
               <div className="p-6 text-center">
                 <InboxIcon className="w-8 h-8 text-slate-200 mx-auto mb-2" />
                 <p className="text-xs text-slate-400">Sin conversaciones aún</p>
-                <p className="text-[10px] text-slate-300 mt-1">Los mensajes de WhatsApp, Telegram, Instagram y Messenger aparecerán aquí</p>
+                <p className="text-[10px] text-slate-300 mt-1">Los mensajes de WhatsApp, Telegram, Instagram, Messenger y TikTok aparecerán aquí</p>
               </div>
             ) : (
               filtered.map((conv) => {
