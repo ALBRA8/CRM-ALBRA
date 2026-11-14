@@ -1,5 +1,4 @@
 import type { NextRequest } from 'next/server'
-import { db } from '@/lib/db'
 import { requireAuth } from '@/lib/auth'
 import { handle, json, requireFields } from '@/lib/api-helpers'
 import { parseInboxKey, parseWaNewKey } from '@/lib/inbox'
