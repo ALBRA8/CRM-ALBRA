@@ -311,6 +311,12 @@ export async function POST(req: NextRequest) {
       }
   
       for (const message of value.messages || []) {
+        if (!message.id) {
+          // Without the provider message ID there is no durable idempotency key.
+          // Acknowledge malformed/legacy deliveries without timeline or workflow side effects.
+          console.warn('[whatsapp webhook] mensaje sin ID estable; se omite procesamiento')
+          continue
+        }
         if (message.id && matchedCanonicalConnectionId) {
           const claim = await claimChannelWebhookEvent({
             organizationId: matchedOrgId,
