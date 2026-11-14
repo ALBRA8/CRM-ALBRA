@@ -127,6 +127,7 @@ export async function POST(req: NextRequest) {
     const providerEventId = extractEventId(body)
     if (!providerEventId) return json({ ok: true, processed: false, reason: 'missing_event_id' })
 
+    const eventKey = `event:${createHash('sha256').update(providerEventId).digest('hex')}`
     const connection = await getOrCreateTikTokWebhookConnection({
       organizationId: orgId,
       appIdentity: matchedAppIdentity,
@@ -135,11 +136,10 @@ export async function POST(req: NextRequest) {
     const claim = await claimChannelWebhookEvent({
       organizationId: orgId,
       connectionId: connection.id,
-      eventKey: `event:${createHash('sha256').update(providerEventId).digest('hex')}`,
-      eventType: (body.event || 'tiktok.event').toLowerCase().replace(/[^a-z0-9:._-]/g, '_').slice(0, 80),
+      eventKey,
+      eventType: (typeof body.event === 'string' && body.event.trim() ? body.event : 'tiktok.event').toLowerCase().replace(/[^a-z0-9:._-]/g, '_').slice(0, 80),
     })
     if (!claim) {
-      const eventKey = `event:${createHash('sha256').update(providerEventId).digest('hex')}`
       const status = await getChannelWebhookEventStatus(connection.id, eventKey)
       return status === 'processed'
         ? json({ ok: true, duplicate: true })
@@ -164,7 +164,7 @@ export async function POST(req: NextRequest) {
         await runWorkflowsForTrigger({
           orgId,
           type: 'message_received',
-          payload: { channel: 'tiktok', from: `tt:${msg.senderId}`, text: msg.text, conversationId: `tt:${msg.senderId}`, clientId: client?.id },
+          payload: { channel: 'tiktok', from: `tt:${msg.senderId}`, text: msg.text, conversationId: `tt:${msg.senderId}`, clientId: client?.id, messageId: `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}` },
         })
       } catch (err) {
         console.error('[tiktok webhook] workflows', err)
@@ -174,7 +174,9 @@ export async function POST(req: NextRequest) {
       const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
       const state = parseTikTokState(integration?.tiktokTokenEnc)
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      if (isChannelAutoReplyGloballyEnabled() && state.accessToken && state.sendEndpoint && (nicho?.autoReplyEnabled ?? true)) {
+      // Direct TikTok sends are not yet backed by a durable outbound outbox.
+      // Keep them disabled until the adapter/outbox path is implemented and reviewed.
+      if (process.env.TIKTOK_AUTOREPLY_ENABLED === 'true' && isChannelAutoReplyGloballyEnabled() && state.accessToken && state.sendEndpoint && (nicho?.autoReplyEnabled ?? true)) {
         await llmReplyOrNotification({
           orgId,
           clientId: client?.id || null,
