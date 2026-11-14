@@ -479,6 +479,7 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
             organizationId: event.orgId,
             automationId: automation.id,
             input: JSON.stringify(event.payload).slice(0, 5000),
+            stepLedgerVersion: 1,
             ...(idempotencyKey ? { idempotencyKey } : {}),
           },
         })
