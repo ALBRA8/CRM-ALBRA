@@ -106,3 +106,16 @@ HEAD de esta revisión documental: `9b4fa5356b4d0243c84d8e97a48e0fc3203ee2a8`.
 - El run pull_request `43566330805` para este HEAD superó Prisma generate, migraciones SQLite, TypeScript y lint.
 - La suite de tests estaba en ejecución al momento de registrar esta actualización; build de producción aún no confirmado.
 - No declarar el commit verde hasta verificar suite y build para el SHA exacto.
+
+
+## Corrección incremental aplicada — identidad estable en webhooks Meta
+
+Commits de código:
+- `3b45a32`: WhatsApp omite mensajes entrantes sin `message.id` antes de timeline/workflows.
+- `b8dc02e`: Instagram omite mensajes entrantes sin `msg.mid` antes de efectos CRM/workflow.
+- `d0f4d40`: Messenger omite mensajes entrantes sin `msg.mid` antes de efectos CRM/workflow.
+- `4b1c692`: test de integración Instagram demuestra que un mensaje sin MID no crea claim, conversación ni evento de timeline.
+
+Motivo: sin un ID estable del proveedor no existe una clave durable fiable para deduplicar una entrega repetida. Se prefiere omitir el evento malformado antes que producir efectos duplicados. Esta corrección no resuelve el lease distribuido del scheduler ni integra TikTok en la outbox.
+
+Validación pendiente para estos commits: CI completo en el HEAD resultante, incluidos tests y build. La prueba añadida cubre Instagram; deben añadirse pruebas equivalentes de ruta para WhatsApp y Messenger antes de cerrar la matriz de canales.
