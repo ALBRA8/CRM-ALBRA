@@ -366,6 +366,31 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
       .rejects.toMatchObject({ code: 'INVALID_STATE' })
   })
 
+  it('allows only one concurrent reconciliation of an unknown intent', async () => {
+    const conversation = await createConversation()
+    const intent = await createChannelOutboundIntent({
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'request-reconcile-race',
+      body: 'Conciliación concurrente',
+    })
+    await claimChannelOutboundMessage(intent.id)
+    await markChannelOutboundUnknown(intent.id, 'DELIVERY_UNCERTAIN')
+
+    const results = await Promise.allSettled([
+      reconcileUnknownChannelOutboundMessage({ id: intent.id, resolution: 'sent', providerMessageId: 'provider-race-123' }),
+      reconcileUnknownChannelOutboundMessage({ id: intent.id, resolution: 'sent', providerMessageId: 'provider-race-123' }),
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const stored = await db.channelOutboundMessage.findUnique({ where: { id: intent.id } })
+    const audits = await db.channelConnectionEvent.count({
+      where: { connectionId: conversation.connectionId, type: 'outbound_manually_reconciled_sent' },
+    })
+    expect(stored?.status).toBe('sent')
+    expect(audits).toBe(1)
+    expect(await db.channelMessage.count({ where: { outboundId: intent.id } })).toBe(1)
+  })
+
   it('reconciles unknown as not sent without requeueing', async () => {
     const conversation = await createConversation()
     const intent = await createChannelOutboundIntent({
