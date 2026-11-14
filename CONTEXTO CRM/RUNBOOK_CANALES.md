@@ -181,3 +181,5 @@ Esta prueba requiere un entorno staging aislado, un destinatario de prueba conse
 No habilitar los tres canales a la vez en la primera prueba. La aprobación de un canal no autoriza activar los demás ni producción.
 
 - La suite de integración de Workflow Outbox verifica reclamación concurrente (un solo envío por intención), fencing frente a ACK tardío tras cuarentena, resultado ambiguo sin reintento, aislamiento entre organizaciones, idempotencia/conflicto de payload y autenticación/feature gate del endpoint. Son pruebas con proveedor simulado; no demuestran aceptación en sandbox externo.
+
+- En el detalle de pasos del workflow, una acción externa persistida en outbox se etiqueta `queued`, no `success`: el estado confirma que la intención quedó durablemente encolada, no que el proveedor la haya entregado. El estado global del run representa la finalización del flujo de automatización; la entrega conserva su ciclo de vida independiente en `WorkflowOutboundMessage`.
