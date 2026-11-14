@@ -159,7 +159,7 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 - El worker es POST /api/internal/workflow-outbox, autenticado con WORKFLOW_OUTBOX_WORKER_SECRET; requiere además WORKFLOW_OUTBOX_DISPATCH_ENABLED=true. GET devuelve únicamente contadores agregados.
 - Baileys usa el daemon multi-organización con orgId explícito e INTERNAL_API_SECRET; Telegram resuelve el token cifrado de la integración de la misma organización; SMTP usa Settings de esa organización o el fallback global existente.
 - Un timeout, excepción de transporte o resultado ambiguo queda unknown. Los sending con más de cinco minutos se ponen en cuarentena como unknown; nunca se reencolan automáticamente. Solo un rechazo HTTP 4xx claro del daemon Baileys se marca failed.
-- El worker procesa como máximo cinco por llamada, de forma secuencial. No existe scheduler automático para esta outbox; el scheduler general de workflows no la despacha. Persistir una intención no habilita ni ejecuta el envío.
+- El worker procesa como máximo cinco despachos elegibles por llamada, de forma secuencial. Escanea la cola en páginas de 50 y omite los registros `disabled` sin reclamarlos ni contarlos contra el límite, para que auto-respuestas pausadas no bloqueen otros canales. No existe scheduler automático para esta outbox; el scheduler general de workflows no la despacha. Persistir una intención no habilita ni ejecuta el envío.
 - No activar el worker en producción ni hacer pruebas de envío sin autorización separada, destinatarios de prueba consentidos y revisión de credenciales.
 
 
