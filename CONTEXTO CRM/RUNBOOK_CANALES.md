@@ -231,3 +231,14 @@ La cobertura de WhatsApp/Instagram en outbox no implica validación de proveedor
 
 
 - El agente de canal separa fallos de generación IA de fallos de entrega: si el modelo/contexto falla, degrada sin respuesta; si el callback de envío falla, propaga el error al webhook para marcar el evento failed y solicitar reintento. Messenger trata un resultado `ok:false` del adaptador legacy como fallo de entrega. Esto mejora la recuperación, pero el envío directo sigue siendo ambiguo ante timeout después de aceptación del proveedor y no ofrece exactly-once; no repetir manualmente sin conciliación.
+
+## Messenger: auto-respuesta por outbox canónica
+
+- Los mensajes entrantes con `mid` se registran en `ChannelConversation` / `ChannelMessage`, particionados por la conexión exacta `meta:messenger:<pageId>` y el PSID del contacto.
+- La respuesta automática no llama a Graph API desde el webhook. Genera el texto y persiste una intención `ChannelOutboundMessage` con `clientRequestId=messenger-auto-reply:<mid>`.
+- Si Meta reintenta el webhook después de que la intención ya fue persistida, se reutiliza la intención existente y no se vuelve a generar otro texto para el mismo `mid`. El mensaje entrante y el contador unread tampoco se duplican.
+- El adaptador `meta_graph:messenger` exige un `message_id` de Meta para confirmar `sent`. Rechazos 4xx explícitos se marcan `failed`; timeouts, 5xx, 429 y respuestas 2xx sin ID quedan `unknown` y requieren conciliación manual.
+- El worker interno incluye Messenger, pero el envío sigue bloqueado salvo autorización explícita por `CHANNEL_OUTBOUND_DISPATCH_ENABLED=true` y secreto interno válido. No hay scheduler registrado por esta ruta.
+- La conexión canónica se actualiza a `connected` solo cuando llega un webhook con firma Meta válida para la Página exacta y se renuevan las credenciales cifradas. Esto habilita la elegibilidad técnica de la outbox, no activa el worker ni envía mensajes por sí mismo.
+- Los eventos Messenger sin `mid` no tienen identidad durable; por seguridad no generan auto-respuesta canónica.
+- Las automatizaciones `message_received` siguen siendo una ruta separada; sus efectos externos no se vuelven atómicos con la outbox de auto-respuesta. Un fallo parcial puede exigir conciliación operativa.
