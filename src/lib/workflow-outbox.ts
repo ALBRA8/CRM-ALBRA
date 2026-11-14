@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { db } from '@/lib/db'
 import { decryptSecret, encryptSecret } from '@/lib/crypto'
-import { getIntegration, parseTelegramState, sendTelegramBotMessage } from '@/lib/integrations'
+import { getIntegration, isTelegramAutoReplyEnabled, parseTelegramState, sendTelegramBotMessage } from '@/lib/integrations'
 import { getSmtpConfig, trySendSmtp } from '@/lib/mail'
 
 export type WorkflowOutboundChannel = 'whatsapp' | 'telegram' | 'email'
@@ -96,6 +96,22 @@ async function claimWorkflowOutboundMessage(id: string) {
 
 /** Dispatch one persisted intent. Uncertain results are terminal and never retried. */
 export async function dispatchWorkflowOutboundMessage(id: string) {
+  const pending = await db.workflowOutboundMessage.findUnique({
+    where: { id },
+    select: { channel: true, payloadEnc: true, organizationId: true },
+  })
+  if (!pending) return { status: 'not_claimed' as const }
+  if (pending.channel === 'telegram') {
+    const raw = decryptSecret(pending.payloadEnc)
+    let queuedPayload: Record<string, unknown> = {}
+    try { queuedPayload = raw ? JSON.parse(raw) as Record<string, unknown> : {} } catch { queuedPayload = {} }
+    if (queuedPayload.autoReply === true) {
+      const integration = await getIntegration(pending.organizationId)
+      if (!isTelegramAutoReplyEnabled(parseTelegramState(integration.telegramBotTokenEnc))) {
+        return { status: 'disabled' as const }
+      }
+    }
+  }
   const claimed = await claimWorkflowOutboundMessage(id)
   if (!claimed) return { status: 'not_claimed' as const }
   const { item, claimToken, payload } = claimed
