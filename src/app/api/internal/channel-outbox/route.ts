@@ -4,6 +4,7 @@ import { json } from '@/lib/api-helpers'
 import { safeEqual } from '@/lib/internal-org-auth'
 import { dispatchChannelOutboundMessage, type DispatchResult } from '@/lib/channel-outbound-dispatcher'
 import { createMetaChannelAdapters } from '@/lib/meta-channel-adapters'
+import { createTikTokChannelAdapters } from '@/lib/tiktok-channel-adapter'
 
 export const runtime = 'nodejs'
 
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) return json({ error: 'No autorizado' }, { status: 401 })
 
   const staleBefore = new Date(Date.now() - 5 * 60 * 1000)
-  const [queued, oldestQueued, sending, sent, failed, unknown, staleSending, webhookProcessing, webhookFailed, staleWebhookEvents, connectedMeta] = await Promise.all([
+  const [queued, oldestQueued, sending, sent, failed, unknown, staleSending, webhookProcessing, webhookFailed, staleWebhookEvents, connectedMeta, connectedTikTok] = await Promise.all([
     db.channelOutboundMessage.count({ where: { status: 'queued' } }),
     db.channelOutboundMessage.findFirst({ where: { status: 'queued' }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } }),
     db.channelOutboundMessage.count({ where: { status: 'sending' } }),
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
     db.channelConnection.count({
       where: { status: 'connected', channel: { in: ['whatsapp', 'instagram', 'messenger'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
     }),
+    db.channelConnection.count({ where: { status: 'connected', channel: 'tiktok', provider: 'tiktok_business' } }),
   ])
 
   return json({
@@ -55,6 +57,7 @@ export async function GET(req: NextRequest) {
     outbox: { queued, oldestQueuedAgeSeconds: oldestQueued ? Math.max(0, Math.floor((Date.now() - oldestQueued.createdAt.getTime()) / 1000)) : 0, sending, sent, failed, unknown, staleSending },
     webhookEvents: { processing: webhookProcessing, failed: webhookFailed, staleProcessing: staleWebhookEvents },
     connectedMetaConnections: connectedMeta,
+    connectedTikTokConnections: connectedTikTok,
     sampledAt: new Date().toISOString(),
   })
 }
@@ -76,7 +79,7 @@ export async function POST(req: NextRequest) {
         is: {
           status: 'active',
           connection: {
-            is: { status: 'connected', channel: { in: ['whatsapp', 'instagram', 'messenger'] }, provider: { in: ['meta_cloud', 'meta_graph'] } },
+            is: { status: 'connected', OR: [ { channel: { in: ['whatsapp', 'instagram', 'messenger'] }, provider: { in: ['meta_cloud', 'meta_graph'] } }, { channel: 'tiktok', provider: 'tiktok_business' } ] },
           },
         },
       },
@@ -86,7 +89,7 @@ export async function POST(req: NextRequest) {
     select: { id: true },
   })
 
-  const adapters = createMetaChannelAdapters()
+  const adapters = { ...createMetaChannelAdapters(), ...createTikTokChannelAdapters() }
   const results: Array<{ id: string } & DispatchResult> = []
   for (const item of queued) {
     results.push({
