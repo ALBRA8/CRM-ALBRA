@@ -7,6 +7,58 @@ const PROCESSING_LEASE_MS = 5 * 60 * 1000
 
 export type ChannelWebhookEventClaim = { id: string; claimToken: string }
 
+/**
+ * Resolves the legacy Telegram bot to its canonical connection identity.
+ * The key matches the channel backfill format, so repeated webhook deliveries
+ * and a later backfill converge on the same connection instead of creating
+ * competing ledgers. Existing ownership is always checked fail-closed.
+ */
+export async function getOrCreateTelegramWebhookConnection(input: {
+  organizationId: string
+  botId: string
+  credentialsEnc: string
+}): Promise<{ id: string }> {
+  if (!/^\\d{1,20}$/.test(input.botId)) throw new Error('Invalid Telegram bot identity')
+  const providerAccountKey = `telegram:bot:${input.botId}`
+  const existing = await db.channelConnection.findUnique({
+    where: { providerAccountKey },
+    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+  })
+  if (existing) {
+    if (existing.organizationId !== input.organizationId || existing.channel !== 'telegram' ||
+      existing.provider !== 'telegram_bot' || existing.externalAccountId !== input.botId) {
+      throw new Error('Telegram bot connection ownership conflict')
+    }
+    return { id: existing.id }
+  }
+
+  try {
+    const created = await db.channelConnection.create({
+      data: {
+        organizationId: input.organizationId,
+        channel: 'telegram',
+        provider: 'telegram_bot',
+        providerAccountKey,
+        externalAccountId: input.botId,
+        status: 'pending',
+        credentialsEnc: input.credentialsEnc,
+        metadata: JSON.stringify({ legacyWebhook: true, source: 'Integration.telegram' }),
+      },
+      select: { id: true },
+    })
+    return created
+  } catch (error) {
+    // A concurrent webhook/backfill may have won the unique-key race.
+    const raced = await db.channelConnection.findUnique({
+      where: { providerAccountKey },
+      select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+    })
+    if (!raced || raced.organizationId !== input.organizationId || raced.channel !== 'telegram' ||
+      raced.provider !== 'telegram_bot' || raced.externalAccountId !== input.botId) throw error
+    return { id: raced.id }
+  }
+}
+
 /** A fencing token prevents a stale lease owner from closing a newer claim. */
 export async function claimChannelWebhookEvent(input: { organizationId: string; connectionId: string; eventKey: string; eventType: string }): Promise<ChannelWebhookEventClaim | null> {
   if (!EVENT_KEY_PATTERN.test(input.eventKey) || !EVENT_TYPE_PATTERN.test(input.eventType)) throw new Error('Invalid channel webhook event identity')
