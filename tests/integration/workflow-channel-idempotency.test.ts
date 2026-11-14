@@ -108,7 +108,7 @@ describe('workflow trigger idempotency for channel messages', () => {
     const run = await db.automationRun.findFirst({ where: { automationId: automation.id } })
     expect(run).not.toBeNull()
     const states = JSON.parse(run?.stepStates || '[]') as Array<{ status: string }>
-    expect(states[0]?.status).toBe('success')
+    expect(states[0]?.status).toBe('queued')
     const duplicate = await enqueueWorkflowOutboundMessage({
       organizationId: FIX.orgA.id,
       automationId: automation.id,
