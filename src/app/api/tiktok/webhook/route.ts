@@ -30,44 +30,70 @@ import { claimChannelWebhookEvent, completeChannelWebhookEvent, getChannelWebhoo
 export interface TikTokEventBody {
   event?: string
   challenge?: string
-  // ubicaciones posibles del mensaje según versiones del API de socios
+  client_key?: string
+  create_time?: number
+  user_openid?: string
+  content?: string | Record<string, unknown>
   data?: Record<string, unknown>
   event_data?: Record<string, unknown>
-  message?: { conversation_id?: string; text?: string; sender?: { id?: string } | string }
+  message?: Record<string, unknown>
 }
 
-function extractEventId(body: TikTokEventBody): string | null {
-  const candidates = [body as Record<string, unknown>, body.data, body.event_data]
+function parseTikTokContent(body: TikTokEventBody): Record<string, unknown> {
+  if (body.content && typeof body.content === 'object' && !Array.isArray(body.content)) return body.content
+  if (typeof body.content === 'string') {
+    try {
+      const parsed = JSON.parse(body.content) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+    } catch { /* unsupported content shape: reject message parsing */ }
+  }
+  return {}
+}
+
+function extractEventId(body: TikTokEventBody, requestLogId?: string | null): string | null {
+  const content = parseTikTokContent(body)
+  const candidates = [body as Record<string, unknown>, body.data, body.event_data, content, content.message as Record<string, unknown> | undefined]
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object') continue
-    for (const key of ['event_id', 'eventId', 'id']) {
+    for (const key of ['event_id', 'eventId', 'message_id', 'messageId', 'id']) {
       const value = candidate[key]
       if ((typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value))) {
         return String(value).trim().slice(0, 255)
       }
     }
   }
-  return null
+  // TikTok's x-tt-logid uniquely identifies a delivery request. It is a
+  // last-resort idempotency key only when the event payload omits a message ID.
+  return requestLogId && /^[A-Za-z0-9._:-]{8,128}$/.test(requestLogId) ? `logid:${requestLogId}` : null
 }
 
-export function extractTikTokMessage(body: TikTokEventBody): { senderId: string; conversationId: string | null; text: string } | null {
-  const m = body.message || body.data?.message || body.event_data?.message
-  if (!m || typeof m !== 'object') return null
-  const rec = m as Record<string, unknown>
-  const sender = rec.sender
+export function extractTikTokMessage(body: TikTokEventBody): { senderId: string; conversationId: string; text: string } | null {
+  const content = parseTikTokContent(body)
+  const candidates = [
+    body.message,
+    body.data?.message as Record<string, unknown> | undefined,
+    body.event_data?.message as Record<string, unknown> | undefined,
+    content.message as Record<string, unknown> | undefined,
+    content,
+  ]
+  const rec = candidates.find((candidate) => candidate && typeof candidate === 'object') as Record<string, unknown> | undefined
+  if (!rec) return null
+  const sender = rec.sender ?? rec.sender_openid ?? rec.sender_id ?? rec.from
   const senderId =
     typeof sender === 'string'
       ? sender.trim()
       : typeof sender === 'object' && sender !== null
-        ? String((sender as Record<string, unknown>).id || (sender as Record<string, unknown>).user_id || '').trim()
+        ? String((sender as Record<string, unknown>).id || (sender as Record<string, unknown>).open_id || (sender as Record<string, unknown>).user_openid || '').trim()
         : ''
   const conversationId = typeof rec.conversation_id === 'string' && rec.conversation_id.trim()
     ? rec.conversation_id.trim()
-    : null
-  const text = typeof rec.text === 'string' ? rec.text : ''
-  // Both provider identities are mandatory. Never substitute sender_id for
-  // conversation_id or synthesize a conversation ID: without the latter we
-  // cannot bind the event to a canonical thread or safely enqueue a reply.
+    : typeof rec.conversationId === 'string' && rec.conversationId.trim()
+      ? rec.conversationId.trim()
+      : ''
+  const textValue = rec.text ?? rec.body ?? (typeof rec.message_content === 'object' && rec.message_content !== null
+    ? (rec.message_content as Record<string, unknown>).text
+    : undefined)
+  const text = typeof textValue === 'string' ? textValue : ''
   if (!senderId || !conversationId || !text) return null
   return { senderId, conversationId, text: text.slice(0, 3000) }
 }
@@ -106,6 +132,8 @@ export async function POST(req: NextRequest) {
     for (const candidate of candidates) {
       const state = parseTikTokState(candidate.tiktokTokenEnc)
       if (!state.appSecret) continue
+      if (body.client_key && state.appKey !== body.client_key) continue
+      if (body.user_openid && state.openId !== body.user_openid) continue
       if (verifyTikTokSignature(rawBody, state.appSecret, signature)) {
         matches.push({
           organizationId: candidate.organizationId,
@@ -125,7 +153,7 @@ export async function POST(req: NextRequest) {
 
     // A stable provider event ID is required before any CRM/workflow side effect.
     // Never derive identity from message text: two legitimate messages can be identical.
-    const providerEventId = extractEventId(body)
+    const providerEventId = extractEventId(body, req.headers.get('x-tt-logid'))
     if (!providerEventId) return json({ ok: true, processed: false, reason: 'missing_event_id' })
 
     const eventKey = `event:${createHash('sha256').update(providerEventId).digest('hex')}`
