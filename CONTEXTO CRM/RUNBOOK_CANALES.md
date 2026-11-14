@@ -210,6 +210,8 @@ No habilitar los tres canales a la vez en la primera prueba. La aprobación de u
 
 La cobertura de WhatsApp/Instagram en outbox no implica validación de proveedor real. Los tests automatizados usan mocks/fixtures; faltan cuentas sandbox, pruebas de entrega y conciliación externas.
 
+- Los endpoints manuales autenticados de envío (Telegram, Instagram, Facebook/Messenger, TikTok y correo) realizan llamadas directas al proveedor; no son workers de outbox ni quedan bloqueados por CHANNEL_OUTBOUND_DISPATCH_ENABLED. No invocarlos durante pruebas de auditoría ni usar destinatarios reales. El endpoint canónico /api/inbox/send sí persiste intención queued para WhatsApp/Instagram.
+
 ### Backfill legacy: alcance y recuperación
 
 - scripts/backfill-channel-connections.ts es dry-run por defecto. Lee WhatsAppConnection e Integration y planifica WhatsApp Cloud, Instagram, Messenger, Telegram y TikTok.
