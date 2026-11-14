@@ -49,7 +49,7 @@ export interface WorkflowAction {
 /** Estado de ejecución por acción (estilo Twenty: stepInfos/stepLogs). */
 export interface StepState {
   type: string
-  status: 'success' | 'failed' | 'skipped' | 'waiting'
+  status: 'success' | 'queued' | 'failed' | 'skipped' | 'waiting'
   error?: string
   ms?: number
 }
@@ -388,9 +388,12 @@ async function runActionSteps(
     try {
       const out = await executeAction(orgId, action, ctx, { ...execution, stepIndex: i })
       outputs.push(out)
-      // Una acción externa sin outbox no se considera éxito: queda auditable
-      // como skipped/pending, sin bloquear los pasos internos posteriores.
-      stepStates[i] = { type: action.type, status: out.pending === true && out.queued !== true ? 'skipped' : 'success', ms: Date.now() - t0 }
+      // "queued" confirma persistencia durable de la intención, no entrega al proveedor.
+      // Una acción externa sin outbox queda skipped/pending y no bloquea pasos internos.
+      const stepStatus = out.pending === true
+        ? (out.queued === true ? 'queued' : 'skipped')
+        : 'success'
+      stepStates[i] = { type: action.type, status: stepStatus, ms: Date.now() - t0 }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300), ms: Date.now() - t0 }
