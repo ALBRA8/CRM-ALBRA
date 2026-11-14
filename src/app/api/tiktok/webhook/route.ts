@@ -109,6 +109,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
+  if (Buffer.byteLength(rawBody, 'utf8') > 1024 * 1024) return json({ error: 'Body demasiado grande' }, { status: 413 })
   try {
     let body: TikTokEventBody
     try {
@@ -195,22 +196,30 @@ export async function POST(req: NextRequest) {
         update: { contactName: client?.name || msg.senderId },
       })
       const providerMessageId = `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}`
-      await db.channelMessage.upsert({
-        where: { conversationId_externalMessageId: { conversationId: conversation.id, externalMessageId: providerMessageId } },
-        create: {
-          conversationId: conversation.id,
-          externalMessageId: providerMessageId,
-          direction: 'in',
-          senderType: 'contact',
-          body: msg.text,
-          metadata: JSON.stringify({ provider: 'tiktok_business', senderId: msg.senderId, conversationId: msg.conversationId, eventId: providerEventId }),
-        },
-        update: {},
-      })
-      await db.channelConversation.update({
-        where: { id: conversation.id },
-        data: { lastMessage: msg.text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
-      })
+      let insertedMessage = false
+      try {
+        await db.channelMessage.create({
+          data: {
+            conversationId: conversation.id,
+            externalMessageId: providerMessageId,
+            direction: 'in',
+            senderType: 'contact',
+            body: msg.text,
+            metadata: JSON.stringify({ provider: 'tiktok_business', senderId: msg.senderId, conversationId: msg.conversationId, eventId: providerEventId }),
+          },
+        })
+        insertedMessage = true
+      } catch (error) {
+        if ((error as { code?: string } | null)?.code !== 'P2002') throw error
+      }
+      // A reclaimed webhook event can replay after a partial DB commit. Only
+      // the first insert changes unread count and conversation preview.
+      if (insertedMessage) {
+        await db.channelConversation.update({
+          where: { id: conversation.id },
+          data: { lastMessage: msg.text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
+        })
+      }
 
       await recordTimelineEvent({
         orgId,
