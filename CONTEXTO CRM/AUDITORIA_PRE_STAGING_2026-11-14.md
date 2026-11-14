@@ -1,0 +1,77 @@
+# Auditoría previa a staging — 2026-11-14
+
+Repositorio: ALBRA8/CRM-ALBRA  
+PR de integración: #3  
+Rama inspeccionada: `fix/migration-safety-audit`  
+HEAD inspeccionado: `68e06a232107f80c9ce221adeadcd8fff6690b37`
+
+## Estado de control verificado
+
+- PR #3: abierta, draft, no fusionada.
+- CI pull_request del HEAD inspeccionado: run 43565638654, conclusión `success`.
+- En ese run finalizaron correctamente: instalación, secret scan, Prisma generate, migraciones limpias SQLite, TypeScript, lint, suite de tests y build de producción.
+- Esto valida ese SHA en CI; no demuestra compatibilidad con una base de staging real ni con proveedores externos.
+- No se ejecutaron migraciones, backfills, workers, envíos externos ni despliegues durante esta auditoría.
+
+## Hallazgos técnicos confirmados en el código inspeccionado
+
+### TikTok — no listo para staging
+
+- El webhook valida HMAC y frescura del timestamp, exige un identificador estable y reclama el evento en `ChannelWebhookEvent`.
+- El ledger evita procesar de nuevo eventos ya procesados y utiliza lease/fencing para los claims.
+- El parser actual obtiene `senderId` y texto, pero no conserva de forma fiable el `conversation_id` documentado del mensaje entrante.
+- El webhook explícitamente no despacha respuestas; el sender de Business Messaging existe, pero no está integrado a la outbox canónica de canales.
+- El endpoint de despacho de `ChannelOutboundMessage` inspeccionado solo selecciona WhatsApp, Instagram y Messenger; TikTok no está incluido.
+- Bloqueo: definir y probar el contrato de evento entrante autorizado por TikTok Business Messaging, persistir la conversación y conexión correctas y conectar el adaptador con outbox, conciliación y estado ambiguo. No inferir el ID de conversación desde el remitente.
+
+### Telegram — el estado anterior estaba desactualizado
+
+- El webhook actual sí valida `X-Telegram-Bot-Api-Secret-Token`.
+- Reclama `update_id` en `ChannelWebhookEvent` antes de timeline, workflows, ASR o respuesta.
+- La respuesta IA se encola mediante `enqueueTelegramWebhookReply`; no debe considerarse entrega confirmada.
+- Pendiente: verificar el contrato completo de conexión canónica/backfill, cobertura de carreras y fallos parciales, y que todas las rutas de envío automático estén detrás del kill-switch global y de la outbox. Probar con mocks y luego sandbox aprobado.
+
+### Scheduler — no listo para staging
+
+- La reclamación de una automatización schedule y la creación de `AutomationRun` están dentro de una transacción; el filtro incluye automatización, tenant, tipo y vencimiento.
+- La exclusión `running` es una variable local al proceso; no es un lock distribuido.
+- La recuperación de runs antiguos utiliza un cambio condicional de estado/fecha, pero no hay un lease/fencing token de propiedad del worker que cubra la ejecución completa. Un proceso antiguo que siga vivo puede continuar después de que otro proceso lo considere estancado.
+- Los pasos `started` ambiguos se convierten a `unknown` y no se repiten automáticamente; los runs históricos sin ledger se dejan para revisión.
+- Bloqueo: lease distribuido con fencing monotónico y comprobación del token en cada escritura de progreso/resultado, además de pruebas de dos instancias, expiración, worker antiguo reanudado y crash en cada frontera.
+
+### Outbox y workers — no listos para staging
+
+- Hay outbox de canales y outbox de workflows separadas, con estados conservadores y endpoints pull protegidos por secretos dedicados y flags.
+- `unknown` y `sending` vencidos requieren conciliación; no deben reintentarse a ciegas.
+- El monitor de salud existe como script/workflow manual condicionado a secretos; no hay evidencia de monitorización/alertas desplegadas.
+- Bloqueo: verificar todos los adaptadores/canales, reconciliación idempotente, carrera entre ACK y lease, métricas, alertas reales de staging y procedimientos de pausa/recuperación.
+
+### Multitenancy, datos y migraciones
+
+- El esquema canónico `ChannelConnection`, `ChannelConversation`, `ChannelWebhookEvent` y outboxes ya existe.
+- El runbook indica backfill en dry-run por defecto y exige backup restaurable, revisión de conflictos y aprobación separada antes de aplicar.
+- La CI comprueba migraciones limpias en SQLite. No prueba restauración de backup, volumen real, PostgreSQL ni backfill sobre datos reales.
+- Bloqueo: auditoría sistemática de cada query y relación por `organizationId`, constraints compuestas donde correspondan, dry-run revisado, ensayo de restauración y migraciones en staging aislado.
+
+## Puertas obligatorias antes de staging
+
+- [ ] Cerrar contrato TikTok entrante/saliente y outbox.
+- [ ] Implementar lease/fencing distribuido del scheduler y pruebas multiinstancia.
+- [ ] Auditar los cinco canales y todas las rutas de envío legacy/canónicas.
+- [ ] Verificar idempotencia y conciliación de ambas outboxes.
+- [ ] Completar matriz de aislamiento multitenant y pruebas negativas.
+- [ ] Ejecutar dry-run de backfill y revisar conflictos; no aplicar sin aprobación.
+- [ ] Backup y restauración demostrados en entorno aislado.
+- [ ] CI verde en el nuevo HEAD (secret scan, migraciones, TypeScript, lint, tests y build).
+- [ ] Pruebas sandbox por proveedor, con cuentas de prueba autorizadas y límites controlados.
+- [ ] Monitorización/alertas y runbooks probados.
+- [ ] Revisión de secretos, permisos, callbacks, URLs y feature flags.
+- [ ] Confirmar flags de despacho y auto-respuesta apagados antes de cualquier despliegue.
+
+## Límites de esta auditoría
+
+Esta auditoría se hizo leyendo el árbol y los archivos de la rama en GitHub. No se ejecutó el repositorio localmente, no se aplicaron migraciones y no se accedió a staging ni a cuentas de proveedores. Los puntos anteriores son hallazgos de código/documentación, no una certificación de operación real.
+
+## Regla de seguridad
+
+Mantener desactivados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`. No configurar secretos de workers, no ejecutar envíos reales, no hacer merge ni desplegar como parte de esta fase previa.
