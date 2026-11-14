@@ -86,6 +86,9 @@ describe('Messenger webhook connection identity', () => {
     ])
     connectionIds.push(a.id)
     expect(a.id).toBe(b.id)
+    const storedConnection = await db.channelConnection.findUnique({ where: { id: a.id } })
+    expect(storedConnection?.status).toBe('connected')
+    expect(storedConnection?.lastVerifiedAt).toBeInstanceOf(Date)
     await expect(getOrCreateMessengerWebhookConnection({
       organizationId: FIX.orgB.id,
       pageId,
