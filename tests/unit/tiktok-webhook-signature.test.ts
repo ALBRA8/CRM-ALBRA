@@ -40,7 +40,7 @@ describe('TikTok Business Messaging send contract', () => {
     }
 
     const result = await sendTikTokBusinessMessage({
-      state: { accessToken: 'test-access-token', openId: 'business-open-id' },
+      state: { accessToken: 'test-access-token', // scan-secrets:allow — token ficticio exclusivo de test openId: 'business-open-id' // scan-secrets:allow — identificador ficticio exclusivo de test },
       conversationId: 'conversation-123',
       text: 'Hola desde CRM',
       fetchImpl,
@@ -67,7 +67,7 @@ describe('TikTok Business Messaging send contract', () => {
       { status: 200 },
     )
     const result = await sendTikTokBusinessMessage({
-      state: { accessToken: 'test-access-token', openId: 'business-open-id' },
+      state: { accessToken: 'test-access-token', // scan-secrets:allow — token ficticio exclusivo de test openId: 'business-open-id' // scan-secrets:allow — identificador ficticio exclusivo de test },
       conversationId: 'conversation-123',
       text: 'Hola',
       fetchImpl,
