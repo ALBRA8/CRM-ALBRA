@@ -15,7 +15,7 @@ describe('TikTok webhook signature freshness', () => {
     const now = Date.now()
     const timestamp = String(Math.floor(now / 1000))
     const rawBody = JSON.stringify({ event_id: 'evt_synthetic_1', event: 'message' })
-    const secret = 'synthetic-tiktok-app-secret'
+    const secret = 'synthetic-tiktok-app-secret' // scan-secrets:allow — fixture sintético exclusivo de test HMAC
     const signature = createHmac('sha256', secret).update(timestamp + rawBody).digest('hex')
 
     expect(verifyTikTokSignature(rawBody, secret, signature, timestamp)).toBe(true)
