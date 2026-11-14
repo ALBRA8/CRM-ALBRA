@@ -1,7 +1,4 @@
 import { db } from './db'
-import { decryptSecret } from './crypto'
-import { sendTelegramBotMessage, sendInstagramGraphMessage, sendFacebookGraphMessage, getIntegration, parseTelegramState, parseInstagramState, parseFacebookState } from './integrations'
-import { recordTimelineEvent } from './timeline'
 
 /**
  * Bandeja omnicanal (Fase 4 del plan maestro).
@@ -563,84 +560,8 @@ export interface InboxSendResult {
 }
 
 /**
- * Envía por el daemon Baileys con el contrato { to, text } y el secreto
- * server-to-server. Único camino de envío WhatsApp (lo usan tanto las
- * conversaciones existentes "wa:<convId>" como las directas "wa-new:<teléfono>").
- */
-async function sendViaDaemon(to: string, text: string): Promise<InboxSendResult> {
-  const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
-  const secret = process.env.INTERNAL_API_SECRET
-  if (!secret) return { ok: false, error: 'INTERNAL_API_SECRET no configurado en el servidor' }
-  const res = await fetch(`${daemonUrl}/send`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
-    body: JSON.stringify({ to, text }),
-    signal: AbortSignal.timeout(5000),
-  })
-  const data = (await res.json().catch(() => ({}))) as { error?: string }
-  if (!res.ok || data.error) return { ok: false, error: data.error || `WhatsApp no pudo enviar (HTTP ${res.status})` }
-  return { ok: true }
-}
-
-/**
- * Envío WhatsApp DIRECTO (Task 19-b) a un teléfono sin conversación previa:
- * primero manda por el MISMO camino daemon que "wa:<convId>" (si el daemon
- * falla no se crea nada) y, solo si el envío salió, find-or-create de la
- * conversación (unique organizationId+contactPhone) con el nombre del cliente
- * y lastMessage/lastMessageAt/lastMessageFrom ('out') igual que deja el daemon
- * en los mensajes entrantes (texto truncado a 100). Trazabilidad idéntica al
- * caso existente: sin timeline ni fila de mensaje (los dueña el daemon).
- */
-async function sendWhatsAppDirect(opts: {
-  orgId: string
-  userId: string
-  phone: string
-  clientId?: string | null
-  text: string
-}): Promise<InboxSendResult> {
-  const text = opts.text.trim().slice(0, 4000)
-  if (!text) return { ok: false, error: 'El mensaje está vacío' }
-  try {
-    const sent = await sendViaDaemon(opts.phone, text)
-    if (!sent.ok) return sent
-
-    let contactName: string | null = null
-    if (opts.clientId) {
-      const client = await db.client.findFirst({
-        where: { organizationId: opts.orgId, id: opts.clientId },
-        select: { name: true },
-      })
-      contactName = client?.name || null
-    }
-    await db.whatsAppConversation.upsert({
-      where: {
-        organizationId_contactPhone: { organizationId: opts.orgId, contactPhone: opts.phone },
-      },
-      create: {
-        organizationId: opts.orgId,
-        clientId: opts.clientId || null,
-        contactPhone: opts.phone,
-        contactName: contactName || opts.phone,
-        lastMessage: text.slice(0, 100),
-        lastMessageAt: new Date(),
-        lastMessageFrom: 'out',
-      },
-      // Ya existía conversación para ese teléfono → no se toca (igual que wa:<convId>).
-      update: {},
-    })
-    return { ok: true }
-  } catch (err) {
-    console.error('[inbox] envío WhatsApp directo falló', err)
-    return { ok: false, error: 'No se pudo enviar el mensaje. Intenta de nuevo.' }
-  }
-}
-
-/**
- * Envía un mensaje por el canal de la conversación. Reutiliza las mismas
- * funciones de lib/integrations que los endpoints /telegram/send y /instagram/send
- * (misma trazabilidad en timeline, source="manual"), y el mismo contrato
- * { to, text } del daemon para WhatsApp (también para la key directa
- * "wa-new:<teléfono>" de clientes sin conversación previa).
+ * Los envíos legacy directos se han retirado. El endpoint de bandeja solo
+ * admite conversaciones canónicas y persiste una intención en la outbox.
  */
 export async function sendInboxMessage(opts: {
   orgId: string
@@ -650,12 +571,8 @@ export async function sendInboxMessage(opts: {
   clientId?: string | null
   text: string
 }): Promise<InboxSendResult> {
-  // Defensa en profundidad: esta función ya no tiene permiso para hacer envíos
-  // directos. Los envíos válidos se persisten desde /api/inbox/send en la outbox.
   if (opts.key.startsWith('cc:')) {
     return { ok: false, error: 'Usa el endpoint de la bandeja para encolar la conversación canónica.' }
   }
   return { ok: false, error: 'El envío legacy está deshabilitado; usa una conversación canónica de la outbox.' }
 }
-
-
