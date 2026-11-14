@@ -2,11 +2,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { runDueJobs } from '@/lib/scheduler'
 import { db } from '@/lib/db'
 import { FIX } from '../helpers'
+import { enqueueWorkflowOutboundMessage } from '@/lib/workflow-outbox'
 
 let triggerAutomationId: string
 let recoveryAutomationId: string
 let recoveredRunId: string
 let originalLeaseToken: string
+let staleFenceRunId: string
 
 beforeAll(async () => {
   // The shared integration setup mocks the workflow engine for route tests.
@@ -59,6 +61,19 @@ beforeAll(async () => {
       finishedAt: new Date(Date.now() - 15 * 60_000),
     },
   })
+
+  const staleFenceRun = await db.automationRun.create({
+    data: {
+      organizationId: FIX.orgA.id,
+      automationId: recoveryAutomationId,
+      status: 'processing',
+      stepLedgerVersion: 1,
+      leaseToken: 'current-worker-lease-token',
+      leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+      fencingVersion: 2,
+    },
+  })
+  staleFenceRunId = staleFenceRun.id
 })
 
 afterAll(async () => {
@@ -94,6 +109,25 @@ describe('distributed workflow run leases', () => {
     expect(runs[0].leaseToken).toBeTruthy()
     expect(runs[0].fencingVersion).toBe(1)
     expect(runs[0].leaseExpiresAt).not.toBeNull()
+  })
+
+  it('rejects durable outbound writes from an older fencing generation', async () => {
+    await expect(enqueueWorkflowOutboundMessage({
+      organizationId: FIX.orgA.id,
+      automationId: recoveryAutomationId,
+      automationRunId: staleFenceRunId,
+      stepIndex: 0,
+      channel: 'email',
+      payload: { to: 'test@example.invalid', subject: 'test', html: 'test' },
+      lease: {
+        runId: staleFenceRunId,
+        orgId: FIX.orgA.id,
+        leaseToken: originalLeaseToken,
+        fencingVersion: 1,
+      },
+    })).rejects.toThrow('WORKFLOW_LEASE_LOST')
+
+    expect(await db.workflowOutboundMessage.count({ where: { automationRunId: staleFenceRunId } })).toBe(0)
   })
 
   it('reclaims an expired generation without re-running completed steps', async () => {
