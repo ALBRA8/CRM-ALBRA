@@ -7,7 +7,7 @@ import { encodeTikTokState, parseTikTokState } from '@/lib/integrations'
 import { FIX } from '../setup/seed-data'
 
 vi.mock('@/lib/auth', () => ({
-  requireAdmin: vi.fn(async () => ({ orgId: 'org-a', userId: 'user-a' })),
+  requireAdmin: vi.fn(async () => ({ orgId: 'org-c', userId: 'user-a' })),
 }))
 vi.mock('@/lib/api-helpers', () => ({
   handle: async (fn: () => Promise<unknown>) => fn(),
@@ -30,7 +30,7 @@ afterEach(async () => {
     await db.channelConnection.deleteMany({ where: { id: { in: connectionIds } } })
     connectionIds.length = 0
   }
-  await db.integration.deleteMany({ where: { organizationId: FIX.orgA.id } })
+  await db.integration.deleteMany({ where: { organizationId: FIX.orgC.id } })
 })
 
 function callbackRequest() {
@@ -38,7 +38,7 @@ function callbackRequest() {
   process.env.APP_SECRET = secret
   const nonce = 'synthetic-csrf-nonce'
   const expires = String(Date.now() + 5 * 60_000)
-  const payload = `${FIX.orgA.id}.${nonce}.${expires}`
+  const payload = `${FIX.orgC.id}.${nonce}.${expires}`
   const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex')
   const state = `${payload}.${signature}`
   const url = new URL('https://crm.test/api/tiktok/oauth/callback')
@@ -71,7 +71,7 @@ describe('TikTok OAuth reconnection persistence', () => {
   it('replaces uncertain credentials atomically and fences stale refresh workers', async () => {
     const existingIntegration = await db.integration.create({
       data: {
-        organizationId: FIX.orgA.id,
+        organizationId: FIX.orgC.id,
         tiktokTokenEnc: encodeTikTokState({
           appKey: 'synthetic-client-key',
           appSecret: 'synthetic-client-secret',
@@ -83,7 +83,7 @@ describe('TikTok OAuth reconnection persistence', () => {
     })
     const connection = await db.channelConnection.create({
       data: {
-        organizationId: FIX.orgA.id,
+        organizationId: FIX.orgC.id,
         channel: 'tiktok',
         provider: 'tiktok_business',
         providerAccountKey,
@@ -101,7 +101,7 @@ describe('TikTok OAuth reconnection persistence', () => {
 
     const response = await tiktokOAuthCallback(callbackRequest())
     const [storedIntegration, storedConnection, events] = await Promise.all([
-      db.integration.findUnique({ where: { organizationId: FIX.orgA.id } }),
+      db.integration.findUnique({ where: { organizationId: FIX.orgC.id } }),
       db.channelConnection.findUnique({ where: { id: connection.id } }),
       db.channelConnectionEvent.findMany({ where: { connectionId: connection.id } }),
     ])
@@ -135,7 +135,7 @@ describe('TikTok OAuth reconnection persistence', () => {
   it('does not accept a token response without both expiry values', async () => {
     await db.integration.create({
       data: {
-        organizationId: FIX.orgA.id,
+        organizationId: FIX.orgC.id,
         tiktokTokenEnc: encodeTikTokState({
           appKey: 'synthetic-client-key',
           appSecret: 'synthetic-client-secret',
@@ -151,7 +151,7 @@ describe('TikTok OAuth reconnection persistence', () => {
 
     const response = await tiktokOAuthCallback(callbackRequest())
     const connection = await db.channelConnection.findUnique({ where: { providerAccountKey } })
-    const integration = await db.integration.findUnique({ where: { organizationId: FIX.orgA.id } })
+    const integration = await db.integration.findUnique({ where: { organizationId: FIX.orgC.id } })
 
     expect(response.status).toBe(307)
     expect(new URL(response.headers.get('location')!).searchParams.get('tt_error')).toBe('token_exchange_failed')
