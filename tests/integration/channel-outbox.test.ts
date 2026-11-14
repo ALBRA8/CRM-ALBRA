@@ -61,6 +61,34 @@ async function createConversation(orgId: string = FIX.orgA.id) {
   return conversation
 }
 
+async function createMessengerConversation(orgId: string = FIX.orgA.id) {
+  const id = `messenger-outbox-connection-${suffix()}`
+  const connection = await db.channelConnection.create({
+    data: {
+      id,
+      organizationId: orgId,
+      channel: 'messenger',
+      provider: 'meta_graph',
+      providerAccountKey: `meta:messenger:${id}`,
+      externalAccountId: '123456789012345',
+      credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'messenger-test-token' }))!,
+      status: 'connected',
+    },
+  })
+  connectionIds.push(connection.id)
+  const conversation = await db.channelConversation.create({
+    data: {
+      id: `messenger-outbox-conversation-${suffix()}`,
+      organizationId: orgId,
+      connectionId: connection.id,
+      channel: 'messenger',
+      externalContactKey: '987654321098765',
+    },
+  })
+  conversationIds.push(conversation.id)
+  return conversation
+}
+
 describe('Channel outbound outbox — idempotencia y recuperación conservadora', () => {
   it('deduplica solicitudes por conversación y rechaza reutilizar la clave con otro cuerpo', async () => {
     const conversation = await createConversation()
@@ -78,6 +106,22 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     await expect(createChannelOutboundIntent({ ...input, body: 'Otro mensaje' }))
       .rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
     expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(1)
+  })
+
+  it('persists Messenger auto-replies in the same idempotent outbox without sending', async () => {
+    const conversation = await createMessengerConversation()
+    const input = {
+      organizationId: FIX.orgA.id,
+      conversationId: conversation.id,
+      clientRequestId: 'messenger-auto-reply:m_test_mid_123',
+      body: 'Respuesta durable de Messenger',
+    }
+    const first = await createChannelOutboundIntent(input)
+    const retry = await createChannelOutboundIntent(input)
+    expect(retry.id).toBe(first.id)
+    expect(first.status).toBe('queued')
+    expect(await db.channelOutboundMessage.count({ where: { conversationId: conversation.id } })).toBe(1)
+    expect(await db.channelMessage.count({ where: { outboundId: first.id } })).toBe(0)
   })
 
   it('reclama una sola vez y confirma mensaje + preview en la misma transacción', async () => {
