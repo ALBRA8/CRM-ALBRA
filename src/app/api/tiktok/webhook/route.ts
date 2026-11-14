@@ -101,26 +101,26 @@ export async function POST(req: NextRequest) {
       where: { tiktokTokenEnc: { not: null } },
       select: { organizationId: true, tiktokTokenEnc: true },
     })
-    let matchedOrgId: string | null = null
-    let matchedCredentialsEnc: string | null = null
-    let matchedAppIdentity: string | null = null
+    const matches: Array<{ organizationId: string; credentialsEnc: string; appIdentity: string }> = []
     for (const candidate of candidates) {
       const state = parseTikTokState(candidate.tiktokTokenEnc)
       if (!state.appSecret) continue
       if (verifyTikTokSignature(rawBody, state.appSecret, signature, timestamp)) {
-        matchedOrgId = candidate.organizationId
-        matchedCredentialsEnc = candidate.tiktokTokenEnc
-        matchedAppIdentity = state.appKey || state.openId || state.appSecret
-        break
+        matches.push({
+          organizationId: candidate.organizationId,
+          credentialsEnc: candidate.tiktokTokenEnc!,
+          appIdentity: state.appKey || state.openId || state.appSecret,
+        })
       }
     }
-    if (!matchedOrgId) {
+    if (matches.length === 0) {
       return json({ error: 'Firma inválida o app desconocida' }, { status: 401 })
     }
-    const orgId = matchedOrgId
-    if (!matchedCredentialsEnc || !matchedAppIdentity) {
-      return json({ error: 'Identidad de aplicación TikTok incompleta' }, { status: 401 })
+    // Shared app secrets must never route an event to whichever tenant sorts first.
+    if (matches.length !== 1) {
+      return json({ error: 'Firma válida pero identidad de organización ambigua' }, { status: 409 })
     }
+    const [{ organizationId: orgId, credentialsEnc: matchedCredentialsEnc, appIdentity: matchedAppIdentity }] = matches
 
     // A stable provider event ID is required before any CRM/workflow side effect.
     // Never derive identity from message text: two legitimate messages can be identical.
