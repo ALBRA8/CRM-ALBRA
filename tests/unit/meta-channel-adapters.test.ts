@@ -58,6 +58,36 @@ describe('Meta canonical channel adapters (mock fetch only)', () => {
     })
   })
 
+  it('sends Messenger text through the exact Page and PSID', async () => {
+    const fetchMock = fakeFetch(200, { recipient_id: '123456789012345', message_id: 'mid.messenger.mock' })
+    const adapter = createMetaChannelAdapters(fetchMock)['meta_graph:messenger']
+    const result = await adapter({
+      ...base,
+      provider: 'meta_graph',
+      channel: 'messenger',
+      externalAccountId: '123456789012345',
+      recipientKey: '987654321098765',
+    })
+    expect(result).toEqual({ ok: true, providerMessageId: 'mid.messenger.mock' })
+    const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/123456789012345/messages')
+    expect(JSON.parse(String(init.body))).toEqual({
+      recipient: { id: '987654321098765' },
+      messaging_type: 'RESPONSE',
+      message: { text: 'Hola desde pruebas' },
+    })
+    expect(url).not.toContain(base.credentials.accessToken)
+  })
+
+  it('treats a Messenger 2xx without message_id as ambiguous', async () => {
+    const adapter = createMetaChannelAdapters(fakeFetch(200, { recipient_id: '987654321098765' }))['meta_graph:messenger']
+    expect(await adapter({
+      ...base,
+      provider: 'meta_graph',
+      channel: 'messenger',
+    })).toEqual({ ok: false, definitive: false, errorCode: 'META_RESPONSE_MISSING_MESSAGE_ID' })
+  })
+
   it('marks Meta 5xx responses as ambiguous, not definitive failure', async () => {
     const adapter = createMetaChannelAdapters(fakeFetch(503, { error: { code: 2 } }))['meta_cloud:whatsapp']
     expect(await adapter(base)).toEqual({ ok: false, definitive: false, errorCode: 'META_HTTP_503' })
