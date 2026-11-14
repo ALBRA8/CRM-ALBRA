@@ -334,28 +334,8 @@ export async function listClientChannels(orgId: string, clientId: string): Promi
   } catch (err) {
     console.error('[inbox] canal whatsapp (cliente) no disponible', err)
   }
-  if (!options.some((o) => o.channel === 'whatsapp')) {
-    // Task 19-b: cliente SIN conversación activa pero CON teléfono → canal
-    // directo "wa-new:<teléfono>". El envío crea la conversación bajo demanda
-    // (find-or-create) y manda por el mismo camino daemon que wa:<convId>.
-    try {
-      const client = await db.client.findFirst({
-        where: { organizationId: orgId, id: clientId },
-        select: { phone: true },
-      })
-      const phone = normalizeWaPhone(client?.phone)
-      if (phone) {
-        options.push({
-          key: `${WA_NEW_PREFIX}:${phone}`,
-          channel: 'whatsapp',
-          channelLabel: 'WhatsApp',
-          contactHandle: phone,
-        })
-      }
-    } catch (err) {
-      console.error('[inbox] teléfono del cliente no disponible', err)
-    }
-  }
+  // No se ofrecen destinos WhatsApp directos legacy sin conversación canónica.
+
   try {
     const events = await db.timelineEvent.findMany({
       where: { organizationId: orgId, clientId, type: { in: ['telegram', 'instagram', 'facebook', 'tiktok'] } },
