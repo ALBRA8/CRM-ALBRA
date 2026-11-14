@@ -340,3 +340,23 @@ Esta sección **reemplaza cualquier estado anterior de CI** que describa los wor
 - Ambos workflows están en ejecución al registrar esta sección. No se declara CI verde hasta que todos los pasos de ambos runs terminen en success.
 - PR #3 sigue abierta, en draft y sin merge. No se ejecutaron migraciones reales, backfill, despliegues ni envíos externos.
 - Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
+
+
+## Actualización de fencing y side effects — HEAD `a98016fcdaa7cf03fdd596fe581ff8214cf9c891`
+
+Esta sección supersede los snapshots de HEAD/CI y los bloqueos de scheduler descritos arriba cuando difieran.
+
+- La recuperación del scheduler compara atómicamente el snapshot exacto del lease leído (`leaseToken`, `leaseExpiresAt`, `fencingVersion`, estado y `startedAt`). Si un heartbeat renueva el lease o un worker competidor reclama primero, el CAS no modifica el run. En la ruta fail-closed se revoca primero el ownership y solo después se marcan pasos `started` como `unknown`.
+- Las mutaciones internas de las acciones workflow (notificaciones, creación de oportunidades, actualización de cliente/etapa y timeline) se ejecutan en transacción junto con la comprobación/renovación del lease.
+- La persistencia de una intención outbound de workflow comprueba token, generación, estado y expiración dentro de la misma transacción que inserta el mensaje cifrado. También se protegen las notificaciones y el timeline asociados a esa intención.
+- Se agregó una prueba de integración que verifica que un token/generación anterior no puede crear una nueva intención outbound.
+- Esto reduce la carrera de worker antiguo sobre side effects locales: un efecto local confirmado antes de vencer el lease es durable y no puede deshacerse; una intención outbound persistida puede continuar por su worker independiente. Un resultado de acción ambiguo sigue sin reejecutarse automáticamente.
+- No se declara completo el fencing de todos los efectos externos ni la concurrencia multiinstancia. Siguen pendientes pruebas fault-injection entre procesos, validación de adaptadores/proveedores, fixture oficial TikTok, conciliación con actor/evidencia verificables, auditoría multitenant exhaustiva y restore remoto medido.
+
+### CI del HEAD `a98016fcdaa7cf03fdd596fe581ff8214cf9c891`
+
+- Push: [run 43574553349](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43574553349).
+- Pull request: [run 43574557536](https://github.com/ALBRA8/CRM-ALBRA/actions/runs/43574557536).
+- TypeScript y lint finalizaron correctamente en ambos runs; la suite de tests y build todavía estaban ejecutándose al registrar esta actualización. No se acredita CI verde hasta completar todos los pasos de ambos workflows.
+- PR #3 permanece abierta, draft y sin merge. No se realizaron migraciones reales, backfill aplicado, deploy ni envíos externos.
+- Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
