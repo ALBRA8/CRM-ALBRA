@@ -159,25 +159,27 @@ export async function POST(req: NextRequest) {
           const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
           const state = parseFacebookState(integration?.facebookTokenEnc)
           const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-          if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true) && msg.mid) {
-            const conversation = await getOrCreateChannelConversation({
-              providerAccountKey: `meta:messenger:${target.pageId}`,
-              channel: 'messenger',
-              externalContactKey: senderId,
-            })
-            if (!conversation) throw new Error('MESSENGER_CANONICAL_CONVERSATION_UNAVAILABLE')
+          const canonicalConversation = msg.mid
+            ? await getOrCreateChannelConversation({
+                providerAccountKey: `meta:messenger:${target.pageId}`,
+                channel: 'messenger',
+                externalContactKey: senderId,
+              })
+            : null
+          if (msg.mid && !canonicalConversation) throw new Error('MESSENGER_CANONICAL_CONVERSATION_UNAVAILABLE')
 
+          if (canonicalConversation && msg.mid) {
             // Persist inbound identity in the canonical thread. Provider mid is
-            // unique per conversation and prevents duplicate timeline messages.
+            // unique per conversation and prevents duplicate canonical messages.
             await db.channelMessage.upsert({
               where: {
                 conversationId_externalMessageId: {
-                  conversationId: conversation.id,
+                  conversationId: canonicalConversation.id,
                   externalMessageId: msg.mid,
                 },
               },
               create: {
-                conversationId: conversation.id,
+                conversationId: canonicalConversation.id,
                 externalMessageId: msg.mid,
                 direction: 'in',
                 senderType: 'contact',
@@ -187,15 +189,17 @@ export async function POST(req: NextRequest) {
               update: {},
             })
             await db.channelConversation.update({
-              where: { id: conversation.id },
+              where: { id: canonicalConversation.id },
               data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
             })
+          }
 
+          if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true) && canonicalConversation && msg.mid) {
             const clientRequestId = `messenger-auto-reply:${msg.mid}`
             // A webhook retry after enqueue must reuse the first persisted reply,
             // not regenerate different text under the same idempotency key.
             const existingIntent = await getChannelOutboundIntentByRequestId({
-              conversationId: conversation.id,
+              conversationId: canonicalConversation.id,
               clientRequestId,
             })
             if (!existingIntent) {
@@ -209,7 +213,7 @@ export async function POST(req: NextRequest) {
                 send: async (reply) => {
                   await createChannelOutboundIntent({
                     organizationId: orgId,
-                    conversationId: conversation.id,
+                    conversationId: canonicalConversation.id,
                     clientRequestId,
                     body: reply,
                   })
