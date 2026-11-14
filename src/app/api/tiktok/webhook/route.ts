@@ -179,6 +179,10 @@ export async function POST(req: NextRequest) {
         },
         update: {},
       })
+      await db.channelConversation.update({
+        where: { id: conversation.id },
+        data: { lastMessage: msg.text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
+      })
 
       await recordTimelineEvent({
         orgId,
