@@ -140,13 +140,14 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
   })
 
   it('segundo envío legacy también queda bloqueado sin crear conversación', async () => {
-    stubDaemon(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
+    const fetchMock = stubDaemon(() => new Response(JSON.stringify({ success: true }), { status: 200 }))
     const res = await inboxSendPOST(req('/inbox/send', {
       method: 'POST',
       token: tokenA(),
       body: { key: `wa-new:${CLIENT_PHONE}`, contactHandle: CLIENT_PHONE, clientId: CLIENT_ID, text: 'Segundo mensaje' },
     }))
     expect(res.status).toBe(409)
+    expect(fetchMock).not.toHaveBeenCalled()
     const convs = await db.whatsAppConversation.findMany({ where: { organizationId: FIX.orgA.id, contactPhone: CLIENT_PHONE } })
     expect(convs).toHaveLength(0)
   })
