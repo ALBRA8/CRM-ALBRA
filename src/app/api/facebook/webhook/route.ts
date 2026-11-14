@@ -7,6 +7,8 @@ import { decryptSecret, encryptSecret } from '@/lib/crypto'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
+import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
+import { createChannelOutboundIntent, getChannelOutboundIntentByRequestId } from '@/lib/channel-outbox'
 import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getOrCreateMessengerWebhookConnection } from '@/lib/channel-webhook-events'
 
 /**
@@ -157,29 +159,63 @@ export async function POST(req: NextRequest) {
           const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
           const state = parseFacebookState(integration?.facebookTokenEnc)
           const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-          if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
-            await llmReplyOrNotification({
-              orgId,
-              clientId: client?.id || null,
-              channelLabel: 'Facebook',
-              incomingText: text,
-              handoffKeywords: await getHandoffKeywords(orgId),
-              nichoContext: await buildNichoContext(orgId),
-              send: async (reply) => {
-                const { sendFacebookGraphMessage } = await import('@/lib/integrations')
-                const sent = await sendFacebookGraphMessage({ token: state.pageToken!, pageId: target.pageId, recipientId: senderId, text: reply })
-                if (!sent.ok) throw new Error('MESSENGER_AUTO_REPLY_SEND_FAILED')
-                await recordTimelineEvent({
-                  orgId,
-                  clientId: client?.id || null,
-                  type: 'facebook',
-                  title: 'Respuesta automática del agente IA',
-                  description: reply.slice(0, 500),
-                  metadata: { senderId, direction: 'out', delivered: sent.ok },
-                  source: 'agent',
-                })
-              },
+          if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true) && msg.mid) {
+            const conversation = await getOrCreateChannelConversation({
+              providerAccountKey: `meta:messenger:${target.pageId}`,
+              channel: 'messenger',
+              externalContactKey: senderId,
             })
+            if (!conversation) throw new Error('MESSENGER_CANONICAL_CONVERSATION_UNAVAILABLE')
+
+            // Persist inbound identity in the canonical thread. Provider mid is
+            // unique per conversation and prevents duplicate timeline messages.
+            await db.channelMessage.upsert({
+              where: {
+                conversationId_externalMessageId: {
+                  conversationId: conversation.id,
+                  externalMessageId: msg.mid,
+                },
+              },
+              create: {
+                conversationId: conversation.id,
+                externalMessageId: msg.mid,
+                direction: 'in',
+                senderType: 'contact',
+                body: text,
+                metadata: JSON.stringify({ senderId, source: 'messenger_webhook' }),
+              },
+              update: {},
+            })
+            await db.channelConversation.update({
+              where: { id: conversation.id },
+              data: { lastMessage: text.slice(0, 500), lastMessageAt: new Date(), unreadCount: { increment: 1 } },
+            })
+
+            const clientRequestId = `messenger-auto-reply:${msg.mid}`
+            // A webhook retry after enqueue must reuse the first persisted reply,
+            // not regenerate different text under the same idempotency key.
+            const existingIntent = await getChannelOutboundIntentByRequestId({
+              conversationId: conversation.id,
+              clientRequestId,
+            })
+            if (!existingIntent) {
+              await llmReplyOrNotification({
+                orgId,
+                clientId: client?.id || null,
+                channelLabel: 'Facebook',
+                incomingText: text,
+                handoffKeywords: await getHandoffKeywords(orgId),
+                nichoContext: await buildNichoContext(orgId),
+                send: async (reply) => {
+                  await createChannelOutboundIntent({
+                    organizationId: orgId,
+                    conversationId: conversation.id,
+                    clientRequestId,
+                    body: reply,
+                  })
+                },
+              })
+            }
           }
           if (eventClaim) await completeChannelWebhookEvent(eventClaim)
         } catch (err) {
