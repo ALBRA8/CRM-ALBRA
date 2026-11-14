@@ -9,7 +9,7 @@ import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
 import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getOrCreateTelegramWebhookConnection, type ChannelWebhookEventClaim } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection, type ChannelWebhookEventClaim } from '@/lib/channel-webhook-events'
 
 /**
  * POST /api/telegram/webhook — PÚBLICO pero con validación ESTRICTA del header
@@ -100,7 +100,14 @@ export async function POST(req: NextRequest) {
       eventKey: `update:${update.update_id}`,
       eventType: 'telegram.update',
     })
-    if (!activeClaim) return json({ ok: true, duplicate: true })
+    if (!activeClaim) {
+      const status = await getChannelWebhookEventStatus(connection.id, `update:${update.update_id}`)
+      // A completed duplicate is safely acknowledged. An in-flight duplicate
+      // stays retryable so a crashed original handler can be recovered by lease.
+      return status === 'processed'
+        ? json({ ok: true, duplicate: true })
+        : json({ ok: false, duplicate: true, retry: true }, { status: 503 })
+    }
 
     const senderName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || null
     const platformKey = `tg:${message.chat.id}`
