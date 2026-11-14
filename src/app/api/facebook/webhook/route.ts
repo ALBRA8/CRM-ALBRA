@@ -216,7 +216,7 @@ export async function POST(req: NextRequest) {
                     organizationId: orgId,
                     conversationId: canonicalConversation.id,
                     clientRequestId,
-                    body: reply,
+                    body: reply.slice(0, 2000),
                   })
                 },
               })
