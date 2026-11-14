@@ -68,7 +68,7 @@ export async function getOrCreateMessengerWebhookConnection(input: {
   pageId: string
   credentialsEnc: string
 }): Promise<{ id: string }> {
-  if (!/^\\d{1,30}$/.test(input.pageId) || !input.organizationId || !input.credentialsEnc) {
+  if (!/^\d{1,30}$/.test(input.pageId) || !input.organizationId || !input.credentialsEnc) {
     throw new Error('Invalid Messenger Page identity')
   }
   const providerAccountKey = `meta:messenger:${input.pageId}`
