@@ -40,8 +40,37 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as { limit?: number }
   const limit = Number.isInteger(body.limit) ? Math.max(1, Math.min(Number(body.limit), 5)) : 1
   const quarantined = await quarantineStaleWorkflowOutboundMessages()
-  const queued = await db.workflowOutboundMessage.findMany({ where: { status: 'queued' }, orderBy: { createdAt: 'asc' }, take: limit, select: { id: true } })
+
+  // Disabled auto-replies remain queued by design. Page through them without
+  // letting the oldest paused Telegram intents consume this invocation's
+  // dispatch limit and starve eligible WhatsApp, email, or workflow messages.
   const results: Array<{ status: string }> = []
-  for (const item of queued) results.push({ ...(await dispatchWorkflowOutboundMessage(item.id)) })
-  return json({ processed: results.length, quarantinedStale: quarantined.count, results, note: 'Los estados unknown requieren conciliación humana y nunca se reintentan automáticamente.' })
+  let cursor: string | undefined
+  let scanned = 0
+  const pageSize = 50
+  while (results.length < limit) {
+    const page = await db.workflowOutboundMessage.findMany({
+      where: { status: 'queued' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: pageSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: { id: true },
+    })
+    if (!page.length) break
+    for (const item of page) {
+      cursor = item.id
+      scanned += 1
+      const result = await dispatchWorkflowOutboundMessage(item.id)
+      if (result.status !== 'disabled') results.push(result)
+      if (results.length >= limit) break
+    }
+    if (page.length < pageSize) break
+  }
+  return json({
+    processed: results.length,
+    scanned,
+    quarantinedStale: quarantined.count,
+    results,
+    note: 'Los estados unknown requieren conciliación humana y nunca se reintentan automáticamente.',
+  })
 }
