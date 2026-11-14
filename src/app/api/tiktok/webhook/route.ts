@@ -12,6 +12,7 @@ import {
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getOrCreateTikTokWebhookConnection } from '@/lib/channel-webhook-events'
 
 /**
  * Webhook de TikTok (wiring-ready).
@@ -36,6 +37,20 @@ interface TikTokEventBody {
   data?: Record<string, unknown>
   event_data?: Record<string, unknown>
   message?: { conversation_id?: string; text?: string; sender?: { id?: string } | string }
+}
+
+function extractEventId(body: TikTokEventBody): string | null {
+  const candidates = [body as Record<string, unknown>, body.data, body.event_data]
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue
+    for (const key of ['event_id', 'eventId', 'id']) {
+      const value = candidate[key]
+      if ((typeof value === 'string' && value.trim()) || (typeof value === 'number' && Number.isSafeInteger(value))) {
+        return String(value).trim().slice(0, 255)
+      }
+    }
+  }
+  return null
 }
 
 function extractMessage(body: TikTokEventBody): { senderId: string; text: string } | null {
@@ -86,11 +101,15 @@ export async function POST(req: NextRequest) {
       select: { organizationId: true, tiktokTokenEnc: true },
     })
     let matchedOrgId: string | null = null
+    let matchedCredentialsEnc: string | null = null
+    let matchedAppIdentity: string | null = null
     for (const candidate of candidates) {
       const state = parseTikTokState(candidate.tiktokTokenEnc)
       if (!state.appSecret) continue
       if (verifyTikTokSignature(rawBody, state.appSecret, signature, timestamp)) {
         matchedOrgId = candidate.organizationId
+        matchedCredentialsEnc = candidate.tiktokTokenEnc
+        matchedAppIdentity = state.appKey || state.openId || state.appSecret
         break
       }
     }
@@ -98,6 +117,33 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Firma inválida o app desconocida' }, { status: 401 })
     }
     const orgId = matchedOrgId
+    if (!matchedCredentialsEnc || !matchedAppIdentity) {
+      return json({ error: 'Identidad de aplicación TikTok incompleta' }, { status: 401 })
+    }
+
+    // A stable provider event ID is required before any CRM/workflow side effect.
+    // Never derive identity from message text: two legitimate messages can be identical.
+    const providerEventId = extractEventId(body)
+    if (!providerEventId) return json({ ok: true, processed: false, reason: 'missing_event_id' })
+
+    const connection = await getOrCreateTikTokWebhookConnection({
+      organizationId: orgId,
+      appIdentity: matchedAppIdentity,
+      credentialsEnc: matchedCredentialsEnc,
+    })
+    const claim = await claimChannelWebhookEvent({
+      organizationId: orgId,
+      connectionId: connection.id,
+      eventKey: `event:${providerEventId}`,
+      eventType: (body.event || 'tiktok.event').toLowerCase().replace(/[^a-z0-9:._-]/g, '_').slice(0, 80),
+    })
+    if (!claim) {
+      const { getChannelWebhookEventStatus } = await import('@/lib/channel-webhook-events')
+      const status = await getChannelWebhookEventStatus(connection.id, `event:${providerEventId}`)
+      return status === 'processed'
+        ? json({ ok: true, duplicate: true })
+        : json({ error: 'Evento TikTok ya está en procesamiento' }, { status: 503 })
+    }
 
     const msg = extractMessage(body)
     if (msg) {
@@ -152,10 +198,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // TikTok exige 200 rápido
+    const completed = await completeChannelWebhookEvent(claim)
+    if (completed.count !== 1) throw new Error('TikTok webhook claim lost before completion')
+
+    // TikTok exige respuesta rápida; los eventos procesados quedan deduplicados.
     return json({ ok: true })
   } catch (err) {
     console.error('[tiktok webhook]', err)
-    return json({ ok: true, processed: false })
+    // Failed/stale claims are retryable. Do not acknowledge a persistence failure as success.
+    return json({ ok: false, processed: false }, { status: 500 })
   }
 }
