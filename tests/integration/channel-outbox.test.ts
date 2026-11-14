@@ -4,6 +4,7 @@ import {
   ChannelOutboundError,
   claimChannelOutboundMessage,
   createChannelOutboundIntent,
+  getChannelOutboundIntentByRequestId,
   markChannelOutboundSent,
   markChannelOutboundUnknown,
   quarantineStaleChannelOutboundMessages,
@@ -101,6 +102,7 @@ describe('Channel outbound outbox — idempotencia y recuperación conservadora'
     const first = await createChannelOutboundIntent(input)
     const retry = await createChannelOutboundIntent(input)
     expect(retry.id).toBe(first.id)
+    expect((await getChannelOutboundIntentByRequestId({ conversationId: conversation.id, clientRequestId: input.clientRequestId }))?.id).toBe(first.id)
     expect(retry.status).toBe('queued')
 
     await expect(createChannelOutboundIntent({ ...input, body: 'Otro mensaje' }))
