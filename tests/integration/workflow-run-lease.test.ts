@@ -25,7 +25,7 @@ beforeAll(async () => {
     data: {
       organizationId: FIX.orgA.id,
       name: 'Workflow lease stale reclaim',
-      triggerType: 'manual',
+      triggerType: 'client_created',
       isActive: true,
       actions: '[]',
     },
