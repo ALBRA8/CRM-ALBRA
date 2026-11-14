@@ -97,7 +97,7 @@ describe('distributed workflow run leases', () => {
   })
 
   it('reclaims an expired generation without re-running completed steps', async () => {
-    const schedulerResult = await runDueJobs()
+    const schedulerResult = await runDueJobs({ orgId: FIX.orgA.id })
     const recovered = await db.automationRun.findUnique({ where: { id: recoveredRunId } })
 
     expect(recovered?.status, JSON.stringify({ schedulerResult, recovered })).toBe('success')
