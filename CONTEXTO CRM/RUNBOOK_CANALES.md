@@ -1,4 +1,4 @@
-# Runbook operativo — WhatsApp Cloud e Instagram
+# Runbook operativo — canales, outbox y scheduler
 
 Fecha: 2026-11-13  
 Rama de implementación: `fix/migration-safety-audit`  
@@ -11,7 +11,7 @@ Estado: guía de staging; **no autoriza activar envíos ni desplegar**.
 - Las acciones externas de workflows (Baileys, Telegram y SMTP) ahora persisten primero en `WorkflowOutboundMessage`, con payload cifrado, clave idempotente por run/paso y estados `queued/sending/sent/failed/unknown`. El worker `POST /api/internal/workflow-outbox` permanece desactivado por defecto: requiere `WORKFLOW_OUTBOX_DISPATCH_ENABLED=true` y `WORKFLOW_OUTBOX_WORKER_SECRET` (mínimo 32 caracteres). `WORKFLOW_EXTERNAL_SENDS_ENABLED` es un flag legacy ignorado; no habilita envíos.
 - `WHATSPOWER_ENABLED` debe permanecer ausente o distinto de `true`; el bridge inbound puede activar automatizaciones remotas, por lo que también se mantiene apagado durante pruebas de recepción.
 - `CHANNEL_OUTBOX_WORKER_SECRET` y `WORKFLOW_OUTBOX_WORKER_SECRET` no deben configurarse en entornos que no vayan a ejecutar sus respectivos workers.
-- No hay cron/scheduler registrado por el repositorio; los endpoints POST de ambos workers no se ejecutan solos. La outbox de workflows debe sondearse externamente solo después de autorización y validación en staging.
+- src/instrumentation.ts sí registra el scheduler general de workflows al iniciar cada proceso Node: primer tick a los 15 s y luego cada 60 s. Ejecuta automatizaciones schedule y reanuda runs waiting; **no despacha** ChannelOutboundMessage ni WorkflowOutboundMessage. Los endpoints POST de ambas outboxes siguen siendo pull workers separados, sin scheduler interno.
 - `POST /api/inbox/send` en conversaciones canónicas crea una intención `queued`; HTTP 202 no significa que Meta haya recibido el mensaje.
 - `unknown` significa resultado ambiguo. No volver a encolar ni reenviar hasta comprobar el estado en el proveedor.
 - El envío legacy de las integraciones existentes sigue separado durante la migración expand/contract.
@@ -122,7 +122,7 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 - Las auto-respuestas WhatsApp/Instagram ahora persisten primero en `ChannelOutboundMessage` con clave derivada del ID del proveedor; el webhook no llama directamente a Meta. El worker de outbox sigue apagado por defecto y los reintentos se protegen por clave idempotente.
 - No hay garantía exactly-once de extremo a extremo. La deduplicación de workflows evita crear un segundo run. Las acciones externas workflow persisten en `WorkflowOutboundMessage`, separada de la outbox canónica de WhatsApp/Instagram; resultados inciertos quedan en cuarentena y requieren conciliación manual.
 - No se han validado todavía cuentas reales/sandbox de Meta. Las pruebas de integración usan payloads firmados con secretos sintéticos y cubren ambos canales, outbox y aislamiento; la validación de sandbox sigue pendiente.
-- No hay scheduler, alertas, dashboard de conciliación ni SLO/RPO/RTO aprobados.
+- El scheduler general de workflows sí está registrado por instrumentation.ts; no hay scheduler de despacho de outboxes. No hay alertas desplegadas, dashboard de conciliación ni SLO/RPO/RTO aprobados.
 
 ### Reversión segura de esta fase
 
@@ -159,7 +159,7 @@ La conciliación no hace llamadas de red ni vuelve a poner en cola.
 - El worker es POST /api/internal/workflow-outbox, autenticado con WORKFLOW_OUTBOX_WORKER_SECRET; requiere además WORKFLOW_OUTBOX_DISPATCH_ENABLED=true. GET devuelve únicamente contadores agregados.
 - Baileys usa el daemon multi-organización con orgId explícito e INTERNAL_API_SECRET; Telegram resuelve el token cifrado de la integración de la misma organización; SMTP usa Settings de esa organización o el fallback global existente.
 - Un timeout, excepción de transporte o resultado ambiguo queda unknown. Los sending con más de cinco minutos se ponen en cuarentena como unknown; nunca se reencolan automáticamente. Solo un rechazo HTTP 4xx claro del daemon Baileys se marca failed.
-- El worker procesa como máximo cinco por llamada, de forma secuencial. No existe scheduler automático ni se habilita ningún envío por el solo hecho de persistir la intención.
+- El worker procesa como máximo cinco por llamada, de forma secuencial. No existe scheduler automático para esta outbox; el scheduler general de workflows no la despacha. Persistir una intención no habilita ni ejecuta el envío.
 - No activar el worker en producción ni hacer pruebas de envío sin autorización separada, destinatarios de prueba consentidos y revisión de credenciales.
 
 
@@ -192,3 +192,37 @@ No habilitar los tres canales a la vez en la primera prueba. La aprobación de u
 - GitHub Actions ofrece únicamente ejecución manual (`workflow_dispatch`). No hay ejecución programada ni monitor activo por defecto. Si faltan URL o secretos de lectura, la ejecución se omite sin hacer peticiones.
 - El webhook de alertas es una interfaz JSON genérica; debe apuntar a un receptor compatible configurado por el operador. No se configura ni se inventa un destino.
 - El monitor no habilita workers, no modifica datos y no realiza envíos a canales. No ofrece deduplicación persistente de alertas; un operador que lo ejecute repetidamente puede recibir la misma alerta en cada ejecución.
+
+
+## 12. Auditoría de cobertura por canal, backfill y scheduler
+
+### Matriz de cobertura actual
+
+| Canal / transporte | Persistencia y despacho actual | Estado y límite |
+|---|---|---|
+| WhatsApp Cloud API | ChannelConnection + ChannelOutboundMessage; adaptador Meta y worker pull | Cubierto por outbox canónica; worker apagado por defecto |
+| Instagram Messaging | ChannelConnection + ChannelOutboundMessage; adaptador Meta y worker pull | Cubierto por outbox canónica; worker apagado por defecto |
+| WhatsApp Baileys | WorkflowOutboundMessage cifrada; dispatcher usa daemon con orgId explícito | Cubierto para acciones de workflows; no comparte la outbox canónica Meta |
+| Telegram Bot | WorkflowOutboundMessage para acciones de workflows | El webhook histórico también tenía auto-respuesta directa al Bot API. Ahora exige CHANNEL_AUTOREPLY_ENABLED=true además de la preferencia por organización; esa ruta directa aún no es durable ni usa la outbox. El endpoint manual autenticado /api/telegram/send sigue siendo una operación directa iniciada por usuario |
+| Email / SMTP | WorkflowOutboundMessage cifrada; configuración SMTP de la organización o fallback global existente | Cubierto para acciones de workflows; requiere sink SMTP de pruebas antes de validar |
+| Messenger | El backfill puede crear ChannelConnection en estado pending | Sin adaptador/outbox canónica; inventario solamente, no habilitar como canal migrado |
+| TikTok | El backfill puede crear ChannelConnection en estado pending | Sin adaptador/outbox canónica; inventario solamente, no habilitar como canal migrado |
+
+La cobertura de WhatsApp/Instagram en outbox no implica validación de proveedor real. Los tests automatizados usan mocks/fixtures; faltan cuentas sandbox, pruebas de entrega y conciliación externas.
+
+### Backfill legacy: alcance y recuperación
+
+- scripts/backfill-channel-connections.ts es dry-run por defecto. Lee WhatsAppConnection e Integration y planifica WhatsApp Cloud, Instagram, Messenger, Telegram y TikTok.
+- La fuente WhatsAppConnection tiene prioridad frente a duplicados legacy de Integration. La clave global providerAccountKey se valida contra tenant, canal, proveedor e ID externo; los conflictos se cuentan y hacen que el proceso termine con código 2.
+- El backfill no modifica ni elimina las tablas legacy. Para escribir exige --apply y BACKFILL_CHANNEL_CONNECTIONS_CONFIRM=1; en producción requiere además BACKFILL_CHANNEL_CONNECTIONS_ALLOW_PRODUCTION=1.
+- Messenger, Telegram y TikTok quedan pending porque todavía no tienen adaptador/outbox canónica. No deben tratarse como conexiones listas para envío.
+- No se ha ejecutado el dry-run en una base de staging en esta fase, porque no hay staging configurado/autorizado. No ejecutar --apply hasta tener backup restaurable, revisar conteos y resolver cada conflicto.
+
+### Scheduler general: comportamiento y límites
+
+- src/instrumentation.ts arranca runDueJobs() en runtime Node: primer tick tras 15 segundos y luego cada 60 segundos. Es un scheduler activo del CRM, independiente de los workers de outbox.
+- runDueJobs({ orgId }) filtra sweeper, runs waiting y automatizaciones programadas por organización. La llamada global sin orgId es para el operador del sistema; POST /api/cron/run solo la permite con CRON_SECRET/APP_SECRET. La sesión admin pasa su auth.orgId.
+- El claim de una automatización mueve nextRunAt mediante updateMany condicional, evitando que dos instancias reclamen la misma ocurrencia. El guard running solo coordina llamadas dentro del mismo proceso; no es un lease distribuido.
+- **Límite de recuperación identificado:** nextRunAt se adelanta antes de invocar runWorkflowsForTrigger. Si el proceso cae después del claim y antes de crear el run, esa ocurrencia puede perderse hasta el siguiente intervalo. El sweeper recupera runs ya creados que quedaron running más de 10 minutos y los marca failed; resumeWaitingRuns retoma los waiting vencidos. No existe todavía un ledger durable de claims de scheduler que permita reponer con certeza una ocurrencia reclamada pero no iniciada.
+- Los tests scheduler-recovery y tenant-scope-scheduler cubren huérfanos, waiting, idempotencia del sweeper y separación A/B; no prueban crash entre claim de nextRunAt y creación del run ni coordinación entre procesos distribuidos.
+- No cambiar el scheduler general ni activar workers/outboxes como parte de esta auditoría sin una revisión separada. La siguiente mejora técnica es persistir cada ocurrencia programada en un ledger/outbox de scheduler antes de avanzar nextRunAt, con clave única por automatización y hora programada, lease y recuperación idempotente.
