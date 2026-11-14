@@ -414,6 +414,7 @@ model AutomationRun {
   startedAt      DateTime     @default(now())
   finishedAt     DateTime?
   idempotencyKey String? // trigger:entidad — evita doble ejecución por retry/webhook duplicado
+  stepLedgerVersion Int           @default(0) // 1 = write-ahead ledger habilitado; 0 = run histórico
   stepExecutions  WorkflowStepExecution[]
 
   @@index([automationId, startedAt])
