@@ -52,7 +52,7 @@ export async function enqueueTelegramWebhookReply(input: {
   if (!payloadEnc) throw new Error('WORKFLOW_OUTBOX_ENCRYPTION_UNAVAILABLE')
   const idempotencyKey = `telegram-webhook:${input.updateId}`
   try {
-    return await db.workflowOutboundMessage.create({
+    const created = await db.workflowOutboundMessage.create({
       data: {
         organizationId: input.organizationId,
         automationId: null,
@@ -63,6 +63,7 @@ export async function enqueueTelegramWebhookReply(input: {
         payloadEnc,
       },
     })
+    return { ...created, replyText: input.text.trim() }
   } catch (error) {
     const existing = await db.workflowOutboundMessage.findUnique({
       where: { organizationId_idempotencyKey: { organizationId: input.organizationId, idempotencyKey } },
@@ -81,7 +82,10 @@ export async function enqueueTelegramWebhookReply(input: {
       existingPayload.updateId !== input.updateId || String(existingPayload.chatId) !== String(input.chatId)) {
       throw new Error('WORKFLOW_OUTBOX_IDEMPOTENCY_CONFLICT')
     }
-    return existing
+    return {
+      ...existing,
+      replyText: typeof existingPayload.text === 'string' ? existingPayload.text : '',
+    }
   }
 }
 
