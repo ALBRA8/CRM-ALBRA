@@ -24,14 +24,14 @@ import { recordTimelineEvent } from './timeline'
  *  - Nunca lanza: si un canal falla, se degrada a lista vacía de ese canal.
  */
 
-export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram' | 'facebook'
+export type InboxChannel = 'whatsapp' | 'telegram' | 'instagram' | 'facebook' | 'tiktok'
 
 export interface InboxConversation {
   key: string
   /** Nombre seguro de la cuenta conectada; solo presente en conversaciones canónicas. */
   connectionName?: string | null
   channel: InboxChannel
-  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Messenger'
+  channelLabel: 'WhatsApp' | 'Telegram' | 'Instagram' | 'Messenger' | 'TikTok'
   contactName: string
   /** Handle real para ENVIAR: teléfono WA / chatId TG / recipientId IG. */
   contactHandle: string
@@ -60,6 +60,7 @@ const CHANNEL_LABELS: Record<InboxChannel, InboxConversation['channelLabel']> = 
   telegram: 'Telegram',
   instagram: 'Instagram',
   facebook: 'Messenger',
+  tiktok: 'TikTok',
 }
 
 /** Prefijo de la key del canal WhatsApp directo (sin conversación previa). */
@@ -264,7 +265,7 @@ async function listCanonicalChannelConversations(orgId: string, limit: number): 
       take: limit,
     })
     return rows
-      .filter((row) => ['whatsapp', 'instagram', 'facebook', 'telegram'].includes(row.channel))
+      .filter((row) => ['whatsapp', 'instagram', 'facebook', 'telegram', 'tiktok'].includes(row.channel))
       .filter((row) => row.connection.status === 'connected' && row.connection.channel === row.channel)
       .map((row) => ({
         key: 'cc:' + row.id,
