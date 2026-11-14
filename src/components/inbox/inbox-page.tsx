@@ -130,7 +130,7 @@ export function InboxPage() {
 
   async function handleSend() {
     if (!selected || !draft.trim() || sending) return
-    if (selected.key.startsWith('cc:') && selected.channel !== 'whatsapp' && selected.channel !== 'instagram' && selected.channel !== 'messenger' && selected.channel !== 'tiktok') return
+    if (selected.key.startsWith('cc:') && selected.channel !== 'whatsapp' && selected.channel !== 'instagram' && selected.channel !== 'facebook' && selected.channel !== 'tiktok') return
     setSending(true)
     const optimistic: InboxMessage = {
       id: `tmp-${Date.now()}`,
@@ -369,7 +369,7 @@ export function InboxPage() {
               </div>
 
               <div className="p-3 border-t border-slate-100 bg-white">
-                {selected.key.startsWith('cc:') && <p className="text-[11px] text-amber-700 mb-2">{selected.channel === 'whatsapp' || selected.channel === 'instagram' ? 'El mensaje se guardará en una cola segura y podrás ver su estado. El worker de entrega aún no está habilitado: no se enviará al proveedor ni se usará una cuenta legacy.' : 'El envío canónico de este canal todavía no está soportado; no se usará una cuenta legacy.'}</p>}
+                {selected.key.startsWith('cc:') && <p className="text-[11px] text-amber-700 mb-2">{selected.channel === 'whatsapp' || selected.channel === 'instagram' || selected.channel === 'tiktok' ? 'El mensaje se guardará en una cola segura y podrás ver su estado. El worker de entrega aún no está habilitado: no se enviará al proveedor ni se usará una cuenta legacy.' : 'El envío canónico de este canal todavía no está soportado; no se usará una cuenta legacy.'}</p>}
                 <div className="flex gap-2 items-end">
                   <Textarea
                     value={draft}
@@ -384,7 +384,7 @@ export function InboxPage() {
                     className="min-h-[42px] max-h-32 resize-none text-[13px]"
                     rows={1}
                   />
-                  <Button onClick={handleSend} disabled={sending || !draft.trim() || (selected.key.startsWith('cc:') && selected.channel !== 'whatsapp' && selected.channel !== 'instagram')} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
+                  <Button onClick={handleSend} disabled={sending || !draft.trim() || (selected.key.startsWith('cc:') && selected.channel !== 'whatsapp' && selected.channel !== 'instagram' && selected.channel !== 'tiktok')} className="bg-emerald-600 hover:bg-emerald-700 text-white h-[42px] px-4 gap-1.5">
                     {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <SendIcon className="w-4 h-4" />}
                     <span className="hidden sm:inline">{selected.key.startsWith('cc:') ? 'Encolar' : 'Enviar'}</span>
                   </Button>
