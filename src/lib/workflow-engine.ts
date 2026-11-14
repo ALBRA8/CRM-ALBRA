@@ -33,6 +33,10 @@ export interface WorkflowTriggerEvent {
     | 'quote_status_changed'
     | 'schedule'
   payload: Record<string, unknown>
+  /** Limita la ejecución a una automatización concreta (scheduler). */
+  automationId?: string
+  /** Run creado previamente por una operación durable. */
+  existingRunId?: string
 }
 
 export interface Condition {
@@ -409,7 +413,12 @@ async function runActionSteps(
 
 export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
   const automations = await db.automation.findMany({
-    where: { organizationId: event.orgId, isActive: true, triggerType: event.type },
+    where: {
+      organizationId: event.orgId,
+      isActive: true,
+      triggerType: event.type,
+      ...(event.automationId ? { id: event.automationId } : {}),
+    },
   })
   const results: Array<{ automationId: string; status: string; error?: string }> = []
 
