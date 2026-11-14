@@ -51,7 +51,15 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
           where: { automationRunId: stale.id },
           orderBy: { stepIndex: 'asc' },
         })
-        const safeToResume = stale.stepLedgerVersion === 1 && steps.every((step) => step.status === 'succeeded')
+        // Fail closed until this run has a fencing generation. A successful
+        // step ledger alone cannot prove that an older worker has stopped;
+        // resuming it without a durable fencing claim could race that worker.
+        const safeToResume = stale.stepLedgerVersion === 1
+          && stale.fencingVersion > 0
+          && stale.leaseExpiresAt !== null
+          && stale.leaseExpiresAt < new Date()
+          && steps.length > 0
+          && steps.every((step) => step.status === 'succeeded')
         if (!safeToResume) {
           if (steps.some((step) => step.status === 'started')) {
             await db.workflowStepExecution.updateMany({
