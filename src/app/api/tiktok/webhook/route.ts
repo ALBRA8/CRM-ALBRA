@@ -65,8 +65,10 @@ export function extractTikTokMessage(body: TikTokEventBody): { senderId: string;
     ? rec.conversation_id.trim()
     : null
   const text = typeof rec.text === 'string' ? rec.text : ''
-  // Never substitute conversation_id for sender identity, or synthesize a conversation ID.
-  if (!senderId || !text) return null
+  // Both provider identities are mandatory. Never substitute sender_id for
+  // conversation_id or synthesize a conversation ID: without the latter we
+  // cannot bind the event to a canonical thread or safely enqueue a reply.
+  if (!senderId || !conversationId || !text) return null
   return { senderId, conversationId, text: text.slice(0, 3000) }
 }
 
