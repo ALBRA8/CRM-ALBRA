@@ -395,6 +395,35 @@ async function updateRunWithLease(runId: string, orgId: string, leaseToken: stri
   if (updated.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: escritura rechazada por fencing')
 }
 
+async function createStepWithLease(runId: string, orgId: string, leaseToken: string, fencingVersion: number, stepIndex: number, actionType: string) {
+  return db.$transaction(async (tx) => {
+    const now = new Date()
+    const owner = await tx.automationRun.updateMany({
+      where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+      data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+    })
+    if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: claim de paso rechazado')
+    return tx.workflowStepExecution.create({
+      data: { automationRunId: runId, stepIndex, actionType, status: 'started' },
+    })
+  })
+}
+
+async function updateStepWithLease(
+  runId: string, orgId: string, leaseToken: string, fencingVersion: number,
+  stepId: string, data: { status: string; output?: string; error?: string; finishedAt: Date },
+) {
+  return db.$transaction(async (tx) => {
+    const now = new Date()
+    const owner = await tx.automationRun.updateMany({
+      where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+      data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+    })
+    if (owner.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: escritura de paso rechazada')
+    return tx.workflowStepExecution.updateMany({ where: { id: stepId, automationRunId: runId }, data })
+  })
+}
+
 // ---------- Orquestador principal ----------
 
 /**
@@ -427,15 +456,12 @@ async function runActionSteps(
       return { done: false, stepStates, outputs, waitMs: waitDurationMs(action.config), nextStep: i + 1 }
     }
 
-    await assertWorkflowLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion)
-    // WRITE-AHEAD: la fila se crea antes de cualquier efecto. La restricción
-    // única (run, step) impide que otro intento ejecute el mismo paso.
+    // WRITE-AHEAD y ownership se confirman en la misma transacción.
     let stepRecord
     try {
-      stepRecord = await db.workflowStepExecution.create({
-        data: { automationRunId: execution.runId, stepIndex: i, actionType: action.type, status: 'started' },
-      })
+      stepRecord = await createStepWithLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion, i, action.type)
     } catch (claimError) {
+      await assertWorkflowLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion)
       const existing = await db.workflowStepExecution.findUnique({
         where: { automationRunId_stepIndex: { automationRunId: execution.runId, stepIndex: i } },
       })
@@ -456,11 +482,8 @@ async function runActionSteps(
 
     try {
       const out = await executeAction(orgId, action, ctx, { automationId: execution.automationId, runId: execution.runId, stepIndex: i })
-      await assertWorkflowLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion)
-      await db.workflowStepExecution.update({
-        where: { id: stepRecord.id },
-        data: { status: 'succeeded', output: JSON.stringify(out).slice(0, 5000), finishedAt: new Date() },
-      })
+      await updateStepWithLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion,
+        stepRecord.id, { status: 'succeeded', output: JSON.stringify(out).slice(0, 5000), finishedAt: new Date() })
       outputs.push(out)
       // "queued" confirma persistencia durable de la intención, no entrega al proveedor.
       const stepStatus = out.pending === true
@@ -470,10 +493,8 @@ async function runActionSteps(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       // No se puede probar si el efecto ocurrió antes del error: dejar unknown.
-      await db.workflowStepExecution.update({
-        where: { id: stepRecord.id },
-        data: { status: 'unknown', error: message.slice(0, 300), finishedAt: new Date() },
-      }).catch(() => undefined)
+      await updateStepWithLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion,
+        stepRecord.id, { status: 'unknown', error: message.slice(0, 300), finishedAt: new Date() }).catch(() => undefined)
       stepStates[i] = { type: action.type, status: 'failed', error: message.slice(0, 300), ms: Date.now() - t0 }
       const wrapped = err instanceof Error ? err : new Error(message)
       ;(wrapped as Error & { stepStates?: StepState[] }).stepStates = stepStates
