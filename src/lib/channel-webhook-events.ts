@@ -81,12 +81,15 @@ export async function getOrCreateMessengerWebhookConnection(input: {
       existing.provider !== 'meta_graph' || existing.externalAccountId !== input.pageId) {
       throw new Error('Messenger Page connection ownership conflict')
     }
-    // A signed webhook matched this exact Page and its current encrypted token.
-    // Dispatch remains separately gated by CHANNEL_OUTBOUND_DISPATCH_ENABLED.
-    await db.channelConnection.update({
-      where: { id: existing.id },
-      data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null },
-    })
+    // Never revive a connection explicitly disconnected/revoked by an operator.
+    // Pending and already-connected legacy connections may be verified by this
+    // signed Page webhook; outbound dispatch remains separately feature-gated.
+    if (existing.status === 'pending' || existing.status === 'connected') {
+      await db.channelConnection.update({
+        where: { id: existing.id },
+        data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null },
+      })
+    }
     return { id: existing.id }
   }
 
@@ -112,10 +115,12 @@ export async function getOrCreateMessengerWebhookConnection(input: {
     })
     if (!raced || raced.organizationId !== input.organizationId || raced.channel !== 'messenger' ||
       raced.provider !== 'meta_graph' || raced.externalAccountId !== input.pageId) throw error
-    await db.channelConnection.update({
-      where: { id: raced.id },
-      data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null },
-    })
+    if (raced.status === 'pending' || raced.status === 'connected') {
+      await db.channelConnection.update({
+        where: { id: raced.id },
+        data: { status: 'connected', credentialsEnc: input.credentialsEnc, lastVerifiedAt: new Date(), lastErrorCode: null },
+      })
+    }
     return { id: raced.id }
   }
 }
