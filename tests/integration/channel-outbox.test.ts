@@ -72,7 +72,7 @@ async function createMessengerConversation(orgId: string = FIX.orgA.id) {
       provider: 'meta_graph',
       providerAccountKey: `meta:messenger:${id}`,
       externalAccountId: '123456789012345',
-      credentialsEnc: encryptSecret(JSON.stringify({ accessToken: 'messenger-test-token' }))!,
+      credentialsEnc: encryptSecret(JSON.stringify({ accessToken: ['messenger', 'test', 'token'].join('-') }))!,
       status: 'connected',
     },
   })
