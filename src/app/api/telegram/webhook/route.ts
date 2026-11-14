@@ -148,7 +148,8 @@ export async function POST(req: NextRequest) {
     // 4) Auto-respuesta IA (si está habilitada y no pide humano)
     const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
     const state = parseTelegramState(integrationFull?.telegramBotTokenEnc)
-    if (isTelegramAutoReplyEnabled(state) && message.chat.type === 'private') {
+    const telegramToken = state.token
+    if (isTelegramAutoReplyEnabled(state) && telegramToken && message.chat.type === 'private') {
       const handoffKeywords = await getHandoffKeywords(orgId)
       const wantsHuman = handoffKeywords.some((k) => text.toLowerCase().includes(k.toLowerCase()))
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
@@ -168,7 +169,7 @@ export async function POST(req: NextRequest) {
             { temperature: 0.5 }
           )
           if (reply.trim()) {
-            const sent = await sendTelegramBotMessage({ token: state.token, chatId: message.chat.id, text: reply.trim() })
+            const sent = await sendTelegramBotMessage({ token: telegramToken, chatId: message.chat.id, text: reply.trim() })
             await recordTimelineEvent({
               orgId,
               clientId: client?.id || null,
