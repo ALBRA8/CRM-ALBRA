@@ -399,3 +399,36 @@ HEAD de código/documentación revisado antes de esta nota: `a63c3c344b36634fc09
 6. Pruebas sandbox autorizadas por proveedor y runbooks/monitorización verificados.
 
 No declarar staging-ready por el resultado de CI. No hacer merge, deploy ni activar workers sin autorización expresa.
+
+
+---
+
+## Continuación de auditoría — endurecimiento de envíos legacy (2026-11-14)
+
+HEAD de esta actualización: `0a43d991819e37cf19896a4f2f35d90eba4e479d`.
+
+### Cambios implementados en esta continuación
+
+- `98eb5bc`: el proxy de WhatsApp rechaza el POST legacy `/send` con `409 LEGACY_SEND_DISABLED`; no invoca el endpoint de envío del daemon.
+- `0ab3cee`: prueba inicial de regresión para el bloqueo de Baileys.
+- `081b83f`: el proxy comprueba RBAC y ownership de la sesión antes de responder al bloqueo legacy. Esto evita que el rechazo `409` revele a otro tenant el estado de una operación; la organización sin ownership verificable recibe `403`.
+- `49eb6c8`: prueba del proxy actualizada para demostrar que el único fetch permitido al intentar el envío es la consulta de ownership `/status`, no el endpoint del daemon `/send`.
+- `d9a1ac0`: `POST /api/email/send` deja de llamar SMTP directamente y responde `409 LEGACY_EMAIL_SEND_DISABLED`.
+- `ffc9c6c`: `POST /api/google/gmail/send` deja de obtener tokens/enviar directamente y responde `409 LEGACY_GMAIL_SEND_DISABLED`.
+- `0a43d99`: pruebas de regresión para SMTP y Gmail verifican que no se invocan las funciones proveedor.
+
+### Resultado y limitaciones
+
+- El primer CI del commit `0ab3cee` detectó seis expectativas incompatibles en `tests/integration/multitenant-p0.test.ts`: el bloqueo de `/send` devolvía 409 antes del gate multitenant. La corrección movió el bloqueo después de RBAC y ownership.
+- El run `43632014971` para el commit intermedio `4f6dffe` falló en TypeScript por una expresión de prueba mal formada; se corrigió en `49eb6c8`. No usar ese run como evidencia de aprobación.
+- Para HEAD `0a43d99`, los runs push `43632205381` y pull_request `43632202897` estaban en ejecución al registrar esta actualización. La suite de tests y el build no tienen todavía resultado confirmado.
+- SMTP manual y Gmail manual quedan intencionalmente deshabilitados. No se afirma que estén migrados a la outbox canónica: el dispatcher de workflow soporta actualmente email SMTP para acciones de workflow, pero el envío manual SMTP no tiene todavía un contrato idempotente de outbox y Gmail no está integrado al dispatcher. Es una pérdida temporal y explícita de funcionalidad para cerrar el bypass.
+- No se ejecutaron migraciones PostgreSQL, backfill, concurrencia multi-proceso, sandbox de proveedores, backup/restauración ni pruebas operativas de staging. Esta sesión trabajó mediante la API de GitHub y no tuvo una instancia PostgreSQL de pruebas ni credenciales de sandbox.
+- No se ha completado una auditoría exhaustiva de cada query multitenant ni de todas las rutas API. Los bloqueos de envío descritos cubren los endpoints identificados y probados; no equivalen a una certificación global de ausencia de bypass.
+
+### Estado operativo
+
+- PR #3 permanece abierta y en draft.
+- No hubo merge, despliegue, activación de workers ni envíos reales.
+- Mantener desactivados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
+- Decisión: **NO APTO PARA STAGING** hasta completar PostgreSQL, backfill, scheduler/worker multiinstancia, auditoría multitenant integral, sandbox y backup/restauración, además de CI verde sobre el HEAD definitivo.
