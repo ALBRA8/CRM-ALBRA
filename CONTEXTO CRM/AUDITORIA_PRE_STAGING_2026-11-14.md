@@ -156,3 +156,37 @@ Validación pendiente para estos commits: CI completo en el HEAD resultante, inc
 - Auditoría global: **incompleta**; staging: **no aprobado**.
 - Sin merge, despliegue, migración aplicada, backfill aplicado, workers activados ni envíos reales.
 - Mantener apagados `CHANNEL_OUTBOUND_DISPATCH_ENABLED`, `CHANNEL_AUTOREPLY_ENABLED`, `WORKFLOW_OUTBOX_DISPATCH_ENABLED` y `WHATSPOWER_ENABLED`.
+
+
+## Continuación técnica — diseño de cierre de riesgos
+
+### Scheduler: diseño requerido antes de tocar el motor
+
+No se añadió un campo de lease aislado ni se cambió el scheduler parcialmente: eso dejaría escrituras de workers antiguos sin protección. La implementación segura debe ser un cambio coordinado con migración y motor:
+
+1. Añadir a `AutomationRun` un contador monotónico `fencingVersion` (default 0), `leaseOwner` y `leaseExpiresAt`. El contador es la autoridad; el owner es diagnóstico y no sustituye al fence.
+2. Reclamar o recuperar mediante una transacción/CAS que compruebe estado y expiración, incremente `fencingVersion` y devuelva el nuevo valor al worker. Una reclamación nunca reutiliza un fence anterior.
+3. Pasar `runId + fencingVersion` como contexto obligatorio a `runWorkflowsForTrigger`, `resumeWaitingRuns` y cada operación que cambie `AutomationRun`, `WorkflowStepExecution`, `stepStates`, `currentStep`, outputs, status o timestamps. Cada escritura debe filtrar por el fence vigente; cero filas significa pérdida de ownership y el worker debe detenerse.
+4. Renovar lease con CAS condicionado al fence vigente. Si no puede renovar, cancelar el trabajo restante. Un proceso que despierte después de una pausa larga no puede recuperar ownership con su fence viejo.
+5. Mantener acciones externas exclusivamente como intenciones durables idempotentes en outbox; el worker del scheduler no debe llamar directamente a proveedores. Las acciones internas mutables también deben comprobar el fence dentro de la misma transacción que sus escrituras.
+6. Probar dos instancias, expiración/reclaim, worker A pausado que vuelve después de que B reclama, pérdida de lease durante cada frontera de paso, heartbeat fallido y crash antes/después de persistir outbox. Verificar que A no escribe ni avanza estados después de perder el fence.
+
+El diseño aún requiere revisión de todas las rutas de escritura del motor y una migración compatible con PostgreSQL/SQLite. No se implementó porque una protección solo en el claim del scheduler no impediría que el motor viejo escriba resultados después del reclaim.
+
+### TikTok: límite del contrato de entrada
+
+- La función privada `extractMessage` todavía permite inferir `senderId` desde `conversation_id` cuando no hay sender explícito. Esto mezcla identidad de persona y conversación y puede crear clientes CRM con una clave equivocada.
+- El cambio seguro requiere un parser de contrato con `senderId` obligatorio y `conversationId` separado/opcional, preservando ambos sin inferencias. Hasta tener un payload Business Messaging aprobado/fixture del portal de socios, no se habilita el canal ni se conecta el envío.
+- La prueba unitaria actual valida firma/frescura y el contrato del helper de envío, pero no valida el payload real de webhook, deduplicación de extremo a extremo ni el enlace tenant/conversación/outbox.
+
+### Backups: evidencia disponible y límite
+
+- El repositorio contiene `scripts/backup-restore-drill.sh`, un ensayo aislado que construye datos demo, toma snapshot, verifica hash, copia a un destino externo o directorio simulado, restaura y arranca el CRM contra la base restaurada. También comprueba health y autenticación.
+- Hay pruebas de integración para límites de tamaño, validación y atomicidad del endpoint de restore.
+- **No se ejecutó** el drill en esta revisión. Un directorio local que simula almacenamiento externo no demuestra recuperación del proveedor remoto; tampoco acredita RPO/RTO, restauración de adjuntos/sesiones ni disponibilidad de secretos. El ensayo real debe ejecutarse en un entorno aislado con destino remoto configurado y evidencia de tiempos/conteos.
+
+### Estado de CI y alcance
+
+- El commit documental anterior es `0aeb1f793fc4bda00831287be584ce522e1ae1a7`. Al último chequeo, sus workflows push y pull_request seguían `in_progress`; por tanto, no se atribuye CI verde a ese SHA.
+- El CI verde confirmado sigue siendo el del código `5d6c51707e28e8a8d9280893dda92b4757b23bfc`, no el commit documental posterior.
+- La auditoría multitenant y conciliación no se consideran completas por la existencia de tests parciales: falta una matriz de rutas/queries y una matriz de estados/acciones de operador con escenarios de ACK tardío y lease expirado.
