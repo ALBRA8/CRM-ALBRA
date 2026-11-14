@@ -91,6 +91,22 @@ describe('Messenger webhook connection identity', () => {
       pageId,
       credentialsEnc: 'v1:other-tenant-page-credentials',
     })).rejects.toThrow('Messenger Page connection ownership conflict')
+
+    const event = {
+      organizationId: FIX.orgA.id,
+      connectionId: a.id,
+      eventKey: 'message:mid_messenger_durable_123',
+      eventType: 'messenger.message',
+    }
+    const claims = await Promise.all([
+      claimChannelWebhookEvent(event),
+      claimChannelWebhookEvent(event),
+    ])
+    expect(claims.filter(Boolean)).toHaveLength(1)
+    const claim = claims.find(Boolean)!
+    expect((await completeChannelWebhookEvent(claim)).count).toBe(1)
+    expect(await claimChannelWebhookEvent(event)).toBeNull()
+    expect(await getChannelWebhookEventStatus(a.id, event.eventKey)).toBe('processed')
   })
 
   it('rejects malformed Page identities before creating a connection', async () => {
