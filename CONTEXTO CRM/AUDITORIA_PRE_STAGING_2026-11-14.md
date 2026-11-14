@@ -242,3 +242,32 @@ El diseño aún requiere revisión de todas las rutas de escritura del motor y u
 - El workflow solo recibe `conversationId` cuando el payload realmente lo incluye; se elimina el identificador sintético `tt:<senderId>`.
 - Esto corrige una mezcla de identidades, pero **no cierra TikTok**: sigue pendiente fixture/contrato de socio validado, prueba HTTP de replay/fallos, persistencia de conversación/conexión y adaptador de outbox canónica.
 - No se habilitó despacho ni se contactó TikTok.
+
+
+## Hardening de idempotencia del timeline — 2026-11-14
+
+- Se añadió `TimelineEvent.sourceEventKey` nullable y único por `(organizationId, sourceEventKey)`, mediante migración aditiva `zzzz_timeline_event_idempotency`.
+- `recordTimelineEvent` acepta esa clave y trata la colisión Prisma P2002 como no-op idempotente; los eventos manuales/legacy sin clave conservan el comportamiento previo.
+- Telegram asigna una clave estable `telegram:update:<update_id>:inbound` tanto al camino de texto como al fallback de voz no transcrita. Un retry ya no crea una segunda fila de timeline para el mismo update y tenant.
+- TikTok asigna una clave derivada por SHA-256 del ID de evento del proveedor; no se persiste el ID crudo como clave de timeline.
+- Se añadieron pruebas de integración que verifican deduplicación en el mismo tenant y que la misma clave puede existir independientemente en dos tenants.
+- Esto cierra duplicación de la fila de timeline, **no** hace atómicos el resto de los efectos Telegram/TikTok: notificaciones push, workflows, ASR y encolado requieren sus propias garantías idempotentes/ledger por etapa. No declarar resuelta toda la recuperación ante fallos parciales.
+
+### CI de esta modificación
+
+- HEAD al momento de esta nota: `5ff123c312f47e4bc4bd04648ff38a285aeef1bf`.
+- CI anterior `9e4acfd61db3678f08e5b9ddc578c0b92ffd64fa`: push y pull_request terminaron en success.
+- Para los commits de migración/schema, helper, rutas y pruebas de idempotencia del timeline, los workflows push/PR aparecían en `in_progress` en el último chequeo; no atribuirles éxito hasta que ambos terminen en el SHA final y se revisen todos los pasos.
+
+## Bloqueos que siguen impidiendo declarar staging-ready
+
+1. **Scheduler:** no existe fencing monotónico de lease compartido entre scheduler y workflow engine; las escrituras tardías del worker antiguo siguen sin estar condicionadas por ownership. Requiere cambio coordinado de schema, claim/heartbeat y cada escritura de run/step, además de pruebas multiinstancia.
+2. **Telegram:** el claim durable por `update_id` ya existe y el timeline entrante ahora es idempotente, pero el pipeline no es transaccional. Falta suite HTTP con fallos inyectados en cada etapa y deduplicación verificable de notificaciones/acciones downstream; no confundir la outbox específica con entrega confirmada.
+3. **TikTok:** el parser ya separa sender/conversation y el timeline deduplica por event ID; faltan payload fixture oficial del programa Business, test HTTP firmado/replay, persistencia canónica de conversación y adaptador completo de outbox/ACK/reconciliación. Sin fixture aprobada no se inventa contrato.
+4. **Outboxes:** completar pruebas de ACK tardío/lease para todos los proveedores, matriz de estados y conciliación auditable (actor, motivo y referencia/evidencia de consulta). Los estados ambiguos no se reintentan automáticamente.
+5. **Multitenancy:** inventario completo de rutas, jobs, relaciones Prisma, archivos, export/import y callbacks; pruebas negativas de tenant cruzado y constraints compuestas donde correspondan. La suite P0 actual es parcial.
+6. **Backup/restore:** endurecer el script para exigir origen sintético explícito y destino remoto de prueba (fallar cerrado; no copiar por defecto `DATABASE_URL` potencialmente real a `/tmp`). Ejecutar drill aislado con evidencia de RPO/RTO, integridad, conteos y restore remoto.
+7. **Staging real:** ejecutar migraciones/backfill solo en entorno aislado con backup restaurable, sandbox autorizado por proveedor, secretos de staging, observabilidad/alertas y runbooks probados. La CI SQLite no sustituye PostgreSQL ni sandbox.
+8. **Release:** mantener PR draft, sin merge/deploy, y flags de despacho/auto-respuesta apagados hasta la aprobación específica de staging.
+
+No se declara staging aprobado en este commit. La evidencia de CI de los cambios de idempotencia está pendiente.
