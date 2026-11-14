@@ -423,6 +423,7 @@ model AutomationRun {
 
   @@index([automationId, startedAt])
   @@index([status, resumeAt])
+  @@index([status, leaseExpiresAt])
   @@unique([automationId, idempotencyKey])
 }
 
