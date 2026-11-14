@@ -227,6 +227,11 @@ export async function POST(req: NextRequest) {
       if (!msg?.text) continue
       const senderId = messaging.sender?.id
       if (!senderId) continue
+      if (!msg.mid) {
+        // No stable provider message ID means no durable claim; skip all CRM/workflow effects.
+        console.warn('[instagram webhook] mensaje sin MID estable; se omite procesamiento')
+        continue
+      }
       const text = msg.text.slice(0, 3000)
       if (msg.mid && connectionId) {
         const claim = await claimChannelWebhookEvent({
