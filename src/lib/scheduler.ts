@@ -35,13 +35,23 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
     try {
       const orphaned = await db.automationRun.updateMany({
         where: {
-          status: 'running',
+          status: { in: ['running', 'processing'] },
           startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) },
           ...(orgId ? { organizationId: orgId } : {}),
         },
         data: { status: 'failed', error: 'interrumpido (interrupted): proceso reiniciado a mitad del run (sweeper)', finishedAt: new Date() },
       })
-      if (orphaned.count > 0) console.warn(`[scheduler] runs huérfanos marcados failed: ${orphaned.count}`)
+      if (orphaned.count > 0) {
+        const staleRuns = await db.automationRun.findMany({
+          where: { status: 'failed', error: { contains: 'interrumpido (interrupted)' }, finishedAt: { gte: new Date(Date.now() - 60_000) }, ...(orgId ? { organizationId: orgId } : {}) },
+          select: { id: true },
+        })
+        if (staleRuns.length) await db.workflowStepExecution.updateMany({
+          where: { automationRunId: { in: staleRuns.map((r) => r.id) }, status: 'started' },
+          data: { status: 'unknown', error: 'interrupted: resultado no verificable; no reintentar', finishedAt: new Date() },
+        })
+        console.warn(`[scheduler] runs huérfanos marcados failed: ${orphaned.count}`)
+      }
     } catch (err) {
       console.error('[scheduler] fallo sweeper', err)
     }
