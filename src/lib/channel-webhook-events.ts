@@ -157,3 +157,57 @@ export async function getChannelWebhookEventStatus(connectionId: string, eventKe
   const event = await db.channelWebhookEvent.findUnique({ where: { connectionId_eventKey: { connectionId, eventKey } }, select: { status: true } })
   return event?.status ?? null
 }
+
+
+/**
+ * Resolves the legacy TikTok app identity to a tenant-scoped canonical
+ * connection. The app identity is hashed so neither app keys nor secrets
+ * appear in providerAccountKey or logs. Ownership is always checked closed.
+ */
+export async function getOrCreateTikTokWebhookConnection(input: {
+  organizationId: string
+  appIdentity: string
+  credentialsEnc: string
+}): Promise<{ id: string }> {
+  if (!input.organizationId || !/^[A-Za-z0-9._:-]{1,255}$/.test(input.appIdentity) || !input.credentialsEnc) {
+    throw new Error('Invalid TikTok app identity')
+  }
+  const { createHash } = await import('node:crypto')
+  const identityHash = createHash('sha256').update(input.appIdentity).digest('hex')
+  const providerAccountKey = `tiktok:app:${input.organizationId}:${identityHash}`
+  const externalAccountId = identityHash
+  const existing = await db.channelConnection.findUnique({
+    where: { providerAccountKey },
+    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+  })
+  if (existing) {
+    if (existing.organizationId !== input.organizationId || existing.channel !== 'tiktok' ||
+      existing.provider !== 'tiktok_business' || existing.externalAccountId !== externalAccountId) {
+      throw new Error('TikTok app connection ownership conflict')
+    }
+    return { id: existing.id }
+  }
+  try {
+    return await db.channelConnection.create({
+      data: {
+        organizationId: input.organizationId,
+        channel: 'tiktok',
+        provider: 'tiktok_business',
+        providerAccountKey,
+        externalAccountId,
+        status: 'pending',
+        credentialsEnc: input.credentialsEnc,
+        metadata: JSON.stringify({ legacyWebhook: true, source: 'Integration.tiktok' }),
+      },
+      select: { id: true },
+    })
+  } catch (error) {
+    const raced = await db.channelConnection.findUnique({
+      where: { providerAccountKey },
+      select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+    })
+    if (!raced || raced.organizationId !== input.organizationId || raced.channel !== 'tiktok' ||
+      raced.provider !== 'tiktok_business' || raced.externalAccountId !== externalAccountId) throw error
+    return { id: raced.id }
+  }
+}
