@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { decryptSecret } from '@/lib/crypto'
+import { prepareTikTokAccessTokenForSend } from '@/lib/tiktok-token-rotation'
 import {
   claimChannelOutboundMessage,
   markChannelOutboundFailed,
@@ -118,6 +119,15 @@ export async function dispatchChannelOutboundMessage(
   if (!credentials) {
     await markChannelOutboundFailed(outboundId, 'CREDENTIALS_INVALID')
     return { status: 'failed', errorCode: 'CREDENTIALS_INVALID' }
+  }
+
+  if (connection.channel === 'tiktok' && connection.provider === 'tiktok_business') {
+    const prepared = await prepareTikTokAccessTokenForSend(connection.id)
+    if (!prepared.ok) {
+      await markChannelOutboundFailed(outboundId, prepared.errorCode)
+      return { status: 'failed', errorCode: prepared.errorCode }
+    }
+    credentials.accessToken = prepared.accessToken
   }
 
   try {
