@@ -41,6 +41,8 @@ export async function recordTimelineEvent(input: TimelineEventInput) {
       },
     })
   } catch (err) {
+    // A duplicate provider key is an expected webhook retry, not a timeline failure.
+    if ((err as { code?: string })?.code === 'P2002' && input.sourceEventKey) return
     // El timeline nunca debe romper el flujo principal
     console.error('[timeline] no se pudo registrar el evento', err)
   }
