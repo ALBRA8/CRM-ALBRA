@@ -31,6 +31,50 @@ export async function enqueueWorkflowOutboundMessage(input: { organizationId: st
   }
 }
 
+/**
+ * Durable Telegram auto-reply created by an inbound webhook.
+ * Uses the provider update_id as an organization-scoped idempotency key.
+ */
+export async function enqueueTelegramWebhookReply(input: {
+  organizationId: string
+  updateId: number
+  chatId: string | number
+  text: string
+}) {
+  if (!input.organizationId || !Number.isSafeInteger(input.updateId) || input.updateId < 0 ||
+    (typeof input.chatId !== 'string' && typeof input.chatId !== 'number') ||
+    !String(input.chatId).trim() || !input.text.trim() || input.text.length > 4000) {
+    throw new Error('TELEGRAM_WEBHOOK_OUTBOX_INVALID_INPUT')
+  }
+  const payload = { chatId: input.chatId, text: input.text.trim(), autoReply: true, source: 'telegram_webhook', updateId: input.updateId }
+  const plain = JSON.stringify(payload)
+  const payloadEnc = encryptSecret(plain)
+  if (!payloadEnc) throw new Error('WORKFLOW_OUTBOX_ENCRYPTION_UNAVAILABLE')
+  const idempotencyKey = `telegram-webhook:${input.updateId}`
+  try {
+    return await db.workflowOutboundMessage.create({
+      data: {
+        organizationId: input.organizationId,
+        automationId: null,
+        automationRunId: null,
+        stepIndex: 0,
+        idempotencyKey,
+        channel: 'telegram',
+        payloadEnc,
+      },
+    })
+  } catch (error) {
+    const existing = await db.workflowOutboundMessage.findUnique({
+      where: { organizationId_idempotencyKey: { organizationId: input.organizationId, idempotencyKey } },
+    })
+    if (!existing) throw error
+    if (existing.channel !== 'telegram' || decryptSecret(existing.payloadEnc) !== plain) {
+      throw new Error('WORKFLOW_OUTBOX_IDEMPOTENCY_CONFLICT')
+    }
+    return existing
+  }
+}
+
 async function finishWorkflowOutboundMessage(id: string, claimToken: string, status: 'sent' | 'failed' | 'unknown', errorCode?: string, providerMessageId?: string) {
   return db.workflowOutboundMessage.updateMany({
     where: { id, status: 'sending', claimToken },
