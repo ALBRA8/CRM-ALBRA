@@ -43,6 +43,10 @@ export async function enqueueWorkflowOutboundMessage(input: { organizationId: st
     }
     return await db.workflowOutboundMessage.create({ data })
   } catch (error) {
+    // A lost scheduler lease is an authorization failure, not an idempotent
+    // retry. Never let the duplicate-recovery path turn a stale worker's
+    // rejected write into an apparently accepted outbound intent.
+    if (error instanceof Error && error.message.startsWith('WORKFLOW_LEASE_LOST')) throw error
     const existing = await db.workflowOutboundMessage.findUnique({ where: { organizationId_idempotencyKey: { organizationId: input.organizationId, idempotencyKey } } })
     if (!existing) throw error
     if (existing.channel !== input.channel || decryptSecret(existing.payloadEnc) !== plain) throw new Error('WORKFLOW_OUTBOX_IDEMPOTENCY_CONFLICT')
