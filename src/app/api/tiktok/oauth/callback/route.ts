@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
       refresh_expires_in?: number
     }
     if (
-      !tokJson.access_token || !tokJson.refresh_token || !openId ||
+      !tokJson.access_token || !tokJson.refresh_token || !tokJson.open_id ||
       !Number.isFinite(tokJson.expires_in) || Number(tokJson.expires_in) <= 0 ||
       !Number.isFinite(tokJson.refresh_expires_in) || Number(tokJson.refresh_expires_in) <= 0
     ) return fail('token_exchange_failed')
