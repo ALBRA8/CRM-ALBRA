@@ -141,7 +141,7 @@ export async function claimChannelWebhookEvent(input: { organizationId: string; 
     if (existing.status === 'processed') return null
     const leaseExpired = existing.status === 'processing' && existing.updatedAt.getTime() < now.getTime() - PROCESSING_LEASE_MS
     if (existing.status !== 'failed' && !leaseExpired) return null
-    const reclaimed = await db.channelWebhookEvent.updateMany({ where: { id: existing.id, status: existing.status, updatedAt: existing.updatedAt }, data: { status: 'processing', claimToken, attemptCount: { increment: 1 }, lastErrorCode: null, processedAt: null, receivedAt: now } })
+    const reclaimed = await db.channelWebhookEvent.updateMany({ where: { id: existing.id, status: existing.status, updatedAt: existing.updatedAt, claimToken: existing.claimToken }, data: { status: 'processing', claimToken, attemptCount: { increment: 1 }, lastErrorCode: null, processedAt: null, receivedAt: now } })
     return reclaimed.count === 1 ? { id: existing.id, claimToken } : null
   }
 }
