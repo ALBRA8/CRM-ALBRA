@@ -415,6 +415,10 @@ model AutomationRun {
   finishedAt     DateTime?
   idempotencyKey String? // trigger:entidad — evita doble ejecución por retry/webhook duplicado
   stepLedgerVersion Int           @default(0) // 1 = write-ahead ledger habilitado; 0 = run histórico
+  // Lease durable y fencing monotónico: cada reclamación incrementa la versión.
+  leaseToken       String?
+  leaseExpiresAt   DateTime?
+  fencingVersion  Int           @default(0)
   stepExecutions  WorkflowStepExecution[]
 
   @@index([automationId, startedAt])
