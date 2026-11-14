@@ -57,8 +57,20 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
         const observedAt = new Date()
         if (stale.leaseExpiresAt && stale.leaseExpiresAt > observedAt) continue
 
+        // Every recovery decision is compare-and-swap against the exact lease
+        // snapshot read above. A heartbeat or a competing reclaim invalidates it.
+        const staleSnapshotWhere = {
+          id: stale.id,
+          organizationId: stale.organizationId,
+          status: { in: ['running', 'processing'] },
+          startedAt: { lt: cutoff },
+          leaseToken: stale.leaseToken,
+          leaseExpiresAt: stale.leaseExpiresAt,
+          fencingVersion: stale.fencingVersion,
+        }
         // Fail closed after lease expiry unless the write-ahead ledger proves
-        // every step completed. A started/unknown step remains ambiguous.
+        // every step completed. Revoke ownership first; only then quarantine
+        // started steps, so a racing heartbeat cannot be overwritten.
         const safeToResume = stale.stepLedgerVersion === 1
           && stale.fencingVersion > 0
           && stale.leaseExpiresAt !== null
@@ -66,22 +78,25 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
           && steps.length > 0
           && steps.every((step) => step.status === 'succeeded')
         if (!safeToResume) {
-          if (steps.some((step) => step.status === 'started')) {
-            await db.workflowStepExecution.updateMany({
-              where: { automationRunId: stale.id, status: 'started' },
-              data: { status: 'unknown', error: 'interrupted: resultado no verificable; no reintentar', finishedAt: new Date() },
-            })
-          }
-          await db.automationRun.updateMany({
-            where: { id: stale.id, status: { in: ['running', 'processing'] }, startedAt: { lt: cutoff } },
+          const failed = await db.automationRun.updateMany({
+            where: staleSnapshotWhere,
             data: {
               status: 'failed',
+              leaseToken: null,
+              leaseExpiresAt: new Date(),
               error: stale.stepLedgerVersion === 1
                 ? 'interrumpido: existe un paso con resultado ambiguo; requiere revisión'
                 : 'interrumpido: run histórico sin ledger de pasos; no se reejecuta automáticamente',
               finishedAt: new Date(),
             },
           })
+          if (failed.count !== 1) continue
+          if (steps.some((step) => step.status === 'started')) {
+            await db.workflowStepExecution.updateMany({
+              where: { automationRunId: stale.id, status: 'started' },
+              data: { status: 'unknown', error: 'interrupted: resultado no verificable; no reintentar', finishedAt: new Date() },
+            })
+          }
           continue
         }
 
@@ -90,14 +105,14 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
         })
         if (!automation) {
           await db.automationRun.updateMany({
-            where: { id: stale.id, status: { in: ['running', 'processing'] }, startedAt: { lt: cutoff } },
-            data: { status: 'failed', error: 'interrumpido: automatización inactiva; no se reanudó', finishedAt: new Date() },
+            where: staleSnapshotWhere,
+            data: { status: 'failed', leaseToken: null, leaseExpiresAt: new Date(), error: 'interrumpido: automatización inactiva; no se reanudó', finishedAt: new Date() },
           })
           continue
         }
 
         const claim = await db.automationRun.updateMany({
-          where: { id: stale.id, status: { in: ['running', 'processing'] }, startedAt: { lt: cutoff } },
+          where: staleSnapshotWhere,
           data: { status: 'running', startedAt: new Date(), finishedAt: null, error: null },
         })
         if (claim.count === 0) continue
