@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
         if (!senderId) continue
         // A provider message ID is the stable identity. The canonical ledger
         // atomically claims it before any CRM/workflow/auto-reply side effect.
-        // Messages without mid retain the legacy best-effort timeline check only.
+        // Without mid there is no stable provider identity, so this event cannot be durably deduplicated.
         let eventClaim: { id: string; claimToken: string } | null = null
         if (msg.mid) {
           eventClaim = await claimChannelWebhookEvent({
@@ -182,7 +182,7 @@ export async function POST(req: NextRequest) {
           if (eventClaim) await completeChannelWebhookEvent(eventClaim)
         } catch (err) {
           if (eventClaim) await failChannelWebhookEvent(eventClaim, 'MESSENGER_HANDLER_FAILED')
-          console.error('[facebook webhook] message processing', err)
+          throw err
         }
       }
     }
@@ -191,6 +191,6 @@ export async function POST(req: NextRequest) {
     return json({ ok: true })
   } catch (err) {
     console.error('[facebook webhook]', err)
-    return json({ ok: true, processed: false })
+    return json({ ok: false, processed: false }, { status: 500 })
   }
 }
