@@ -478,18 +478,15 @@ export async function sendTikTokBusinessMessage(opts: {
 }
 
 /**
- * Verifica la firma X-TikTok-Signature del webhook de TikTok. TikTok ha usado
- * variantes (secret sobre body, o sobre timestamp+body): se aceptan ambas en
- * tiempo constante. Devuelve true si alguna coincide.
+ * Verifica el header oficial TikTok-Signature: "t=<unix>,s=<hex>".
+ * TikTok firma HMAC-SHA256 de "<timestamp>.<raw body>" con el App Secret.
  */
 export const TIKTOK_WEBHOOK_MAX_AGE_MS = 5 * 60 * 1000
 const TIKTOK_WEBHOOK_FUTURE_SKEW_MS = 30 * 1000
 
-/** TikTok timestamp (seconds or milliseconds) must be recent and not future-dated. */
 export function isTikTokWebhookTimestampFresh(timestamp: string | null, now = Date.now()): boolean {
-  if (!timestamp || !/^\d{10,13}$/.test(timestamp)) return false
-  const parsed = Number(timestamp)
-  const timestampMs = timestamp.length <= 10 ? parsed * 1000 : parsed
+  if (!timestamp || !/^\\d{10}$/.test(timestamp)) return false
+  const timestampMs = Number(timestamp) * 1000
   const ageMs = now - timestampMs
   return Number.isFinite(timestampMs) &&
     ageMs <= TIKTOK_WEBHOOK_MAX_AGE_MS &&
@@ -499,14 +496,23 @@ export function isTikTokWebhookTimestampFresh(timestamp: string | null, now = Da
 export function verifyTikTokSignature(
   rawBody: string,
   appSecret: string,
-  signature: string | null,
-  timestamp: string | null,
+  signatureHeader: string | null,
+  legacyTimestamp?: string | null,
 ): boolean {
-  if (!signature || !isTikTokWebhookTimestampFresh(timestamp)) return false
-  const candidates: string[] = [`${timestamp}${rawBody}`, `${timestamp}.${rawBody}`]
-  for (const msg of candidates) {
-    const mac = createHmac('sha256', appSecret).update(msg).digest('hex')
-    if (safeEquals(mac, signature)) return true
+  if (!signatureHeader) return false
+  let timestamp = legacyTimestamp || ''
+  let signature = signatureHeader
+  if (!legacyTimestamp) {
+    const parts: Record<string, string> = {}
+    for (const part of signatureHeader.split(',')) {
+      const separator = part.indexOf('=')
+      if (separator <= 0) continue
+      parts[part.slice(0, separator).trim()] = part.slice(separator + 1).trim()
+    }
+    timestamp = parts.t || ''
+    signature = parts.s || ''
   }
-  return false
+  if (!isTikTokWebhookTimestampFresh(timestamp) || !/^[a-f0-9]{64}$/i.test(signature)) return false
+  const expected = createHmac('sha256', appSecret).update(`${timestamp}.${rawBody}`, 'utf8').digest('hex')
+  return safeEquals(expected, signature.toLowerCase())
 }
