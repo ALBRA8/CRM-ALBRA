@@ -77,7 +77,7 @@ export async function dispatchWorkflowOutboundMessage(id: string) {
       const token = parseTelegramState(integration.telegramBotTokenEnc).token
       if (!token) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'failed', 'TELEGRAM_NOT_CONFIGURED'); return { status: done.count === 1 ? 'failed' as const : 'unknown' as const } }
       const result = await sendTelegramBotMessage({ token, chatId, text })
-      if (result.ok) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'sent'); return { status: done.count === 1 ? 'sent' as const : 'unknown' as const } }
+      if (result.ok && result.messageId) { const done = await finishWorkflowOutboundMessage(id, claimToken, 'sent', undefined, result.messageId); return { status: done.count === 1 ? 'sent' as const : 'unknown' as const } }
       await finishWorkflowOutboundMessage(id, claimToken, 'unknown', 'TELEGRAM_RESULT_UNCERTAIN'); return { status: 'unknown' as const }
     }
     if (item.channel === 'email') {
