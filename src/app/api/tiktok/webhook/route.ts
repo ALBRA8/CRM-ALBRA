@@ -67,7 +67,7 @@ function extractEventId(body: TikTokEventBody, requestLogId?: string | null): st
   return requestLogId && /^[A-Za-z0-9._:-]{8,128}$/.test(requestLogId) ? `logid:${requestLogId}` : null
 }
 
-export function extractTikTokMessage(body: TikTokEventBody): { senderId: string; conversationId: string; text: string } | null {
+export function extractTikTokMessage(body: TikTokEventBody): { senderId: string; conversationId: string; text: string; providerMessageId?: string } | null {
   const content = parseTikTokContent(body)
   const candidates = [
     body.message,
@@ -96,7 +96,10 @@ export function extractTikTokMessage(body: TikTokEventBody): { senderId: string;
     : undefined)
   const text = typeof textValue === 'string' ? textValue : ''
   if (!senderId || !conversationId || !text) return null
-  return { senderId, conversationId, text: text.slice(0, 3000) }
+  const providerMessageId = typeof rec.message_id === 'string' && rec.message_id.trim()
+    ? rec.message_id.trim().slice(0, 255)
+    : typeof rec.id === 'string' && rec.id.trim() ? rec.id.trim().slice(0, 255) : undefined
+  return { senderId, conversationId, text: text.slice(0, 3000), ...(providerMessageId ? { providerMessageId } : {}) }
 }
 
 /** Verificación de la URL (challenge) — TikTok la envía por GET o POST */
@@ -195,7 +198,7 @@ export async function POST(req: NextRequest) {
         },
         update: { contactName: client?.name || msg.senderId },
       })
-      const providerMessageId = `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}`
+      const providerMessageId = msg.providerMessageId || `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}`
       let insertedMessage = false
       try {
         await db.channelMessage.create({
