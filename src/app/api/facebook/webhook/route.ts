@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { json } from '@/lib/api-helpers'
-import { verifyMetaSignature, parseFacebookState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals } from '@/lib/integrations'
+import { verifyMetaSignature, parseFacebookState, findOrCreateChannelClient, buildNichoContext, getHandoffKeywords, safeEquals, isChannelAutoReplyGloballyEnabled } from '@/lib/integrations'
 import { decryptSecret } from '@/lib/crypto'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
       const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
       const state = parseFacebookState(integration?.facebookTokenEnc)
       const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-      if (state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
+      if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
         await llmReplyOrNotification({
           orgId,
           clientId: client?.id || null,
