@@ -133,7 +133,9 @@ export async function POST(req: NextRequest) {
     const connection = await getOrCreateTikTokWebhookConnection({
       organizationId: orgId,
       appIdentity: matchedAppIdentity,
+      externalAccountId: parseTikTokState(matchedCredentialsEnc).openId || '',
       credentialsEnc: matchedCredentialsEnc,
+      readyForOutbound: !!(parseTikTokState(matchedCredentialsEnc).accessToken && parseTikTokState(matchedCredentialsEnc).openId),
     })
     const claim = await claimChannelWebhookEvent({
       organizationId: orgId,
@@ -151,6 +153,32 @@ export async function POST(req: NextRequest) {
     const msg = extractTikTokMessage(body)
     if (msg) {
       const client = await findOrCreateChannelClient({ orgId, platformKey: `tt:${msg.senderId}`, name: null, source: 'tiktok' })
+      // La conversación canónica se particiona por el conversation_id real
+      // del proveedor; el sender ID queda asociado al cliente y metadata.
+      const conversation = await db.channelConversation.upsert({
+        where: { connectionId_externalContactKey: { connectionId: connection.id, externalContactKey: msg.conversationId } },
+        create: {
+          organizationId: orgId,
+          connectionId: connection.id,
+          channel: 'tiktok',
+          externalContactKey: msg.conversationId,
+          contactName: client?.name || msg.senderId,
+        },
+        update: { contactName: client?.name || msg.senderId },
+      })
+      const providerMessageId = `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}`
+      await db.channelMessage.upsert({
+        where: { conversationId_externalMessageId: { conversationId: conversation.id, externalMessageId: providerMessageId } },
+        create: {
+          conversationId: conversation.id,
+          externalMessageId: providerMessageId,
+          direction: 'in',
+          senderType: 'contact',
+          body: msg.text,
+          metadata: JSON.stringify({ provider: 'tiktok_business', senderId: msg.senderId, conversationId: msg.conversationId, eventId: providerEventId }),
+        },
+        update: {},
+      })
 
       await recordTimelineEvent({
         orgId,
@@ -159,7 +187,7 @@ export async function POST(req: NextRequest) {
         sourceEventKey: `tiktok:event:${createHash('sha256').update(providerEventId).digest('hex')}:inbound`,
         title: 'Mensaje recibido por TikTok',
         description: msg.text.slice(0, 500),
-        metadata: { senderId: msg.senderId, conversationId: msg.conversationId, direction: 'in', event: body.event || null },
+        metadata: { senderId: msg.senderId, conversationId: msg.conversationId, canonicalConversationId: conversation.id, direction: 'in', event: body.event || null },
         source: 'integration',
       })
 
@@ -167,17 +195,11 @@ export async function POST(req: NextRequest) {
         await runWorkflowsForTrigger({
           orgId,
           type: 'message_received',
-          payload: { channel: 'tiktok', from: `tt:${msg.senderId}`, text: msg.text, ...(msg.conversationId ? { conversationId: msg.conversationId } : {}), clientId: client?.id, messageId: `tiktok_event_${createHash('sha256').update(providerEventId).digest('hex')}` },
+          payload: { channel: 'tiktok', from: `tt:${msg.senderId}`, text: msg.text, conversationId: conversation.id, providerConversationId: msg.conversationId, clientId: client?.id, messageId: providerMessageId },
         })
       } catch (err) {
         console.error('[tiktok webhook] workflows', err)
       }
-
-      // El envío directo anterior usaba senderId como conversation_id y un
-      // payload no compatible con Business Messaging API v1.3. No se despacha
-      // desde el webhook: la respuesta automática permanece deshabilitada hasta
-      // que el conversation_id documentado se persista en la outbox canónica.
-
     }
 
     const completed = await completeChannelWebhookEvent(claim)
