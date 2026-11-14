@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
 import { db } from './db'
-import { recordTimelineEvent } from './timeline'
 import { enqueueWorkflowOutboundMessage } from './workflow-outbox'
 
 /**
