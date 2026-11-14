@@ -109,6 +109,7 @@ describe('TikTok inbound message identity parsing', () => {
         message: {
           sender: { open_id: 'person-789' },
           conversation_id: 'conversation-987',
+          message_id: 'provider-message-789',
           text: 'Mensaje desde envelope',
         },
       }),
@@ -116,6 +117,7 @@ describe('TikTok inbound message identity parsing', () => {
       senderId: 'person-789',
       conversationId: 'conversation-987',
       text: 'Mensaje desde envelope',
+      providerMessageId: 'provider-message-789',
     })
   })
 
