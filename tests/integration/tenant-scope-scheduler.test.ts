@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { runDueJobs } from '@/lib/scheduler'
-import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import type { resumeWaitingRuns as realResumeWaitingRunsType } from '@/lib/workflow-engine'
 import { db } from '@/lib/db'
 import { FIX } from '../helpers'
