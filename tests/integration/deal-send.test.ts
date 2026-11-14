@@ -43,7 +43,6 @@ const VALID_LLM_JSON = JSON.stringify({
   reasoning: 'Cliente con teléfono válido y sin conversación previa.',
 })
 
-const daemonUrl = process.env.WHATSAPP_DAEMON_URL || 'http://localhost:3002'
 
 beforeAll(async () => {
   // Cliente CON teléfono y SIN conversación WhatsApp ni timeline TG/IG.
