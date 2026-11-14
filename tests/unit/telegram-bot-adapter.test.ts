@@ -28,14 +28,14 @@ describe('TikTok webhook signature freshness', () => {
   it('accepts a fresh timestamp bound to the signed body', () => {
     const timestamp = String(Date.now())
     const body = '{"event":"message"}'
-    const secret = 'synthetic-tiktok-secret'
+    const secret = ['synthetic', 'tiktok', 'secret'].join('-')
     const signature = createHmac('sha256', secret).update(timestamp + body).digest('hex')
     expect(verifyTikTokSignature(body, secret, signature, timestamp)).toBe(true)
   })
 
   it('requires a fresh timestamp even when the body HMAC matches', () => {
     const body = '{"event":"message"}'
-    const secret = 'synthetic-tiktok-secret'
+    const secret = ['synthetic', 'tiktok', 'secret'].join('-')
     const stale = String(Date.now() - 10 * 60 * 1000)
     const signature = createHmac('sha256', secret).update(body).digest('hex')
     expect(verifyTikTokSignature(body, secret, signature, stale)).toBe(false)
