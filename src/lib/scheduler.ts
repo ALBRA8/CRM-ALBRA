@@ -51,13 +51,18 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
           where: { automationRunId: stale.id },
           orderBy: { stepIndex: 'asc' },
         })
-        // Fail closed until this run has a fencing generation. A successful
-        // step ledger alone cannot prove that an older worker has stopped;
-        // resuming it without a durable fencing claim could race that worker.
+        // A stale startedAt is not proof of a dead worker: an active worker
+        // renews leaseExpiresAt while processing. Never fail or reclaim a run
+        // whose currently observed lease is still valid.
+        const observedAt = new Date()
+        if (stale.leaseExpiresAt && stale.leaseExpiresAt > observedAt) continue
+
+        // Fail closed after lease expiry unless the write-ahead ledger proves
+        // every step completed. A started/unknown step remains ambiguous.
         const safeToResume = stale.stepLedgerVersion === 1
           && stale.fencingVersion > 0
           && stale.leaseExpiresAt !== null
-          && stale.leaseExpiresAt < new Date()
+          && stale.leaseExpiresAt <= observedAt
           && steps.length > 0
           && steps.every((step) => step.status === 'succeeded')
         if (!safeToResume) {
