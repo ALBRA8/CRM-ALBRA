@@ -1,7 +1,5 @@
 -- Allow durable outbox intents originating from provider webhooks, not only automation runs.
 -- SQLite table rebuild keeps existing workflow-originated rows and indexes intact.
-PRAGMA foreign_keys=OFF;
-
 CREATE TABLE "new_WorkflowOutboundMessage" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "organizationId" TEXT NOT NULL,
@@ -49,5 +47,3 @@ CREATE INDEX "WorkflowOutboundMessage_organizationId_createdAt_idx"
   ON "WorkflowOutboundMessage"("organizationId", "createdAt");
 CREATE INDEX "WorkflowOutboundMessage_automationRunId_stepIndex_idx"
   ON "WorkflowOutboundMessage"("automationRunId", "stepIndex");
-
-PRAGMA foreign_keys=ON;
