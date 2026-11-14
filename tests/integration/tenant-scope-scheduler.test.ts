@@ -245,4 +245,52 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
     }
   })
 
+
+  it('marca unknown los pasos interrumpidos y nunca reintenta runs legacy', async () => {
+    const ambiguous = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: autoManualA,
+        status: 'processing',
+        startedAt: minutesAgo(11),
+        stepLedgerVersion: 1,
+      },
+    })
+    const legacy = await db.automationRun.create({
+      data: {
+        organizationId: FIX.orgA.id,
+        automationId: autoManualA,
+        status: 'processing',
+        startedAt: minutesAgo(11),
+        stepLedgerVersion: 0,
+      },
+    })
+    await db.workflowStepExecution.create({
+      data: {
+        automationRunId: ambiguous.id,
+        stepIndex: 0,
+        actionType: 'create_opportunity',
+        status: 'started',
+      },
+    })
+
+    try {
+      await runDueJobs({ orgId: FIX.orgA.id })
+      const [ambiguousRun, legacyRun, step] = await Promise.all([
+        db.automationRun.findUnique({ where: { id: ambiguous.id } }),
+        db.automationRun.findUnique({ where: { id: legacy.id } }),
+        db.workflowStepExecution.findUnique({
+          where: { automationRunId_stepIndex: { automationRunId: ambiguous.id, stepIndex: 0 } },
+        }),
+      ])
+      expect(ambiguousRun?.status).toBe('failed')
+      expect(ambiguousRun?.error).toContain('ambiguo')
+      expect(step?.status).toBe('unknown')
+      expect(legacyRun?.status).toBe('failed')
+      expect(legacyRun?.error).toContain('histórico')
+    } finally {
+      await db.automationRun.deleteMany({ where: { id: { in: [ambiguous.id, legacy.id] } } })
+    }
+  })
+
 })
