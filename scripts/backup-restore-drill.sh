@@ -105,7 +105,7 @@ HASH_ORIG="$(sha256sum "$SNAP" | cut -d' ' -f1)"
 phase "[3/8] Copia EXTERNA $( [ -n "${BACKUP_REMOTE_DEST:-}" ] && echo "(rclone → $BACKUP_REMOTE_DEST)" || echo "(simulación local explícita)" )"
 if [ -n "${BACKUP_REMOTE_DEST:-}" ]; then
   rclone copy "$SNAP" "$BACKUP_REMOTE_DEST/drill-$STAMP/"
-  cp "$BACKUP_REMOTE_DEST/drill-$STAMP/$(basename "$SNAP")" "$EXTERNAL/custom-drill.db"
+  rclone copy "$BACKUP_REMOTE_DEST/drill-$STAMP/$(basename "$SNAP")" "$EXTERNAL/"
 else
   cp "$SNAP" "$EXTERNAL/custom-drill.db"
 fi
