@@ -474,7 +474,7 @@ const TIKTOK_WEBHOOK_FUTURE_SKEW_MS = 30 * 1000
 
 /** TikTok timestamp (seconds or milliseconds) must be recent and not future-dated. */
 export function isTikTokWebhookTimestampFresh(timestamp: string | null, now = Date.now()): boolean {
-  if (!timestamp || !/^\\d{10,13}$/.test(timestamp)) return false
+  if (!timestamp || !/^\d{10,13}$/.test(timestamp)) return false
   const parsed = Number(timestamp)
   const timestampMs = timestamp.length <= 10 ? parsed * 1000 : parsed
   const ageMs = now - timestampMs
