@@ -30,6 +30,10 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Conversación inválida' }, { status: 400 })
     }
 
+    if (!String(body.text || '').trim()) {
+      return json({ error: 'El mensaje está vacío' }, { status: 400 })
+    }
+
     const parsedKey = parseInboxKey(key)
     if (key.startsWith('cc:') && parsedKey) {
       try {
