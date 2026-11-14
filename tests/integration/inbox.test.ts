@@ -172,12 +172,26 @@ describe('POST /api/inbox/send', () => {
     expect(String(body.error)).toMatch(/vacío/i)
   })
 
-  it('canal sin configurar → 400 descriptivo (no 500)', async () => {
-    // org-a no tiene token de Telegram en la BD de test → degradación elegante
-    const res = await inboxSendPOST(req('/inbox/send', { method: 'POST', token: tokenA(), body: { key: `tg:${tgClientId}`, contactHandle: '555001', clientId: tgClientId, text: 'respuesta humana' } }))
-    expect(res.status).toBe(400)
-    const body = await jsonBody(res)
-    expect(String(body.error)).toMatch(/Telegram no configurado/i)
+  it('bloquea envíos legacy de WhatsApp y Telegram sin llamar a ningún proveedor', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const whatsapp = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `wa:${waConvId}`, contactHandle: waPhone, text: 'No debe salir' },
+      }))
+      const telegram = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `tg:${tgClientId}`, contactHandle: '555001', clientId: tgClientId, text: 'No debe salir' },
+      }))
+      expect(whatsapp.status).toBe(409)
+      expect(telegram.status).toBe(409)
+      expect(await jsonBody(whatsapp)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
+      expect(await jsonBody(telegram)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 
