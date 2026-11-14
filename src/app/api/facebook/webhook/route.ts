@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
@@ -196,7 +197,7 @@ export async function POST(req: NextRequest) {
           }
 
           if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true) && canonicalConversation && msg.mid) {
-            const clientRequestId = `messenger-auto-reply:${msg.mid}`
+            const clientRequestId = `messenger-auto-reply:${createHash('sha256').update(msg.mid).digest('hex')}`
             // A webhook retry after enqueue must reuse the first persisted reply,
             // not regenerate different text under the same idempotency key.
             const existingIntent = await getChannelOutboundIntentByRequestId({
