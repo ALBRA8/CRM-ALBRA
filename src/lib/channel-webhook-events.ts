@@ -180,7 +180,7 @@ export async function getOrCreateTikTokWebhookConnection(input: {
   const externalAccountId = input.externalAccountId
   const existing = await db.channelConnection.findUnique({
     where: { providerAccountKey },
-    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true },
+    select: { id: true, organizationId: true, channel: true, provider: true, externalAccountId: true, status: true },
   })
   if (existing) {
     if (existing.organizationId !== input.organizationId || existing.channel !== 'tiktok' ||
