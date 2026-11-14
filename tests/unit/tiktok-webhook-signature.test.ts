@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { isTikTokWebhookTimestampFresh, sendTikTokBusinessMessage, verifyTikTokSignature } from '@/lib/integrations'
+import { extractTikTokMessage } from '@/app/api/tiktok/webhook/route'
 
 const fakeAccessToken = ['test', 'access', 'token'].join('-')
 const fakeBusinessId = ['business', 'open', 'id'].join('-')
@@ -75,5 +76,24 @@ describe('TikTok Business Messaging send contract', () => {
       fetchImpl,
     })
     expect(result).toEqual({ ok: false, error: 'TIKTOK_RESPONSE_MISSING_MESSAGE_ID' })
+  })
+})
+
+
+describe('TikTok inbound message identity parsing', () => {
+  it('keeps sender and conversation IDs separate', () => {
+    expect(extractTikTokMessage({
+      message: { sender: { id: 'person-123' }, conversation_id: 'conversation-456', text: 'Hola' },
+    })).toEqual({
+      senderId: 'person-123',
+      conversationId: 'conversation-456',
+      text: 'Hola',
+    })
+  })
+
+  it('never substitutes conversation ID for a missing sender identity', () => {
+    expect(extractTikTokMessage({
+      message: { conversation_id: 'conversation-456', text: 'Hola' },
+    })).toBeNull()
   })
 })
