@@ -650,6 +650,12 @@ export async function sendInboxMessage(opts: {
   clientId?: string | null
   text: string
 }): Promise<InboxSendResult> {
+  // Fail closed: los identificadores legacy no están conectados a la outbox canónica.
+  // Nunca llamar proveedores directamente desde esta función.
+  if (!opts.key.startsWith('cc:')) {
+    return { ok: false, error: 'El envío legacy está deshabilitado; usa una conversación canónica de la outbox.' }
+  }
+
   // Canal WhatsApp directo (Task 19-b): sin conversación previa, se crea al vuelo.
   const waNewPhone = parseWaNewKey(opts.key)
   if (waNewPhone) {
