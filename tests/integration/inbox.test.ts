@@ -185,10 +185,18 @@ describe('POST /api/inbox/send', () => {
         method: 'POST', token: tokenA(),
         body: { key: `tg:${tgClientId}`, contactHandle: '555001', clientId: tgClientId, text: 'No debe salir' },
       }))
-      expect(whatsapp.status).toBe(409)
-      expect(telegram.status).toBe(409)
-      expect(await jsonBody(whatsapp)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
-      expect(await jsonBody(telegram)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
+      const instagram = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `ig:${tgClientId}`, contactHandle: 'ig-recipient', clientId: tgClientId, text: 'No debe salir' },
+      }))
+      const facebook = await inboxSendPOST(req('/inbox/send', {
+        method: 'POST', token: tokenA(),
+        body: { key: `fb:${tgClientId}`, contactHandle: 'fb-recipient', clientId: tgClientId, text: 'No debe salir' },
+      }))
+      for (const response of [whatsapp, telegram, instagram, facebook]) {
+        expect(response.status).toBe(409)
+        expect(await jsonBody(response)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
+      }
       expect(fetchMock).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
