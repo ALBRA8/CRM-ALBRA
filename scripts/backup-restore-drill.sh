@@ -5,10 +5,10 @@
 # Demuestra la cadena completa EXIGIDA por la auditoría, en entorno
 # AISLADO (no toca la BD real de desarrollo/producción):
 #
-#   BD original → [1] snapshot consistente (Online Backup API)
+#   BD SQLite sintética vacía → [1] snapshot consistente (Online Backup API)
 #                → [2] integridad del snapshot
-#                → [3] copia EXTERNA (dir que simula almacenamiento remoto;
-#                      con rclone + BACKUP_REMOTE_DEST copia de verdad)
+#                → [3] copia remota (rclone + BACKUP_REMOTE_DEST) o
+#                      simulación local explícita, nunca acreditada como remota
 #                → [4] DESTRUCCIÓN controlada del estado
 #                → [5] RESTAURACIÓN desde la copia externa
 #                → [6] verificación: integridad + conteos por tabla
