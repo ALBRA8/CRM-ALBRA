@@ -123,6 +123,11 @@ export async function POST(req: NextRequest) {
         if (!msg?.text || msg.is_echo) continue
         const senderId = messaging.sender?.id
         if (!senderId) continue
+        if (!msg.mid) {
+          // Without a stable MID the event cannot be claimed atomically; do not create duplicate side effects.
+          console.warn('[messenger webhook] mensaje sin MID estable; se omite procesamiento')
+          continue
+        }
         // A provider message ID is the stable identity. The canonical ledger
         // atomically claims it before any CRM/workflow/auto-reply side effect.
         // Without mid there is no stable provider identity, so this event cannot be durably deduplicated.
