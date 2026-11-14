@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server'
+import { createHash } from 'node:crypto'
 import { db } from '@/lib/db'
 import { json } from '@/lib/api-helpers'
 import {
@@ -12,7 +13,7 @@ import {
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
-import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getOrCreateTikTokWebhookConnection } from '@/lib/channel-webhook-events'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTikTokWebhookConnection } from '@/lib/channel-webhook-events'
 
 /**
  * Webhook de TikTok (wiring-ready).
@@ -134,12 +135,12 @@ export async function POST(req: NextRequest) {
     const claim = await claimChannelWebhookEvent({
       organizationId: orgId,
       connectionId: connection.id,
-      eventKey: `event:${providerEventId}`,
+      eventKey: `event:${createHash('sha256').update(providerEventId).digest('hex')}`,
       eventType: (body.event || 'tiktok.event').toLowerCase().replace(/[^a-z0-9:._-]/g, '_').slice(0, 80),
     })
     if (!claim) {
-      const { getChannelWebhookEventStatus } = await import('@/lib/channel-webhook-events')
-      const status = await getChannelWebhookEventStatus(connection.id, `event:${providerEventId}`)
+      const eventKey = `event:${createHash('sha256').update(providerEventId).digest('hex')}`
+      const status = await getChannelWebhookEventStatus(connection.id, eventKey)
       return status === 'processed'
         ? json({ ok: true, duplicate: true })
         : json({ error: 'Evento TikTok ya está en procesamiento' }, { status: 503 })
