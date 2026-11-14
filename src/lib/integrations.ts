@@ -485,7 +485,7 @@ export const TIKTOK_WEBHOOK_MAX_AGE_MS = 5 * 60 * 1000
 const TIKTOK_WEBHOOK_FUTURE_SKEW_MS = 30 * 1000
 
 export function isTikTokWebhookTimestampFresh(timestamp: string | null, now = Date.now()): boolean {
-  if (!timestamp || !/^\\d{10}$/.test(timestamp)) return false
+  if (!timestamp || !/^\d{10}$/.test(timestamp)) return false
   const timestampMs = Number(timestamp) * 1000
   const ageMs = now - timestampMs
   return Number.isFinite(timestampMs) &&
