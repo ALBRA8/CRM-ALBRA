@@ -148,15 +148,11 @@ export async function POST(req: NextRequest) {
             source: 'integration',
           })
 
-          try {
-            await runWorkflowsForTrigger({
-              orgId,
-              type: 'message_received',
-              payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id },
-            })
-          } catch (err) {
-            console.error('[facebook webhook] workflows', err)
-          }
+          await runWorkflowsForTrigger({
+            orgId,
+            type: 'message_received',
+            payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id },
+          })
 
           const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
           const state = parseFacebookState(integration?.facebookTokenEnc)
