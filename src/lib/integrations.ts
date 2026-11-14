@@ -425,42 +425,55 @@ export function tiktokApiBase(): string {
 }
 
 /**
- * Envía un DM por el Business Messaging API de TikTok. Requiere que la
- * organización tenga asignado sendEndpoint (lo provee TikTok al aprobar el
- * acceso de socio). Sin él, devuelve un error estructurado — nunca inventa rutas.
+ * Envía texto por el endpoint oficial Business Messaging API v1.3.
+ * Requiere aprobación/acceso de Business Messaging y los IDs reales de la
+ * cuenta (open_id) y conversación; nunca acepta endpoints configurables.
  */
 export async function sendTikTokBusinessMessage(opts: {
   state: TikTokState
-  recipientId: string
+  conversationId: string
   text: string
-}): Promise<{ ok: boolean; error?: string; notAuthorized?: boolean }> {
+  fetchImpl?: typeof fetch
+}): Promise<{ ok: boolean; providerMessageId?: string; error?: string; notAuthorized?: boolean }> {
   const { state } = opts
-  if (!state.accessToken || !state.sendEndpoint) {
+  if (!state.accessToken || !state.openId || !opts.conversationId || !opts.text.trim()) {
     return {
       ok: false,
       notAuthorized: true,
-      error:
-        'TikTok Business Messaging no autorizado aún: requiere aprobación de la app en el programa de socios de TikTok y registrar el endpoint de envío en Ajustes → TikTok.',
+      error: 'TikTok Business Messaging requiere acceso aprobado, access token, open_id y conversation_id.',
     }
   }
+  const fetchImpl = opts.fetchImpl || fetch
   try {
-    const res = await fetch(`${tiktokApiBase()}${state.sendEndpoint}`, {
+    const res = await fetchImpl('https://business-api.tiktok.com/open_api/v1.3/business/message/send/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.accessToken}`,
+        'Access-Token': state.accessToken,
       },
       body: JSON.stringify({
-        conversation_id: opts.recipientId,
-        content: { text: opts.text.slice(0, 1000) },
+        business_id: state.openId,
+        recipient_type: 'CONVERSATION',
+        recipient: opts.conversationId,
+        message_type: 'TEXT',
+        text: { body: opts.text.slice(0, 6000) },
       }),
       signal: AbortSignal.timeout(10_000),
     })
-    const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } }
-    if (res.ok) return { ok: true }
-    return { ok: false, error: data?.error?.message || `HTTP ${res.status}` }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    const data = await res.json().catch(() => ({})) as {
+      code?: number
+      message?: string
+      data?: { message?: { message_id?: string } }
+    }
+    if (!res.ok) return { ok: false, error: `HTTP_${res.status}` }
+    if (data.code !== 0) return { ok: false, error: typeof data.code === 'number' ? `TIKTOK_CODE_${data.code}` : 'TIKTOK_INVALID_RESPONSE' }
+    const providerMessageId = data.data?.message?.message_id
+    if (typeof providerMessageId !== 'string' || !providerMessageId) {
+      return { ok: false, error: 'TIKTOK_RESPONSE_MISSING_MESSAGE_ID' }
+    }
+    return { ok: true, providerMessageId }
+  } catch {
+    return { ok: false, error: 'TIKTOK_NETWORK_RESULT_UNCERTAIN' }
   }
 }
 
