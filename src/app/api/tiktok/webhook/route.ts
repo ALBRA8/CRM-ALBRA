@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
         orgId,
         clientId: client?.id || null,
         type: 'tiktok',
-        sourceEventKey: `tiktok:event:${createHash('sha256').update(providerEventId).digest('hex')}:inbound`,
+        sourceEventKey: `tiktok:message:${createHash('sha256').update(providerMessageId).digest('hex')}:inbound`,
         title: 'Mensaje recibido por TikTok',
         description: msg.text.slice(0, 500),
         metadata: { senderId: msg.senderId, conversationId: msg.conversationId, canonicalConversationId: conversation.id, direction: 'in', event: body.event || null },
