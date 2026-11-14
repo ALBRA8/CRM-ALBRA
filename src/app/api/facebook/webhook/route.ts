@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
           await runWorkflowsForTrigger({
             orgId,
             type: 'message_received',
-            payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id },
+            payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id, ...(msg.mid ? { messageId: msg.mid } : {}) },
           })
 
           const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
