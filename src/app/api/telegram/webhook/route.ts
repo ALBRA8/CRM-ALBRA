@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     const telegramState = parseTelegramState(integrationFull?.telegramBotTokenEnc)
     const botId = telegramState.token?.match(/^(\d+):/)?.[1]
     if (!botId || !telegramState.token) return json({ ok: true, processed: false })
-    const connectionCredentialsEnc = encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader }))
+    const connectionCredentialsEnc = encryptSecret(JSON.stringify({ legacyWebhookLedger: true, botId }))
     if (!connectionCredentialsEnc) return json({ ok: true, processed: false })
     const connection = await getOrCreateTelegramWebhookConnection({
       organizationId: orgId,
@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
       await runWorkflowsForTrigger({
         orgId,
         type: 'message_received',
-        payload: { channel: 'telegram', from: platformKey, text, conversationId: platformKey, clientId: client?.id },
+        payload: { channel: 'telegram', from: platformKey, text, conversationId: platformKey, clientId: client?.id, messageId: `tg_update_${update.update_id}` },
       })
     } catch (err) {
       console.error('[telegram webhook] workflows', err)
