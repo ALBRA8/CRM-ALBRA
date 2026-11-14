@@ -59,7 +59,9 @@ describe('Telegram webhook auto-reply outbox', () => {
       attemptCount: 0,
     })
     expect(first.payloadEnc).not.toContain(input.text)
-    await expect(enqueueTelegramWebhookReply({ ...input, text: 'contenido distinto' }))
+    const retryWithDifferentLlmWording = await enqueueTelegramWebhookReply({ ...input, text: 'contenido distinto' })
+    expect(retryWithDifferentLlmWording.id).toBe(first.id)
+    await expect(enqueueTelegramWebhookReply({ ...input, chatId: 987654321 }))
       .rejects.toThrow('WORKFLOW_OUTBOX_IDEMPOTENCY_CONFLICT')
     expect(await db.workflowOutboundMessage.count({
       where: { organizationId: FIX.orgA.id, idempotencyKey: 'telegram-webhook:765432109' },
