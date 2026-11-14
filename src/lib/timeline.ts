@@ -17,6 +17,8 @@ export interface TimelineEventInput {
   description?: string | null
   metadata?: Record<string, unknown> | null
   source?: string
+  /** Stable provider event identity; unique within an organization. */
+  sourceEventKey?: string | null
   userId?: string | null
 }
 
@@ -34,6 +36,7 @@ export async function recordTimelineEvent(input: TimelineEventInput) {
         description: input.description || null,
         metadata: input.metadata ? JSON.stringify(input.metadata) : null,
         source: input.source || 'manual',
+        sourceEventKey: input.sourceEventKey || null,
         userId: input.userId || null,
       },
     })
