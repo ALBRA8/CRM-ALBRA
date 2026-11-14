@@ -85,6 +85,7 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
           orgId: automation.organizationId,
           type: 'schedule',
           payload: { automationId: automation.id, scheduledAt: now.toISOString() },
+          automationId: automation.id,
         })
         results.push({ automationId: automation.id, out })
       } catch (err) {
