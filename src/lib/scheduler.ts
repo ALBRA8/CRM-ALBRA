@@ -69,16 +69,42 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
 
     let claimed = 0
     for (const automation of due) {
-      // CLAIM atómico: solo el worker que logre mover nextRunAt ejecuta.
-      // Con dos instancias (Next + cron externo), la segunda recibe count=0
-      // y salta — la automatización NO corre dos veces.
+      // CLAIM + run durable en una sola transacción: si falla la creación del
+      // run, también se revierte el avance de nextRunAt. Así no se pierde el
+      // disparo entre ambas escrituras.
       const intervalMinutes = intervalFromConfig(automation.triggerConfig)
-      const next = new Date(Date.now() + intervalMinutes * 60_000)
-      const claim = await db.automation.updateMany({
-        where: { id: automation.id, organizationId: automation.organizationId, isActive: true, triggerType: 'schedule', nextRunAt: { lte: now } },
-        data: { nextRunAt: next },
-      })
-      if (claim.count === 0) continue
+      const next = new Date(now.getTime() + intervalMinutes * 60_000)
+      const scheduledAt = now.toISOString()
+      const payload = { automationId: automation.id, scheduledAt }
+      let durableRunId: string | null = null
+      try {
+        durableRunId = await db.$transaction(async (tx) => {
+          const claim = await tx.automation.updateMany({
+            where: {
+              id: automation.id,
+              organizationId: automation.organizationId,
+              isActive: true,
+              triggerType: 'schedule',
+              nextRunAt: { lte: now },
+            },
+            data: { nextRunAt: next },
+          })
+          if (claim.count === 0) return null
+          const run = await tx.automationRun.create({
+            data: {
+              organizationId: automation.organizationId,
+              automationId: automation.id,
+              input: JSON.stringify(payload).slice(0, 5000),
+              idempotencyKey: `schedule:${scheduledAt}`.slice(0, 180),
+            },
+          })
+          return run.id
+        })
+      } catch (err) {
+        console.error('[scheduler] fallo creando claim/run durable', automation.id, err)
+        continue
+      }
+      if (!durableRunId) continue
       claimed++
 
       try {
@@ -86,8 +112,9 @@ export async function runDueJobs(opts?: { orgId?: string }): Promise<{ processed
         const out = await runWorkflowsForTrigger({
           orgId: automation.organizationId,
           type: 'schedule',
-          payload: { automationId: automation.id, scheduledAt: now.toISOString() },
+          payload,
           automationId: automation.id,
+          existingRunId: durableRunId,
         })
         results.push({ automationId: automation.id, out })
       } catch (err) {
