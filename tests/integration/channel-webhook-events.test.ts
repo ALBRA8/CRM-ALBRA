@@ -112,6 +112,25 @@ describe('Messenger webhook connection identity', () => {
     expect(await getChannelWebhookEventStatus(a.id, event.eventKey)).toBe('processed')
   })
 
+  it('does not reactivate a Page connection explicitly revoked by an operator', async () => {
+    const pageId = `110000${String(Date.now()).slice(-8)}`
+    const connection = await getOrCreateMessengerWebhookConnection({
+      organizationId: FIX.orgA.id,
+      pageId,
+      credentialsEnc: 'v1:synthetic-encrypted-page-credentials',
+    })
+    connectionIds.push(connection.id)
+    await db.channelConnection.update({ where: { id: connection.id }, data: { status: 'revoked' } })
+
+    const resolved = await getOrCreateMessengerWebhookConnection({
+      organizationId: FIX.orgA.id,
+      pageId,
+      credentialsEnc: 'v1:rotated-synthetic-page-credentials',
+    })
+    expect(resolved.id).toBe(connection.id)
+    expect((await db.channelConnection.findUnique({ where: { id: connection.id } }))?.status).toBe('revoked')
+  })
+
   it('rejects malformed Page identities before creating a connection', async () => {
     await expect(getOrCreateMessengerWebhookConnection({
       organizationId: FIX.orgA.id,
