@@ -1,6 +1,9 @@
 import { describe, expect, it, beforeAll, afterEach, vi } from 'vitest'
 import { GET as inboxGET } from '@/app/api/inbox/route'
 import { POST as inboxSendPOST } from '@/app/api/inbox/send/route'
+import { POST as telegramSendPOST } from '@/app/api/telegram/send/route'
+import { POST as instagramSendPOST } from '@/app/api/instagram/send/route'
+import { POST as facebookSendPOST } from '@/app/api/facebook/send/route'
 import { db } from '@/lib/db'
 import { FIX, jsonBody, req, tokenA, tokenB } from '../helpers'
 
@@ -204,6 +207,27 @@ describe('POST /api/inbox/send', () => {
   })
 })
 
+
+describe('legacy direct provider send endpoints', () => {
+  it('Telegram, Instagram y Messenger rechazan envíos directos sin llamar proveedores', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const responses = await Promise.all([
+        telegramSendPOST(req('/telegram/send', { method: 'POST', token: tokenA(), body: { chatId: '555001', text: 'No debe salir' } })),
+        instagramSendPOST(req('/instagram/send', { method: 'POST', token: tokenA(), body: { recipientId: 'ig-recipient', text: 'No debe salir' } })),
+        facebookSendPOST(req('/facebook/send', { method: 'POST', token: tokenA(), body: { recipientId: 'fb-recipient', text: 'No debe salir' } })),
+      ])
+      for (const response of responses) {
+        expect(response.status).toBe(409)
+        expect(await jsonBody(response)).toMatchObject({ code: 'LEGACY_PROVIDER_SEND_DISABLED' })
+      }
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
 
 describe('POST /api/inbox/send — conversaciones canónicas (outbox)', () => {
   const connectionIds: string[] = []
