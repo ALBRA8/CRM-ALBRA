@@ -1,41 +1,26 @@
 import type { NextRequest } from 'next/server'
-import { db } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
-import { getIntegration, parseTikTokState, sendTikTokBusinessMessage } from '@/lib/integrations'
-import { recordTimelineEvent } from '@/lib/timeline'
 
 /**
- * POST /api/tiktok/send — { to: conversationId, text }
- * Envía un DM por el Business Messaging API de TikTok. Sin acceso de socio
- * aprobado devuelve un error estructurado (notAuthorized), nunca un fallo silencioso.
+ * TikTok direct-send is deliberately fail-closed.
+ *
+ * The canonical channel outbox does not yet support TikTok, and the inbound
+ * webhook does not persist a verified provider conversation identity in a
+ * canonical conversation. Sending directly from this route would bypass
+ * durable intent, idempotency, reconciliation and operator audit.
+ *
+ * Keep the endpoint for API compatibility, but do not contact TikTok until
+ * the approved Business Messaging contract and canonical outbox adapter are
+ * implemented and covered by integration tests.
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const auth = await requireAdmin(req)
-    const body = (await req.json().catch(() => ({}))) as { to?: string; text?: string }
-    const to = String(body.to || '').trim()
-    const text = String(body.text || '').trim()
-    if (!to || !text) return json({ error: 'Faltan to y text' }, { status: 400 })
-
-    const integration = await getIntegration(auth.orgId)
-    const state = parseTikTokState(integration.tiktokTokenEnc)
-
-    const sent = await sendTikTokBusinessMessage({ state, conversationId: to, text })
-
-    await recordTimelineEvent({
-      orgId: auth.orgId,
-      clientId: null,
-      type: 'tiktok',
-      title: sent.ok ? 'Mensaje enviado por TikTok' : 'Intento de envío por TikTok fallido',
-      description: text.slice(0, 500),
-      metadata: { to, direction: 'out', delivered: sent.ok, error: sent.error || null, notAuthorized: sent.notAuthorized || false },
-      source: 'manual',
-    })
-
-    if (!sent.ok) {
-      return json({ ok: false, notAuthorized: sent.notAuthorized || false, error: sent.error }, { status: sent.notAuthorized ? 409 : 502 })
-    }
-    return json({ ok: true })
+    await requireAdmin(req)
+    return json({
+      ok: false,
+      code: 'TIKTOK_OUTBOX_NOT_IMPLEMENTED',
+      error: 'El envío de TikTok está temporalmente bloqueado hasta completar la integración con la outbox canónica.',
+    }, { status: 503 })
   })
 }
