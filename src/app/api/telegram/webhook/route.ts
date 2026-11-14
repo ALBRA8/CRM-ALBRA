@@ -1,12 +1,13 @@
 import type { NextRequest } from 'next/server'
 import { json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
-import { safeEquals, parseTelegramState, isTelegramAutoReplyEnabled, sendTelegramBotMessage, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
+import { safeEquals, parseTelegramState, isTelegramAutoReplyEnabled, findOrCreateChannelClient, getHandoffKeywords, buildNichoContext } from '@/lib/integrations'
 import { notifyOrganization } from '@/lib/push'
 import { llmChat } from '@/lib/ai'
 import { transcribeAudioBase64 } from '@/lib/asr'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
+import { enqueueTelegramWebhookReply } from '@/lib/workflow-outbox'
 import { SALES_STRATEGY_PROMPT } from '@/lib/prompts/sales-strategy'
 import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
 import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus, getOrCreateTelegramWebhookConnection, type ChannelWebhookEventClaim } from '@/lib/channel-webhook-events'
@@ -201,14 +202,19 @@ export async function POST(req: NextRequest) {
             { temperature: 0.5 }
           )
           if (reply.trim()) {
-            const sent = await sendTelegramBotMessage({ token: telegramToken, chatId: message.chat.id, text: reply.trim() })
+            const queued = await enqueueTelegramWebhookReply({
+              organizationId: orgId,
+              updateId: update.update_id,
+              chatId: message.chat.id,
+              text: reply.trim(),
+            })
             await recordTimelineEvent({
               orgId,
               clientId: client?.id || null,
               type: 'telegram',
-              title: 'Respuesta automática del agente IA',
+              title: 'Respuesta automática del agente IA en cola',
               description: reply.trim().slice(0, 500),
-              metadata: { chatId: String(message.chat.id), direction: 'out', delivered: sent.ok },
+              metadata: { chatId: String(message.chat.id), direction: 'out', deliveryStatus: 'queued', outboxId: queued.id },
               source: 'agent',
             })
           }
