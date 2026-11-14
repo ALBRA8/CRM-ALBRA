@@ -154,23 +154,31 @@ async function buildActionContext(orgId: string, payload: Record<string, unknown
   }
 }
 
-async function recordWorkflowOutboundPending(orgId: string, channel: string, ctx: Record<string, unknown>, rendered: string, error: string) {
-  await db.notification.create({
-    data: {
-      organizationId: orgId,
-      type: 'automation',
-      title: `Mensaje ${channel} PENDIENTE (destinatario no disponible)`,
-      body: 'No se pudo encolar el mensaje porque falta un destinatario válido.',
-      data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent: false, queued: false, error }),
-    },
-  })
-  await recordTimelineEvent({
-    orgId,
-    clientId: (ctx.clientId as string) || null,
-    type: channel,
-    title: `Mensaje ${channel} (automatización) — pendiente: destinatario no disponible`,
-    description: 'No se pudo encolar: destinatario no disponible.',
-    source: 'automation',
+async function recordWorkflowOutboundPending(
+  execution: { runId: string; orgId: string; leaseToken: string; fencingVersion: number },
+  channel: string,
+  ctx: Record<string, unknown>,
+  rendered: string,
+  error: string,
+) {
+  await withWorkflowLeaseMutation(execution, async (tx) => {
+    await tx.notification.create({
+      data: {
+        organizationId: execution.orgId,
+        type: 'automation',
+        title: `Mensaje ${channel} PENDIENTE (destinatario no disponible)`,
+        body: 'No se pudo encolar el mensaje porque falta un destinatario válido.',
+        data: JSON.stringify({ channel, clientId: ctx.clientId ?? null, phone: ctx.phone ?? null, email: ctx.email ?? null, sent: false, queued: false, error }),
+      },
+    })
+    await tx.timelineEvent.create({ data: {
+      organizationId: execution.orgId,
+      clientId: (ctx.clientId as string) || null,
+      type: channel,
+      title: `Mensaje ${channel} (automatización) — pendiente: destinatario no disponible`,
+      description: 'No se pudo encolar: destinatario no disponible.',
+      source: 'automation',
+    } })
   })
 }
 
@@ -215,7 +223,7 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
       let payload: { to: string; text: string } | { chatId: string | number; text: string } | { to: string; subject: string; html: string; text: string }
       if (channel === 'whatsapp') {
         const to = typeof ctx.phone === 'string' ? ctx.phone.trim() : ''
-        if (!to) { await recordWorkflowOutboundPending(orgId, channel, ctx, rendered, 'WORKFLOW_RECIPIENT_NOT_AVAILABLE'); return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' } }
+        if (!to) { await recordWorkflowOutboundPending(execution, channel, ctx, rendered, 'WORKFLOW_RECIPIENT_NOT_AVAILABLE'); return { queued: false, pending: true, channel, error: 'WORKFLOW_RECIPIENT_NOT_AVAILABLE' } }
         payload = { to, text: rendered.slice(0, 4096) }
       } else if (channel === 'telegram') {
         const chatId = config.chatId
@@ -243,23 +251,26 @@ async function executeAction(orgId: string, action: WorkflowAction, ctx: Record<
         stepIndex: execution.stepIndex,
         channel,
         payload,
+        lease: { runId: execution.runId, orgId: execution.orgId, leaseToken: execution.leaseToken, fencingVersion: execution.fencingVersion },
       })
-      await db.notification.create({
-        data: {
+      await withWorkflowLeaseMutation(execution, async (tx) => {
+        await tx.notification.create({
+          data: {
+            organizationId: orgId,
+            type: 'automation',
+            title: `Mensaje ${channel} en cola durable`,
+            body: 'Intención persistida en outbox para despacho.',
+            data: JSON.stringify({ channel, outboundId: intent.id, status: intent.status, clientId: ctx.clientId ?? null }),
+          },
+        })
+        await tx.timelineEvent.create({ data: {
           organizationId: orgId,
-          type: 'automation',
-          title: `Mensaje ${channel} en cola durable`,
-          body: 'Intención persistida en outbox para despacho.',
-          data: JSON.stringify({ channel, outboundId: intent.id, status: intent.status, clientId: ctx.clientId ?? null }),
-        },
-      })
-      await recordTimelineEvent({
-        orgId,
-        clientId: (ctx.clientId as string) || null,
-        type: channel,
-        title: `Mensaje ${channel} (automatización) — en cola`,
-        description: 'Intención ' + intent.id + ' persistida en outbox.',
-        source: 'automation',
+          clientId: (ctx.clientId as string) || null,
+          type: channel,
+          title: `Mensaje ${channel} (automatización) — en cola`,
+          description: 'Intención ' + intent.id + ' persistida en outbox.',
+          source: 'automation',
+        } })
       })
       return { queued: true, pending: true, channel, outboundId: intent.id, status: intent.status }
     }
