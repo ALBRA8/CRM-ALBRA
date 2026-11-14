@@ -117,7 +117,7 @@ describe('GET /api/inbox — listado unificado', () => {
 })
 
 describe('GET /api/inbox?key=... — hilo y marca de leída', () => {
-  it('key inválida → 400', async () => {
+  it('key legacy válida pero no migrada → 409', async () => {
     const res = await inboxGET(req('/inbox?key=facebook:x', { token: tokenA() }))
     expect(res.status).toBe(400)
   })
