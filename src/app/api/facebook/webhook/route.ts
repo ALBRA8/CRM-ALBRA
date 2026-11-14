@@ -7,6 +7,7 @@ import { decryptSecret } from '@/lib/crypto'
 import { recordTimelineEvent } from '@/lib/timeline'
 import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
+import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getOrCreateMessengerWebhookConnection } from '@/lib/channel-webhook-events'
 
 /**
  * Webhook de Facebook (Messenger de la Página — Meta Graph).
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
       where: { facebookTokenEnc: { not: null }, metaAppSecretEnc: { not: null } },
       select: { organizationId: true, facebookTokenEnc: true, facebookPageId: true, metaAppSecretEnc: true },
     })
-    const matchedTargets: Array<{ orgId: string; pageId: string; entries: FbEntry[] }> = []
+    const matchedTargets: Array<{ orgId: string; pageId: string; credentialsEnc: string; entries: FbEntry[] }> = []
 
     for (const candidate of candidates) {
       const appSecret = decryptSecret(candidate.metaAppSecretEnc)
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
       const pageId = candidate.facebookPageId || state.pageId
       if (!pageId) continue
       const entries = (body.entry || []).filter((entry) => entry.id === pageId)
-      if (entries.length) matchedTargets.push({ orgId: candidate.organizationId, pageId, entries })
+      if (entries.length && candidate.facebookTokenEnc) matchedTargets.push({ orgId: candidate.organizationId, pageId, credentialsEnc: candidate.facebookTokenEnc, entries })
     }
 
     if (!matchedTargets.length) {
@@ -104,69 +105,90 @@ export async function POST(req: NextRequest) {
     for (const target of matchedTargets) {
       const orgId = target.orgId
       const messagingItems = target.entries.flatMap((entry) => entry.messaging || [])
+      const connection = await getOrCreateMessengerWebhookConnection({
+        organizationId: orgId,
+        pageId: target.pageId,
+        credentialsEnc: target.credentialsEnc,
+      })
       for (const messaging of messagingItems) {
         const msg = messaging.message
         if (!msg?.text || msg.is_echo) continue
         const senderId = messaging.sender?.id
         if (!senderId) continue
-        // Legacy dedup check. This is not a durable claim ledger and can race
-        // under concurrent webhook deliveries; see the channel audit runbook.
+        // A provider message ID is the stable identity. The canonical ledger
+        // atomically claims it before any CRM/workflow/auto-reply side effect.
+        // Messages without mid retain the legacy best-effort timeline check only.
+        let eventClaim: { id: string; claimToken: string } | null = null
         if (msg.mid) {
+          eventClaim = await claimChannelWebhookEvent({
+            organizationId: orgId,
+            connectionId: connection.id,
+            eventKey: 'message:' + msg.mid,
+            eventType: 'messenger.message',
+          })
+          if (!eventClaim) continue
+        } else {
           const seen = await db.timelineEvent.findFirst({
-            where: { organizationId: orgId, type: 'facebook', metadata: { contains: '"mid":"' + msg.mid + '"' } },
+            where: { organizationId: orgId, type: 'facebook', metadata: { contains: '"direction":"in"' } },
             select: { id: true },
           })
           if (seen) continue
         }
-        const text = msg.text.slice(0, 3000)
-
-        const client = await findOrCreateChannelClient({ orgId, platformKey: 'fb:' + senderId, name: null, source: 'facebook' })
-
-        await recordTimelineEvent({
-          orgId,
-          clientId: client?.id || null,
-          type: 'facebook',
-          title: 'Mensaje recibido por Facebook',
-          description: text.slice(0, 500),
-          metadata: { senderId, mid: msg.mid || null, direction: 'in' },
-          source: 'integration',
-        })
 
         try {
-          await runWorkflowsForTrigger({
-            orgId,
-            type: 'message_received',
-            payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id },
-          })
-        } catch (err) {
-          console.error('[facebook webhook] workflows', err)
-        }
+          const text = msg.text.slice(0, 3000)
+          const client = await findOrCreateChannelClient({ orgId, platformKey: 'fb:' + senderId, name: null, source: 'facebook' })
 
-        const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-        const state = parseFacebookState(integration?.facebookTokenEnc)
-        const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
-        if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
-          await llmReplyOrNotification({
+          await recordTimelineEvent({
             orgId,
             clientId: client?.id || null,
-            channelLabel: 'Facebook',
-            incomingText: text,
-            handoffKeywords: await getHandoffKeywords(orgId),
-            nichoContext: await buildNichoContext(orgId),
-            send: async (reply) => {
-              const { sendFacebookGraphMessage } = await import('@/lib/integrations')
-              const sent = await sendFacebookGraphMessage({ token: state.pageToken!, pageId: target.pageId, recipientId: senderId, text: reply })
-              await recordTimelineEvent({
-                orgId,
-                clientId: client?.id || null,
-                type: 'facebook',
-                title: 'Respuesta automática del agente IA',
-                description: reply.slice(0, 500),
-                metadata: { senderId, direction: 'out', delivered: sent.ok },
-                source: 'agent',
-              })
-            },
+            type: 'facebook',
+            title: 'Mensaje recibido por Facebook',
+            description: text.slice(0, 500),
+            metadata: { senderId, mid: msg.mid || null, direction: 'in' },
+            source: 'integration',
           })
+
+          try {
+            await runWorkflowsForTrigger({
+              orgId,
+              type: 'message_received',
+              payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id },
+            })
+          } catch (err) {
+            console.error('[facebook webhook] workflows', err)
+          }
+
+          const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
+          const state = parseFacebookState(integration?.facebookTokenEnc)
+          const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
+          if (isChannelAutoReplyGloballyEnabled() && state.pageToken && (nicho?.autoReplyEnabled ?? true)) {
+            await llmReplyOrNotification({
+              orgId,
+              clientId: client?.id || null,
+              channelLabel: 'Facebook',
+              incomingText: text,
+              handoffKeywords: await getHandoffKeywords(orgId),
+              nichoContext: await buildNichoContext(orgId),
+              send: async (reply) => {
+                const { sendFacebookGraphMessage } = await import('@/lib/integrations')
+                const sent = await sendFacebookGraphMessage({ token: state.pageToken!, pageId: target.pageId, recipientId: senderId, text: reply })
+                await recordTimelineEvent({
+                  orgId,
+                  clientId: client?.id || null,
+                  type: 'facebook',
+                  title: 'Respuesta automática del agente IA',
+                  description: reply.slice(0, 500),
+                  metadata: { senderId, direction: 'out', delivered: sent.ok },
+                  source: 'agent',
+                })
+              },
+            })
+          }
+          if (eventClaim) await completeChannelWebhookEvent(eventClaim)
+        } catch (err) {
+          if (eventClaim) await failChannelWebhookEvent(eventClaim, 'MESSENGER_HANDLER_FAILED')
+          console.error('[facebook webhook] message processing', err)
         }
       }
     }
