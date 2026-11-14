@@ -34,6 +34,7 @@ export async function llmReplyOrNotification(opts: {
     return { replied: false, handoff: true }
   }
 
+  let reply: string
   try {
     // Memoria vectorial (Fase 5): recuerda conversaciones anteriores con este
     // cliente y las lecciones de estilo del vendedor. Degradación elegante:
@@ -43,7 +44,7 @@ export async function llmReplyOrNotification(opts: {
       recallContext({ orgId, clientId, query: incomingText }),
       recallStyleLessons({ orgId, clientId, query: incomingText }),
     ])
-    const reply = await llmChat(
+    reply = await llmChat(
       orgId,
       [
         {
@@ -54,17 +55,21 @@ export async function llmReplyOrNotification(opts: {
       ],
       { temperature: 0.5 }
     )
-    if (reply.trim()) {
-      await send(reply.trim())
-      // Escribir memoria en background: nunca bloquea ni puede tumbar la respuesta.
-      void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'incoming', text: incomingText })
-      void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'outgoing', text: reply.trim() })
-      maybeConsolidate(orgId, clientId)
-      return { replied: true, handoff: false, reply: reply.trim() }
-    }
-    return { replied: false, handoff: false }
   } catch (err) {
+    // Un fallo al generar la respuesta no es un fallo de entrega: se conserva
+    // el comportamiento degradado y no se solicita reintento del webhook.
     console.error('[channel-agent] auto-respuesta IA falló', err)
     return { replied: false, handoff: false }
   }
+
+  if (!reply.trim()) return { replied: false, handoff: false }
+
+  // La entrega está fuera del catch de IA: si el proveedor falla, el error debe
+  // llegar al webhook para marcar el evento fallido y solicitar reintento.
+  await send(reply.trim())
+  // Escribir memoria en background: nunca bloquea ni puede tumbar la respuesta.
+  void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'incoming', text: incomingText })
+  void rememberMessage({ orgId, clientId, channel: channelLabel.toLowerCase(), role: 'outgoing', text: reply.trim() })
+  maybeConsolidate(orgId, clientId)
+  return { replied: true, handoff: false, reply: reply.trim() }
 }
