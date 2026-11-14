@@ -1,6 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { runDueJobs } from '@/lib/scheduler'
-import { runWorkflowsForTrigger } from '@/lib/workflow-engine'
 import { db } from '@/lib/db'
 import { FIX } from '../helpers'
 
@@ -10,6 +9,9 @@ let recoveredRunId: string
 let originalLeaseToken: string
 
 beforeAll(async () => {
+  // The shared integration setup mocks the workflow engine for route tests.
+  // These cases exercise its real database lease/ledger implementation.
+  vi.doUnmock('@/lib/workflow-engine')
   const triggerAutomation = await db.automation.create({
     data: {
       organizationId: FIX.orgA.id,
@@ -77,6 +79,7 @@ describe('distributed workflow run leases', () => {
       automationId: triggerAutomationId,
     }
 
+    const { runWorkflowsForTrigger } = await import('@/lib/workflow-engine')
     const [first, second] = await Promise.all([
       runWorkflowsForTrigger(event),
       runWorkflowsForTrigger(event),
