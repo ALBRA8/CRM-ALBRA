@@ -127,3 +127,8 @@ Validación pendiente para estos commits: CI completo en el HEAD resultante, inc
 - El test de Instagram equivalente está en `tests/integration/instagram-webhook.test.ts`.
 - No se han añadido todavía pruebas equivalentes de ruta para WhatsApp ni una prueba de replay de extremo a extremo para TikTok; esos puntos siguen abiertos.
 - HEAD de código/documentación en esta actualización: `ab90228acdfac327a52c3e7fb783c08dde3511a9`. CI push para este SHA está en ejecución; no hay conclusión final aún.
+
+
+- Se añadió `tests/integration/whatsapp-webhook.test.ts`: conexión WhatsApp canónica sintética, firma HMAC y comprobación de que un inbound sin `message.id` no crea claim, conversación ni timeline.
+- La matriz de pruebas negativas para identidad estable ya incluye Instagram, Messenger y WhatsApp. TikTok requiere una prueba de contrato del payload oficial y de conservación separada de `sender_id`/`conversation_id`.
+- HEAD de esta ampliación: `00b5f7e4f0ee8a0d66e1c9ae8c83a0c46ccd4c31`. CI de este SHA aún debe completar tests y build.
