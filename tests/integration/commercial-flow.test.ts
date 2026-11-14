@@ -102,8 +102,8 @@ describe('Flujo comercial: cliente → oportunidad → WhatsApp → wait 1 día 
     expect(states).toHaveLength(3)
     expect(states[0].type).toBe('create_opportunity')
     expect(states[0].status).toBe('success')
-    expect(states[1].type).toBe('send_whatsapp')
-    expect(states[1].status).toBe('success')
+    expect(states[1].type).toBe('send_whatsapp') // queued = intención durable, no entrega
+    expect(states[1].status).toBe('queued')
     expect(states[2].type).toBe('wait')
     expect(states[2].status).toBe('waiting')
     expect(run!.currentStep).toBe(3)
