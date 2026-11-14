@@ -89,7 +89,8 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
     try {
       const beforeTarget = await db.automationRun.count({ where: { automationId: autoScheduleA } })
       const beforeOther = await db.automationRun.count({ where: { automationId: other.id } })
-      await runWorkflowsForTrigger({
+      const engine = await vi.importActual<typeof import('@/lib/workflow-engine')>('@/lib/workflow-engine')
+      await engine.runWorkflowsForTrigger({
         orgId: FIX.orgA.id,
         type: 'schedule',
         automationId: autoScheduleA,
@@ -326,6 +327,9 @@ describe('runDueJobs — scope de tenant (plan v1.0 P-03 / ARC-03)', () => {
     })
 
     try {
+      // Esta prueba usa únicamente una acción interna de notificación; retirar
+      // el mock global aquí permite verificar el recovery real del scheduler.
+      vi.doUnmock('@/lib/workflow-engine')
       await runDueJobs({ orgId: FIX.orgA.id })
       const persisted = await db.automationRun.findUnique({ where: { id: run.id } })
       const count = await db.notification.count({
