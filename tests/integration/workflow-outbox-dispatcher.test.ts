@@ -109,4 +109,26 @@ describe('workflow outbound outbox dispatcher', () => {
     })).rejects.toThrow('WORKFLOW_OUTBOX_RUN_TENANT_MISMATCH')
     expect(await db.workflowOutboundMessage.count({ where: { automationRunId: run.id } })).toBe(0)
   })
+  it('allows only one concurrent worker to claim and send the same intent', async () => {
+    process.env.WHATSAPP_DAEMON_URL = 'http://daemon.test'
+    process.env.INTERNAL_API_SECRET = testDaemonSecret
+    const run = await createRun('Workflow outbox concurrent claim')
+    const intent = await enqueueWorkflowOutboundMessage({
+      organizationId: FIX.orgA.id, ...run, stepIndex: 0, channel: 'whatsapp',
+      payload: { to: '573001234567', text: 'un solo despacho' },
+    })
+    outboundIds.push(intent.id)
+    let resolveFetch!: (response: Response) => void
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(() => new Promise<Response>((resolve) => { resolveFetch = resolve }))
+    const first = dispatchWorkflowOutboundMessage(intent.id)
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+    const second = await dispatchWorkflowOutboundMessage(intent.id)
+    expect(second).toEqual({ status: 'not_claimed' })
+    resolveFetch(new Response(JSON.stringify({ success: true, messageId: 'single-provider-id' }), { status: 200 }))
+    expect(await first).toEqual({ status: 'sent' })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const stored = await db.workflowOutboundMessage.findUnique({ where: { id: intent.id } })
+    expect(stored).toMatchObject({ status: 'sent', providerMessageId: 'single-provider-id', attemptCount: 1 })
+  })
+
 })
