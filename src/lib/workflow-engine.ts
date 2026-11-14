@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { db } from './db'
 import { recordTimelineEvent } from './timeline'
 import { enqueueWorkflowOutboundMessage } from './workflow-outbox'
@@ -357,6 +358,43 @@ function renderTemplate(body: string, ctx: Record<string, unknown>): string {
   })
 }
 
+// ---------- Lease distribuido del workflow ----------
+// El token identifica al propietario y fencingVersion es la generación monotónica.
+// Cada checkpoint renueva el lease mediante compare-and-swap en la base de datos.
+const WORKFLOW_LEASE_MS = 10 * 60_000
+
+async function claimWorkflowRun(runId: string, orgId: string) {
+  const now = new Date()
+  const token = randomUUID()
+  const claimed = await db.automationRun.updateMany({
+    where: { id: runId, organizationId: orgId, status: 'running',
+      OR: [{ leaseToken: null }, { leaseExpiresAt: null }, { leaseExpiresAt: { lte: now } }] },
+    data: { status: 'processing', leaseToken: token,
+      leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS), fencingVersion: { increment: 1 } },
+  })
+  if (claimed.count !== 1) return null
+  const run = await db.automationRun.findFirst({ where: { id: runId, organizationId: orgId, leaseToken: token } })
+  return run ? { leaseToken: token, fencingVersion: run.fencingVersion } : null
+}
+
+async function assertWorkflowLease(runId: string, orgId: string, leaseToken: string, fencingVersion: number) {
+  const now = new Date()
+  const renewed = await db.automationRun.updateMany({
+    where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+    data: { leaseExpiresAt: new Date(now.getTime() + WORKFLOW_LEASE_MS) },
+  })
+  if (renewed.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: el worker perdió el lease; se detiene la ejecución')
+}
+
+async function updateRunWithLease(runId: string, orgId: string, leaseToken: string, fencingVersion: number, data: Record<string, unknown>) {
+  const now = new Date()
+  const updated = await db.automationRun.updateMany({
+    where: { id: runId, organizationId: orgId, status: 'processing', leaseToken, fencingVersion, leaseExpiresAt: { gt: now } },
+    data: data as never,
+  })
+  if (updated.count !== 1) throw new Error('WORKFLOW_LEASE_LOST: escritura rechazada por fencing')
+}
+
 // ---------- Orquestador principal ----------
 
 /**
@@ -372,7 +410,7 @@ async function runActionSteps(
   startIndex: number,
   prevStates: StepState[],
   prevOutputs: Record<string, unknown>[],
-  execution: { automationId: string; runId: string }
+  execution: { automationId: string; runId: string; orgId: string; leaseToken: string; fencingVersion: number }
 ): Promise<
   | { done: true; stepStates: StepState[]; outputs: Record<string, unknown>[] }
   | { done: false; stepStates: StepState[]; outputs: Record<string, unknown>[]; waitMs: number; nextStep: number }
@@ -389,6 +427,7 @@ async function runActionSteps(
       return { done: false, stepStates, outputs, waitMs: waitDurationMs(action.config), nextStep: i + 1 }
     }
 
+    await assertWorkflowLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion)
     // WRITE-AHEAD: la fila se crea antes de cualquier efecto. La restricción
     // única (run, step) impide que otro intento ejecute el mismo paso.
     let stepRecord
@@ -416,7 +455,8 @@ async function runActionSteps(
     }
 
     try {
-      const out = await executeAction(orgId, action, ctx, { ...execution, stepIndex: i })
+      const out = await executeAction(orgId, action, ctx, { automationId: execution.automationId, runId: execution.runId, stepIndex: i })
+      await assertWorkflowLease(execution.runId, execution.orgId, execution.leaseToken, execution.fencingVersion)
       await db.workflowStepExecution.update({
         where: { id: stepRecord.id },
         data: { status: 'succeeded', output: JSON.stringify(out).slice(0, 5000), finishedAt: new Date() },
@@ -492,65 +532,48 @@ export async function runWorkflowsForTrigger(event: WorkflowTriggerEvent) {
       }
       throw err
     }
-    const runClaim = await db.automationRun.updateMany({
-      where: { id: run.id, organizationId: event.orgId, status: 'running' },
-      data: { status: 'processing' },
-    })
-    if (runClaim.count === 0) {
+    const lease = await claimWorkflowRun(run.id, event.orgId)
+    if (!lease) {
       results.push({ automationId: automation.id, status: 'already_claimed' })
       continue
     }
     try {
       const conditions = safeParse<Condition[]>(automation.conditions)
       if (!evaluateConditions(conditions, event.payload)) {
-        await db.automationRun.update({ where: { id: run.id }, data: { status: 'success', output: JSON.stringify({ skipped: 'condiciones no cumplidas' }), finishedAt: new Date() } })
+        await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, { status: 'success', output: JSON.stringify({ skipped: 'condiciones no cumplidas' }), finishedAt: new Date(), leaseExpiresAt: new Date() })
         results.push({ automationId: automation.id, status: 'skipped' })
         continue
       }
       const actions = safeParse<WorkflowAction[]>(automation.actions) || []
       const ctx = await buildActionContext(event.orgId, event.payload)
-      const res = await runActionSteps(event.orgId, actions, ctx, 0, [], [], { automationId: automation.id, runId: run.id })
+      const res = await runActionSteps(event.orgId, actions, ctx, 0, [], [], { automationId: automation.id, runId: run.id, orgId: event.orgId, ...lease })
 
       if (!res.done) {
         // PAUSA durable (patrón DELAY de Twenty): el run queda 'waiting' y el
         // scheduler lo reanuda cuando venza resumeAt.
-        await db.automationRun.update({
-          where: { id: run.id },
-          data: {
-            status: 'waiting',
-            stepStates: JSON.stringify(res.stepStates),
-            currentStep: res.nextStep,
-            output: JSON.stringify(res.outputs).slice(0, 5000),
-            resumeAt: new Date(Date.now() + res.waitMs),
-          },
+        await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, {
+          status: 'waiting', stepStates: JSON.stringify(res.stepStates), currentStep: res.nextStep,
+          output: JSON.stringify(res.outputs).slice(0, 5000),
+          resumeAt: new Date(Date.now() + res.waitMs), leaseExpiresAt: new Date(),
         })
         results.push({ automationId: automation.id, status: 'waiting' })
         continue
       }
 
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'success',
-          output: JSON.stringify(res.outputs).slice(0, 5000),
-          stepStates: JSON.stringify(res.stepStates),
-          finishedAt: new Date(),
-        },
+      await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, {
+        status: 'success', output: JSON.stringify(res.outputs).slice(0, 5000),
+        stepStates: JSON.stringify(res.stepStates), finishedAt: new Date(), leaseExpiresAt: new Date(),
       })
       await db.automation.update({ where: { id: automation.id }, data: { runCount: { increment: 1 }, lastRunAt: new Date() } })
       results.push({ automationId: automation.id, status: 'success' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const partialStates = (err as Error & { stepStates?: StepState[] }).stepStates
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'failed',
-          error: message.slice(0, 1000),
-          stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
-          finishedAt: new Date(),
-        },
-      })
+      await updateRunWithLease(run.id, event.orgId, lease.leaseToken, lease.fencingVersion, {
+        status: 'failed', error: message.slice(0, 1000),
+        stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
+        finishedAt: new Date(), leaseExpiresAt: new Date(),
+      }).catch(() => undefined)
       results.push({ automationId: automation.id, status: 'failed', error: message })
     }
   }
@@ -580,16 +603,18 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
   for (const run of waiting) {
     // CLAIM atómico: solo una instancia reanuda cada run (concurrentes → count=0)
     const claim = await db.automationRun.updateMany({
-      where: { id: run.id, status: 'waiting', resumeAt: { lte: now } },
+      where: { id: run.id, organizationId: run.organizationId, status: 'waiting', resumeAt: { lte: now } },
       data: { status: 'running' },
     })
     if (claim.count === 0) continue
+    const lease = await claimWorkflowRun(run.id, run.organizationId)
+    if (!lease) continue
 
-    const automation = await db.automation.findUnique({ where: { id: run.automationId } })
+    const automation = await db.automation.findFirst({ where: { id: run.automationId, organizationId: run.organizationId } })
     if (!automation || !automation.isActive) {
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: { status: 'success', output: JSON.stringify({ skipped: 'automación inactiva al reanudar' }), finishedAt: new Date() },
+      await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+        status: 'success', output: JSON.stringify({ skipped: 'automatización inactiva al reanudar' }),
+        finishedAt: new Date(), leaseExpiresAt: new Date(),
       })
       processed++
       continue
@@ -602,28 +627,18 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
 
     try {
       const ctx = await buildActionContext(automation.organizationId, payload)
-      const res = await runActionSteps(automation.organizationId, actions, ctx, run.currentStep, prevStates, prevOutputs, { automationId: automation.id, runId: run.id })
+      const res = await runActionSteps(automation.organizationId, actions, ctx, run.currentStep, prevStates, prevOutputs, { automationId: automation.id, runId: run.id, orgId: run.organizationId, ...lease })
       if (!res.done) {
         // Otra espera encadenada: vuelve a pausar (secuencias multi-touch)
-        await db.automationRun.update({
-          where: { id: run.id },
-          data: {
-            status: 'waiting',
-            stepStates: JSON.stringify(res.stepStates),
-            currentStep: res.nextStep,
-            output: JSON.stringify(res.outputs).slice(0, 5000),
-            resumeAt: new Date(Date.now() + res.waitMs),
-          },
+        await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+          status: 'waiting', stepStates: JSON.stringify(res.stepStates), currentStep: res.nextStep,
+          output: JSON.stringify(res.outputs).slice(0, 5000),
+          resumeAt: new Date(Date.now() + res.waitMs), leaseExpiresAt: new Date(),
         })
       } else {
-        await db.automationRun.update({
-          where: { id: run.id },
-          data: {
-            status: 'success',
-            output: JSON.stringify(res.outputs).slice(0, 5000),
-            stepStates: JSON.stringify(res.stepStates),
-            finishedAt: new Date(),
-          },
+        await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+          status: 'success', output: JSON.stringify(res.outputs).slice(0, 5000),
+          stepStates: JSON.stringify(res.stepStates), finishedAt: new Date(), leaseExpiresAt: new Date(),
         })
         await db.automation.update({ where: { id: automation.id }, data: { runCount: { increment: 1 }, lastRunAt: new Date() } })
       }
@@ -631,15 +646,11 @@ export async function resumeWaitingRuns(scope?: { orgId?: string }): Promise<num
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const partialStates = (err as Error & { stepStates?: StepState[] }).stepStates
-      await db.automationRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'failed',
-          error: message.slice(0, 1000),
-          stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
-          finishedAt: new Date(),
-        },
-      })
+      await updateRunWithLease(run.id, run.organizationId, lease.leaseToken, lease.fencingVersion, {
+        status: 'failed', error: message.slice(0, 1000),
+        stepStates: partialStates ? JSON.stringify(partialStates) : undefined,
+        finishedAt: new Date(), leaseExpiresAt: new Date(),
+      }).catch(() => undefined)
       processed++
     }
   }
