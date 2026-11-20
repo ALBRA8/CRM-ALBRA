@@ -128,21 +128,22 @@ export async function POST(req: NextRequest) {
 
     const signature = req.headers.get('tiktok-signature')
 
-    // Localiza la org validando la firma contra cada app secret configurado
-    const candidates = await db.integration.findMany({
-      where: { tiktokTokenEnc: { not: null } },
-      select: { organizationId: true, tiktokTokenEnc: true },
+    // Localiza la org validando la firma contra cada app secret configurado.
+    // (UNIFICACIÓN 2026-11-21) Los candidatos son conexiones canónicas de TikTok.
+    const candidates = await db.channelConnection.findMany({
+      where: { channel: 'tiktok', credentialsEnc: { not: '' } },
+      select: { organizationId: true, credentialsEnc: true },
     })
     const matches: Array<{ organizationId: string; credentialsEnc: string; appIdentity: string }> = []
     for (const candidate of candidates) {
-      const state = parseTikTokState(candidate.tiktokTokenEnc)
+      const state = parseTikTokState(candidate.credentialsEnc)
       if (!state.appSecret) continue
       if (body.client_key && state.appKey !== body.client_key) continue
       if (body.user_openid && state.openId !== body.user_openid) continue
       if (verifyTikTokSignature(rawBody, state.appSecret, signature)) {
         matches.push({
           organizationId: candidate.organizationId,
-          credentialsEnc: candidate.tiktokTokenEnc!,
+          credentialsEnc: candidate.credentialsEnc,
           appIdentity: state.appKey || state.openId || state.appSecret,
         })
       }

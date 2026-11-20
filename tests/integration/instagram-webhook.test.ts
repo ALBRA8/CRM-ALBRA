@@ -21,7 +21,6 @@ afterEach(async () => {
     connectionIds.length = 0
   }
   if (legacyOrganizationId) {
-    await db.integration.deleteMany({ where: { organizationId: legacyOrganizationId } })
     await db.organization.deleteMany({ where: { id: legacyOrganizationId } })
     legacyOrganizationId = null
   }
@@ -69,24 +68,9 @@ describe('GET /api/instagram/webhook — subscription verification', () => {
 })
 
 describe('POST /api/instagram/webhook — multi-account batch and durable echo ledger', () => {
-  it('does not fall back to legacy Integration when the same canonical account is disconnected', async () => {
+  it('una cuenta canónica desconectada no procesa eventos (sin fallback legacy)', async () => {
     const accountId = '17840000000000999'
     await createInstagramConnection(accountId, 'disconnected')
-    const legacyOrg = await db.organization.create({
-      data: {
-        id: `instagram-legacy-org-${Date.now()}`,
-        name: 'Instagram legacy fallback test',
-        slug: `instagram-legacy-${Date.now()}`,
-      },
-    })
-    legacyOrganizationId = legacyOrg.id
-    await db.integration.create({
-      data: {
-        organizationId: legacyOrg.id,
-        instagramAccountId: accountId,
-        instagramTokenEnc: encryptSecret(JSON.stringify({ token: 'legacy-token-fixture', webhookSecret: APP_SECRET })),
-      },
-    })
     const payload = {
       object: 'instagram',
       entry: [{

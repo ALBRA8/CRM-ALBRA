@@ -38,11 +38,10 @@ function stubDaemonMultiOrg(orgId: string | null, session?: Record<string, unkno
   })
 }
 
+// (UNIFICACIÓN 2026-11-21) La única fuente es ChannelConnection (meta_cloud).
 async function cleanupConnections(orgId: string) {
-  await db.whatsAppConnection.deleteMany({ where: { organizationId: orgId } })
   await db.channelConnection.deleteMany({ where: { organizationId: orgId, provider: 'meta_cloud' } })
-  await db.whatsAppConnectionEvent.deleteMany({ where: { organizationId: orgId } })
-  await db.channelConnectionEvent.deleteMany({ where: { organizationId: orgId, } })
+  await db.channelConnectionEvent.deleteMany({ where: { organizationId: orgId } })
 }
 
 describe('GET /api/whatsapp/connections-panel', () => {

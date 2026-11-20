@@ -52,13 +52,14 @@ export async function GET(req: NextRequest) {
   if (!mode || !token || !challenge) {
     return NextResponse.json({ error: 'Faltan parámetros de verificación (hub.mode, hub.verify_token, hub.challenge)' }, { status: 400 })
   }
-  // El verify token lo define cada organización al configurar Facebook
-  const integrations = await db.integration.findMany({
-    where: { facebookTokenEnc: { not: null } },
-    select: { facebookTokenEnc: true },
+  // El verify token lo define cada organización al configurar Facebook.
+  // (UNIFICACIÓN 2026-11-21) La fuente es ChannelConnection (credentialsEnc).
+  const connections = await db.channelConnection.findMany({
+    where: { channel: 'messenger', provider: 'meta_graph', credentialsEnc: { not: '' } },
+    select: { credentialsEnc: true },
   })
-  for (const integration of integrations) {
-    const state = parseFacebookState(integration.facebookTokenEnc)
+  for (const connection of connections) {
+    const state = parseFacebookState(connection.credentialsEnc)
     // (A2-12) comparación en tiempo constante.
     if (state.webhookVerifyToken && safeEquals(token, state.webhookVerifyToken)) {
       return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
@@ -80,20 +81,22 @@ export async function POST(req: NextRequest) {
       return json({ error: 'Body inválido' }, { status: 400 })
     }
 
-    // Localiza la org validando la firma HMAC contra cada App Secret configurado
-    const candidates = await db.integration.findMany({
-      where: { facebookTokenEnc: { not: null }, metaAppSecretEnc: { not: null } },
-      select: { organizationId: true, facebookTokenEnc: true, facebookPageId: true, metaAppSecretEnc: true },
+    // Localiza la org validando la firma HMAC contra cada App Secret configurado.
+    // (UNIFICACIÓN 2026-11-21) Los candidatos son conexiones canónicas; el app
+    // secret vive dentro del blob cifrado de cada conexión.
+    const candidates = await db.channelConnection.findMany({
+      where: { channel: 'messenger', provider: 'meta_graph', credentialsEnc: { not: '' } },
+      select: { id: true, organizationId: true, credentialsEnc: true, externalAccountId: true },
     })
     const matchedTargets: Array<{ orgId: string; pageId: string; credentialsEnc: string; entries: FbEntry[] }> = []
 
     for (const candidate of candidates) {
-      const appSecret = decryptSecret(candidate.metaAppSecretEnc)
+      const state = parseFacebookState(candidate.credentialsEnc)
+      const appSecret = state.appSecret || process.env.META_APP_SECRET || null
       if (!appSecret || !verifyMetaSignature(rawBody, appSecret, signature)) continue
-      const state = parseFacebookState(candidate.facebookTokenEnc)
       // Fail closed: a shared Meta App Secret is not enough to identify a tenant.
       // Match the same Page identity and credential envelope used by the canonical backfill.
-      const pageId = state.pageId || candidate.facebookPageId
+      const pageId = state.pageId || candidate.externalAccountId
       if (!pageId || !state.pageToken) continue
       const entries = (body.entry || []).filter((entry) => entry.id === pageId)
       const credentialsEnc = encryptSecret(JSON.stringify({
@@ -162,8 +165,9 @@ export async function POST(req: NextRequest) {
             payload: { channel: 'facebook', from: 'fb:' + senderId, text, conversationId: 'fb:' + senderId, clientId: client?.id, ...(msg.mid ? { messageId: msg.mid } : {}) },
           })
 
-          const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-          const state = parseFacebookState(integration?.facebookTokenEnc)
+          // (UNIFICACIÓN 2026-11-21) El estado de la conexión elegida viaja en
+          // target.credentialsEnc (misma fila canónica).
+          const state = parseFacebookState(target.credentialsEnc)
           const nicho = await db.nichoConfig.findUnique({ where: { organizationId: orgId }, select: { autoReplyEnabled: true } })
           const canonicalConversation = msg.mid
             ? await getOrCreateChannelConversation({

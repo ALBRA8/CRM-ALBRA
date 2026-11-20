@@ -1,9 +1,8 @@
 import type { NextRequest } from 'next/server'
 import { requireAdmin, HttpError } from '@/lib/auth'
-import { decryptSecret, encryptSecret, sha256Hex } from '@/lib/crypto'
+import { decryptSecret } from '@/lib/crypto'
 import { handle, json } from '@/lib/api-helpers'
-import { db } from '@/lib/db'
-import { getIntegration, parseTelegramState, encodeTelegramState, generateWebhookSecret } from '@/lib/integrations'
+import { getIntegration, parseTelegramState, generateWebhookSecret, saveTelegramConnection } from '@/lib/integrations'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
 /**
@@ -26,18 +25,10 @@ export async function POST(req: NextRequest) {
 
     const origin = new URL(req.url).origin
     const webhookUrl = `${origin}/api/telegram/webhook`
-    // (A2-23) Se LEE descifrado y se PERSISTE cifrado + hash de lookup.
+    // (A2-23) Se LEE descifrado y se PERSISTE cifrado en el blob canónico + hash de lookup.
     const telegramSecret = decryptSecret(integration.telegramSecret) || generateWebhookSecret()
     if (!decryptSecret(integration.telegramSecret)) {
-      const encSecret = encryptSecret(telegramSecret)
-      if (!encSecret) {
-        // (reauditoría ciclo 2) Falla explícita en vez de persistir un null corrupto.
-        throw new HttpError(500, 'Cifrado no disponible: configura APP_ENCRYPTION_KEY o APP_SECRET')
-      }
-      await db.integration.update({
-        where: { organizationId: auth.orgId },
-        data: { telegramSecret: encSecret, telegramSecretHash: sha256Hex(telegramSecret) },
-      })
+      await saveTelegramConnection(auth.orgId, { ...state, webhookSecret: telegramSecret })
     }
 
     // 1) getMe para el username del bot
@@ -48,7 +39,7 @@ export async function POST(req: NextRequest) {
       if (data.ok && data.result?.username) {
         botUsername = data.result.username
         state.botUsername = botUsername
-        await db.integration.update({ where: { organizationId: auth.orgId }, data: { telegramBotTokenEnc: encodeTelegramState(state) } })
+        await saveTelegramConnection(auth.orgId, { ...state, webhookSecret: telegramSecret })
       }
     } catch {
       /* getMe es best-effort */

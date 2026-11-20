@@ -51,14 +51,11 @@ model Organization {
   agentSuggestions      AgentSuggestion[]
   agentCorrections      AgentCorrection[]
   conversationEmbeddings ConversationEmbedding[]
-  whatsappConversations WhatsAppConversation[]
-  whatsappMessages      WhatsAppMessage[]
   settings              Settings?
   nichoConfig           NichoConfig?
-  integration           Integration?
+  googleIntegration     GoogleIntegration?
   apiKeys               ApiKey[]
   agentLeadEvents       AgentLeadEvent[]
-  whatsappConnections   WhatsAppConnection[]
   channelConnections    ChannelConnection[]
   channelConnectionEvents ChannelConnectionEvent[]
   channelWebhookEvents ChannelWebhookEvent[]
@@ -163,7 +160,6 @@ model Client {
   suggestions           AgentSuggestion[]
   agentCorrections      AgentCorrection[]
   conversationEmbeddings ConversationEmbedding[]
-  whatsappConversations WhatsAppConversation[]
 
   @@index([organizationId])
   @@index([organizationId, status])
@@ -674,7 +670,28 @@ model Settings {
   smtpUser           String?
   smtpPassEnc        String?
   smtpFrom           String?
+  // Secret HMAC-SHA256 del webhook AGENTE-LEADS (cifrado AES-256-GCM). Hogar
+  // canónico tras el retiro de Integration: configuración 1:1 por organización
+  // que no es una conexión de canal (mismo cifrado que llmApiKeyEnc).
+  agentLeadsSecretEnc String?
   updatedAt          DateTime     @updatedAt
+}
+
+// ---------- Integración Google (OAuth de Workspace: Calendar/Gmail/Sheets) ----------
+// Google NO es un canal de mensajería interactivo: vive en tabla dedicada 1:1
+// por organización (misma forma que Settings), separada del inventario canónico
+// de canales (ChannelConnection). Tokens SIEMPRE cifrados AES-256-GCM.
+model GoogleIntegration {
+  id                    String       @id @default(cuid())
+  organizationId        String       @unique
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  googleEmail           String?
+  googleRefreshTokenEnc String?
+  // JSON cifrado { clientId, clientSecret } del OAuth client propio de la org
+  googleClientJsonEnc   String?
+  calendarSyncEnabled   Boolean      @default(false)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 }
 
 model NichoConfig {
@@ -694,109 +711,10 @@ model NichoConfig {
   updatedAt        DateTime     @updatedAt
 }
 
-model Integration {
-  id                    String       @id @default(cuid())
-  organizationId        String       @unique
-  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  // Tokens SIEMPRE cifrados con AES-256-GCM antes de guardar (auditoría #4)
-  telegramBotTokenEnc   String?
-  telegramSecret        String?
-  // (A2-23, auditoría 2026-11-11) Lookup por HASH del secret (el valor queda
-  // cifrado en reposo con AES-256-GCM); la comparación final es timing-safe.
-  telegramSecretHash    String?  @unique
-  instagramTokenEnc     String?
-  instagramAccountId    String?
-  googleRefreshTokenEnc String?
-  googleClientJsonEnc   String?
-  googleEmail           String?   // cuenta conectada vía OAuth ("Conectar con Google")
-  metaAppSecretEnc      String?
-  whatsappPhoneId       String?
-  whatsappCloudTokenEnc String?
-  agentLeadsSecretEnc   String?      // Secret HMAC-SHA256 del webhook AGENTE-LEADS (cifrado AES-256-GCM)
-  // Facebook (Messenger de la Página). Token de página como blob cifrado:
-  // { pageToken, webhookVerifyToken }. El App Secret de Meta vive en metaAppSecretEnc
-  // (compartido con Instagram: misma app de Meta).
-  facebookTokenEnc      String?
-  facebookPageId        String?
-  // Metadatos del OAuth "Conectar mediante Meta" (página elegida + cuenta que autorizó)
-  facebookPageName      String?
-  facebookUserEmail     String?
-  // TikTok. Blob cifrado: { accessToken, refreshToken?, openId?, displayName?,
-  // appKey?, appSecret?, webhookVerifyToken?, extraScopes?, sendEndpoint? }.
-  // Los DMs por API exigen acceso Business Messaging (programa de socios de TikTok):
-  // el canal queda cableado y se activa cuando TikTok apruebe la app.
-  tiktokTokenEnc        String?
-  enableWhatsApp        Boolean      @default(false)
-  enableTelegram        Boolean      @default(false)
-  enableInstagram       Boolean      @default(false)
-  enableFacebook        Boolean      @default(false)
-  enableTikTok          Boolean      @default(false)
-  enableGoogle          Boolean      @default(false)
-  updatedAt             DateTime     @updatedAt
-}
-
-// ---------- Conexiones WhatsApp por organización (OLEADA 2 — arquitectura SaaS) ----------
-// Decisión de negocio (2026-11-11): cada organización conecta SUS propios
-// números de WhatsApp con SUS credenciales de Meta (flujo oficial Embedded
-// Signup / OAuth — jamás contraseñas). Una organización puede tener UNO o
-// VARIOS números según su plan (whatsapp-plans.ts); cada conexión vive
-// exclusivamente bajo su organizationId y su token se almacena SIEMPRE
-// cifrado (AES-256-GCM, src/lib/crypto.ts). La revocación/desconexión de una
-// conexión no afecta a las demás organizaciones ni a las demás conexiones.
-//
-// Compatibilidad: Integration.whatsappCloudTokenEnc (un número por org)
-// sigue funcionando como legado; el webhook resuelve primero por
-// WhatsAppConnection y cae al legado solo si no hay conexión nueva.
-model WhatsAppConnection {
-  id             String   @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  // Identidad de la cuenta de negocio de Meta:
-  wabaId         String?  // WhatsApp Business Account (WABA)
-  phoneNumberId  String   @unique // identificador técnico del número en Graph API
-  phoneNumber    String   // número E.164 (solo lectura informativa, NUNCA clave de ruta)
-  displayName    String?  // nombre comercial mostrado en WhatsApp
-  // Credencial: token de acceso de la conexión — cifrado en reposo. En claro
-  // SOLO existe en memoria durante un envío/verificación (nunca en BD, logs ni
-  // respuestas de API; las rutas lo enmascaran con maskSecret).
-  accessTokenEnc String
-  // Secreto de la app Meta dueña de la conexión: si la org conectó vía
-  // Embedded Signup de NUESTRA app, es el global (META_APP_SECRET env) y este
-  // campo queda null; si la org usa su propia app Meta, su secreto va cifrado aquí.
-  metaAppSecretEnc String?
-  // verify_token por conexión para la verificación GET del webhook de Meta
-  webhookVerifyToken String
-  // Ciclo de vida: pending | connected | disconnected | revoked | error
-  status         String   @default("pending")
-  statusDetail   String?  // motivo legible del último cambio de estado
-  source         String   @default("embedded_signup") // embedded_signup | manual
-  tokenExpiresAt DateTime? // si el token es de vida corta (sistema token de Embedded Signup)
-  lastVerifiedAt DateTime?
-  lastErrorAt    DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  events         WhatsAppConnectionEvent[]
-
-  @@index([organizationId, status])
-}
-
-// Auditoría del ciclo de vida de cada conexión (decisión #8/#9: trazabilidad
-// de connect/disconnect/revoke por organización, sin exponer secretos).
-// connectionId es OPCIONAL: también registra eventos de organización sin
-// conexión (ej. intento bloqueado por límite de plan).
-model WhatsAppConnectionEvent {
-  id             String              @id @default(cuid())
-  connectionId   String?
-  connection     WhatsAppConnection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  organizationId String
-  type           String // connected | disconnected | revoked | token_rotated | verified | error | plan_limit_blocked
-  detail         String?
-  createdAt      DateTime           @default(now())
-
-  @@index([organizationId, createdAt])
-  @@index([connectionId, createdAt])
-}
+// (2026-11-21) Integration y WhatsAppConnection/Event fueron retirados: todo
+// el inventario de credenciales de canales vive en ChannelConnection
+// (credentialsEnc cifrado) y Google en GoogleIntegration. Ver
+// CONTEXTO CRM/HISTORIAL_CAMBIOS.md — unificación de las 3 generaciones.
 
 // ---------- Conexiones canónicas multicuenta de canales ----------
 // Fase 0: modelo aditivo. Las tablas legacy (Integration y WhatsAppConnection)
@@ -818,6 +736,11 @@ model ChannelConnection {
   lastVerifiedAt    DateTime?
   lastErrorAt       DateTime?
   lastErrorCode     String?  // código sanitizado; nunca guardar respuesta/token del proveedor
+  // Hash SHA-256 del secret de verificación de webhook de ESTA conexión
+  // (X-Telegram-Bot-Api-Secret-Token, verify tokens propios, etc.): permite la
+  // atribución multi-tenant por lookup indexado sin descifrar nada. NULO si el
+  // canal usa verificación global por env.
+  webhookSecretHash  String?  @unique
   // Lease durable para rotación OAuth. "uncertain" requiere recuperación explícita;
   // un lease vencido en "refreshing" nunca autoriza reutilizar el refresh token viejo.
   refreshState          String   @default("idle") // idle | refreshing | uncertain
@@ -893,6 +816,10 @@ model ChannelConversation {
   lastMessageAt       DateTime?
   unreadCount         Int      @default(0)
   status              String   @default("active")
+  // JSON no secreto (allowlisted): vínculo con la ficha 360 (clientId) y
+  // controles de la conversación (isAutoReply, transferredTo). Escrito por el
+  // daemon Baileys y los webhooks canónicos.
+  metadata            String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   messages            ChannelMessage[]
@@ -979,52 +906,13 @@ model AgentLeadEvent {
   @@index([organizationId, leadId])
 }
 
-// ============ WhatsApp (daemon Baileys, puerto 3002) ============
-// Conversaciones/mensajes reales gestionados por src/whatsapp-daemon/daemon.mjs.
-// Multi-tenant: cada conversación pertenece a la organización del número conectado.
-
-model WhatsAppConversation {
-  id              String            @id @default(cuid())
-  organizationId  String
-  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  clientId        String?
-  client          Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  contactPhone    String
-  contactName     String?
-  lastMessage     String?
-  lastMessageAt   DateTime?
-  lastMessageFrom String?
-  unreadCount     Int               @default(0)
-  isAutoReply     Boolean           @default(true)
-  status          String            @default("active") // active | closed
-  transferredTo   String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  messages        WhatsAppMessage[]
-
-  @@unique([organizationId, contactPhone])
-  @@index([organizationId, lastMessageAt])
-}
-
-model WhatsAppMessage {
-  id             String               @id @default(cuid())
-  organizationId String
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  conversationId String
-  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  waMessageId    String?
-  direction      String // inbound | outbound
-  fromNumber     String
-  toNumber       String
-  text           String?
-  messageType    String               @default("text")
-  senderType     String // contact | agent | user
-  isRead         Boolean              @default(false)
-  createdAt      DateTime             @default(now())
-
-  @@index([conversationId, createdAt])
-  @@index([organizationId, createdAt])
-}
+// (2026-11-21) WhatsAppConversation/WhatsAppMessage (daemon Baileys) fueron
+// retirados: el daemon escribe directamente en ChannelConversation/
+// ChannelMessage bajo una ChannelConnection provider='whatsapp_baileys' por
+// organización (unificación de las 3 generaciones de canales).
+// El vínculo con Client (cliente de la ficha 360) vive en
+// ChannelConversation.metadata.clientId y el historial completo quedó
+// backfilled por scripts/backfill-whatsapp-history-to-channel.mjs.
 
 // ---------- Base de conocimiento del Agente IA ----------
 

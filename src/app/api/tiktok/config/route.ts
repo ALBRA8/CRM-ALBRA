@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { handle, json, auditAndTimeline } from '@/lib/api-helpers'
-import { getIntegration, parseTikTokState, encodeTikTokState } from '@/lib/integrations'
+import { getIntegration, parseTikTokState, encodeTikTokState, upsertChannelConnection } from '@/lib/integrations'
 import { maskSecret } from '@/lib/crypto'
 
 /**
@@ -57,12 +57,21 @@ export async function PUT(req: NextRequest) {
     if (body.extraScopes !== undefined) next.extraScopes = String(body.extraScopes).trim() || undefined
     if (body.sendEndpoint !== undefined) next.sendEndpoint = String(body.sendEndpoint).trim() || undefined
 
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: {
-        tiktokTokenEnc: encodeTikTokState(next),
-        enableTikTok: !!next.accessToken,
-      },
+    // (UNIFICACIÓN 2026-11-21) TikTok vive en ChannelConnection (clave
+    // 'tiktok:business:<openId>' — misma del backfill; 'tiktok:org:<orgId>'
+    // mientras no haya openId).
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'tiktok',
+      provider: 'tiktok_business',
+      providerAccountKey: next.openId ? `tiktok:business:${next.openId}` : `tiktok:org:${auth.orgId}`,
+      externalAccountId: next.openId || null,
+      displayName: next.displayName || null,
+      credentialsEnc: encodeTikTokState(next),
+      status: next.accessToken ? 'connected' : 'disconnected',
+      metadata: { source: 'config' },
+      eventType: next.accessToken ? 'connected' : 'disconnected',
+      eventDetail: 'tiktok_config_updated',
     })
 
     await auditAndTimeline({
@@ -80,9 +89,20 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: { tiktokTokenEnc: null, enableTikTok: false },
+    const integration = await getIntegration(auth.orgId)
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'tiktok',
+      provider: 'tiktok_business',
+      providerAccountKey: integration.tiktokTokenEnc
+        ? (parseTikTokState(integration.tiktokTokenEnc).openId
+          ? `tiktok:business:${parseTikTokState(integration.tiktokTokenEnc).openId}`
+          : `tiktok:org:${auth.orgId}`)
+        : `tiktok:org:${auth.orgId}`,
+      credentialsEnc: encodeTikTokState({}),
+      status: 'disconnected',
+      eventType: 'disconnected',
+      eventDetail: 'tiktok_config_disconnected',
     })
     await auditAndTimeline({
       orgId: auth.orgId,

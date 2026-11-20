@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
-import { getIntegration, parseFacebookState, encodeFacebookState } from '@/lib/integrations'
+import { getIntegration, parseFacebookState, encodeFacebookState, upsertChannelConnection } from '@/lib/integrations'
 import { maskSecret, decryptSecret } from '@/lib/crypto'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
@@ -56,17 +56,26 @@ export async function PUT(req: NextRequest) {
 
     // El App Secret de Meta es ÚNICO por app (compartido con Instagram/WhatsApp Cloud).
     // Solo se sobreescribe si el usuario pega uno nuevo (máscara '••••' = conservar).
-    const data: Record<string, unknown> = {
-      facebookTokenEnc: encodeFacebookState(next),
-      ...(body.pageId !== undefined ? { facebookPageId: String(body.pageId).trim() || null } : {}),
-      enableFacebook: !!next.pageToken,
-    }
+    // (UNIFICACIÓN 2026-11-21) Facebook/Messenger vive en ChannelConnection
+    // (provider='meta_graph', clave 'meta:messenger:<pageId>'). El App Secret de
+    // Meta se guarda DENTRO del blob cifrado (appSecret), compartido con el webhook.
     if (body.appSecret !== undefined && body.appSecret !== '' && !String(body.appSecret).startsWith('••••')) {
-      const { encryptSecret } = await import('@/lib/crypto')
-      data.metaAppSecretEnc = encryptSecret(String(body.appSecret).trim())
+      next.appSecret = String(body.appSecret).trim()
     }
-
-    const updated = await db.integration.update({ where: { organizationId: auth.orgId }, data })
+    const pageId = body.pageId !== undefined ? (String(body.pageId).trim() || null) : integration.facebookPageId
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'messenger',
+      provider: 'meta_graph',
+      providerAccountKey: pageId ? `meta:messenger:${pageId}` : `messenger:org:${auth.orgId}`,
+      externalAccountId: pageId,
+      credentialsEnc: encodeFacebookState(next),
+      status: next.pageToken ? 'connected' : 'disconnected',
+      metadata: { source: 'config' },
+      eventType: next.pageToken ? 'connected' : 'disconnected',
+      eventDetail: 'facebook_config_updated',
+    })
+    const updated = await getIntegration(auth.orgId)
 
     await auditAndTimeline({
       orgId: auth.orgId,
@@ -97,15 +106,17 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: {
-        facebookTokenEnc: null,
-        facebookPageId: null,
-        facebookPageName: null,
-        facebookUserEmail: null,
-        enableFacebook: false,
-      },
+    const integration = await getIntegration(auth.orgId)
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'messenger',
+      provider: 'meta_graph',
+      providerAccountKey: integration.facebookPageId ? `meta:messenger:${integration.facebookPageId}` : `messenger:org:${auth.orgId}`,
+      externalAccountId: null,
+      credentialsEnc: encodeFacebookState({}),
+      status: 'disconnected',
+      eventType: 'disconnected',
+      eventDetail: 'facebook_config_disconnected',
     })
     await auditAndTimeline({
       orgId: auth.orgId,

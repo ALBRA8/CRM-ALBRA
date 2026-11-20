@@ -47,12 +47,12 @@ node -e "
 const Database = require('better-sqlite3');
 const db = new Database('db/custom.db', { readonly: true });
 try {
-  const msgs = db.prepare(\"SELECT COUNT(*) as n FROM WhatsAppMessage\").get();
+  const msgs = db.prepare(\"SELECT COUNT(*) as n FROM ChannelMessage\").get();
   console.log('Total mensajes WhatsApp:', msgs.n);
-  const convs = db.prepare(\"SELECT id, contactPhone, contactJid, lastMessageAt FROM WhatsAppConversation ORDER BY lastMessageAt DESC LIMIT 3\").all();
+  const convs = db.prepare(\"SELECT id, externalContactKey AS contactPhone, NULL AS contactJid, lastMessageAt FROM ChannelConversation ORDER BY lastMessageAt DESC LIMIT 3\").all();
   console.log('Conversaciones (top 3):');
   convs.forEach(c => console.log('  ', c.contactPhone, '| jid:', c.contactJid, '|', c.lastMessageAt));
-  const last = db.prepare(\"SELECT direction, content, createdAt FROM WhatsAppMessage ORDER BY createdAt DESC LIMIT 6\").all();
+  const last = db.prepare(\"SELECT direction, body AS content, createdAt FROM ChannelMessage ORDER BY createdAt DESC LIMIT 6\").all();
   console.log('Últimos 6 mensajes:');
   last.forEach(m => console.log('  [' + m.direction + ']', (m.content||'').slice(0,80).replace(/\n/g,' '), '|', m.createdAt));
   const opps = db.prepare(\"SELECT name, value, source, createdAt FROM Opportunity ORDER BY createdAt DESC LIMIT 3\").all();

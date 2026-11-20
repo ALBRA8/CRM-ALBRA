@@ -12,6 +12,7 @@ import {
   safeEquals,
   metaGraphBase,
   META_GRAPH_VERSION,
+  upsertChannelConnection,
 } from '@/lib/integrations'
 import { decryptSecret } from '@/lib/crypto'
 
@@ -125,15 +126,20 @@ export async function GET(req: NextRequest) {
       pageName: hit.name || undefined,
       userEmail: userEmail || undefined,
     })
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: {
-        facebookTokenEnc: next,
-        facebookPageId: hit.id,
-        facebookPageName: hit.name || null,
-        facebookUserEmail: userEmail || null,
-        enableFacebook: true,
-      },
+    // (UNIFICACIÓN 2026-11-21) El blob cifrado de Facebook vive en la
+    // ChannelConnection canónica (meta:messenger:<pageId>).
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'messenger',
+      provider: 'meta_graph',
+      providerAccountKey: `meta:messenger:${hit.id}`,
+      externalAccountId: hit.id,
+      displayName: hit.name || null,
+      credentialsEnc: next,
+      status: 'connected',
+      metadata: { source: 'oauth', userEmail: userEmail || null, pageName: hit.name || null },
+      eventType: 'connected',
+      eventDetail: 'facebook_oauth_connected',
     })
 
     // 5) best-effort: suscribir la Página a los webhooks de la app. No fatal:

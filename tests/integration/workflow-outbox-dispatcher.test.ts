@@ -6,6 +6,7 @@ import { encodeTelegramState } from '@/lib/integrations'
 
 const pairs: Array<{ automationId: string; runId: string }> = []
 const outboundIds: string[] = []
+const telegramConnectionIds: string[] = []
 const previousDaemonUrl = process.env.WHATSAPP_DAEMON_URL
 const previousInternalSecret = process.env.INTERNAL_API_SECRET
 const testDaemonSecret = ['test', 'internal', 'secret', '0123456789'].join('-')
@@ -29,6 +30,11 @@ afterEach(async () => {
   else process.env.INTERNAL_API_SECRET = previousInternalSecret
   if (outboundIds.length) await db.workflowOutboundMessage.deleteMany({ where: { id: { in: outboundIds } } })
   outboundIds.length = 0
+  if (telegramConnectionIds.length) {
+    await db.channelConnectionEvent.deleteMany({ where: { connectionId: { in: telegramConnectionIds } } })
+    await db.channelConnection.deleteMany({ where: { id: { in: telegramConnectionIds } } })
+    telegramConnectionIds.length = 0
+  }
   for (const pair of pairs) {
     await db.automationRun.deleteMany({ where: { id: pair.runId } })
     await db.automation.deleteMany({ where: { id: pair.automationId } })
@@ -72,17 +78,24 @@ describe('Telegram webhook auto-reply outbox', () => {
   it('dispatches a queued Telegram reply only after provider acknowledgement', async () => {
     const previousFlag = process.env.CHANNEL_AUTOREPLY_ENABLED
     const previousApiBase = process.env.TELEGRAM_API_BASE
-    const previousIntegration = await db.integration.findUnique({
-      where: { organizationId: FIX.orgA.id },
-      select: { telegramBotTokenEnc: true },
-    })
+    // (UNIFICACIÓN 2026-11-21) El token del bot vive en la conexión canónica
+    // 'telegram:org:<orgId>' (blob = estado Telegram).
     const tokenEnc = encodeTelegramState({ token: 'synthetic-telegram-test-token', autoReply: true })
     if (!tokenEnc) throw new Error('test encryption unavailable')
-    await db.integration.upsert({
-      where: { organizationId: FIX.orgA.id },
-      create: { organizationId: FIX.orgA.id, telegramBotTokenEnc: tokenEnc },
-      update: { telegramBotTokenEnc: tokenEnc },
+    const telegramSeed = await db.channelConnection.upsert({
+      where: { providerAccountKey: 'telegram:org:' + FIX.orgA.id },
+      create: {
+        organizationId: FIX.orgA.id,
+        channel: 'telegram',
+        provider: 'telegram_bot',
+        providerAccountKey: 'telegram:org:' + FIX.orgA.id,
+        externalAccountId: 'telegram-org-' + FIX.orgA.id,
+        credentialsEnc: tokenEnc,
+        status: 'connected',
+      },
+      update: { credentialsEnc: tokenEnc, status: 'connected' },
     })
+    telegramConnectionIds.push(telegramSeed.id)
     process.env.CHANNEL_AUTOREPLY_ENABLED = 'true'
     process.env.TELEGRAM_API_BASE = 'https://telegram.test'
     const intent = await enqueueTelegramWebhookReply({
@@ -111,14 +124,6 @@ describe('Telegram webhook auto-reply outbox', () => {
       else process.env.CHANNEL_AUTOREPLY_ENABLED = previousFlag
       if (previousApiBase === undefined) delete process.env.TELEGRAM_API_BASE
       else process.env.TELEGRAM_API_BASE = previousApiBase
-      if (previousIntegration) {
-        await db.integration.update({
-          where: { organizationId: FIX.orgA.id },
-          data: { telegramBotTokenEnc: previousIntegration.telegramBotTokenEnc },
-        })
-      } else {
-        await db.integration.deleteMany({ where: { organizationId: FIX.orgA.id } })
-      }
     }
   })
 
@@ -131,10 +136,6 @@ describe('Telegram webhook auto-reply outbox', () => {
     })
     outboundIds.push(intent.id)
     const previousFlag = process.env.CHANNEL_AUTOREPLY_ENABLED
-    const existingIntegration = await db.integration.findUnique({
-      where: { organizationId: FIX.orgA.id },
-      select: { id: true },
-    })
     delete process.env.CHANNEL_AUTOREPLY_ENABLED
     const fetchSpy = vi.spyOn(global, 'fetch')
     try {
@@ -145,7 +146,6 @@ describe('Telegram webhook auto-reply outbox', () => {
     } finally {
       if (previousFlag === undefined) delete process.env.CHANNEL_AUTOREPLY_ENABLED
       else process.env.CHANNEL_AUTOREPLY_ENABLED = previousFlag
-      if (!existingIntegration) await db.integration.deleteMany({ where: { organizationId: FIX.orgA.id } })
     }
   })
 

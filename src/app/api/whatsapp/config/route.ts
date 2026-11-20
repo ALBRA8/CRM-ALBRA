@@ -1,9 +1,9 @@
 import type { NextRequest } from 'next/server'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, HttpError } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { encryptSecret, decryptSecret, maskSecret } from '@/lib/crypto'
-import { getIntegration } from '@/lib/integrations'
+import { getIntegration, upsertChannelConnection } from '@/lib/integrations'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
 /**
@@ -40,7 +40,7 @@ export async function PUT(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
     const body = (await req.json().catch(() => ({}))) as WhatsAppConfigBody
-    await getIntegration(auth.orgId)
+    const integration = await getIntegration(auth.orgId)
 
     const data: Record<string, unknown> = {}
     if (body.whatsappPhoneId !== undefined) data.whatsappPhoneId = String(body.whatsappPhoneId).trim() || null
@@ -52,7 +52,40 @@ export async function PUT(req: NextRequest) {
     }
     if (typeof body.enableWhatsApp === 'boolean') data.enableWhatsApp = body.enableWhatsApp
 
-    const integration = await db.integration.update({ where: { organizationId: auth.orgId }, data })
+    // (UNIFICACIÓN 2026-11-21) La configuración legacy de un solo número vive
+    // ahora en ChannelConnection (provider='meta_cloud'): clave
+    // 'meta:whatsapp:<phoneId>' cuando hay phoneId, o 'meta:whatsapp:org:<orgId>'
+    // mientras no se haya registrado el número en Meta.
+    const phoneId = typeof data.whatsappPhoneId === 'string' && data.whatsappPhoneId
+      ? data.whatsappPhoneId
+      : (integration.whatsappPhoneId || null)
+    const credentialsEnc = encryptSecret(JSON.stringify({
+      accessToken: data.whatsappCloudTokenEnc ? decryptSecret(String(data.whatsappCloudTokenEnc)) : null,
+      appSecret: data.metaAppSecretEnc ? decryptSecret(String(data.metaAppSecretEnc)) : (decryptSecret(integration.metaAppSecretEnc) || null),
+      webhookVerifyToken: null,
+    }))
+    if (!credentialsEnc) {
+      throw new HttpError(500, 'Cifrado no disponible: configura APP_ENCRYPTION_KEY o APP_SECRET')
+    }
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'whatsapp',
+      provider: 'meta_cloud',
+      providerAccountKey: phoneId ? `meta:whatsapp:${phoneId}` : `meta:whatsapp:org:${auth.orgId}`,
+      externalAccountId: phoneId,
+      credentialsEnc,
+      status: (data.enableWhatsApp === true || (data.enableWhatsApp === undefined && integration.enableWhatsApp)) && (data.whatsappCloudTokenEnc || integration.whatsappCloudTokenEnc)
+        ? 'connected'
+        : 'disconnected',
+      metadata: {
+        source: 'manual',
+        statusDetail: 'Configuración WhatsApp Cloud (ajustes clásicos)',
+        phoneNumber: phoneId,
+      },
+      eventType: 'connected',
+      eventDetail: 'whatsapp_legacy_config_updated',
+    })
+    const updated = await getIntegration(auth.orgId)
 
     await auditAndTimeline({
       orgId: auth.orgId,

@@ -5,7 +5,7 @@ import { POST as telegramSendPOST } from '@/app/api/telegram/send/route'
 import { POST as instagramSendPOST } from '@/app/api/instagram/send/route'
 import { POST as facebookSendPOST } from '@/app/api/facebook/send/route'
 import { db } from '@/lib/db'
-import { FIX, jsonBody, req, tokenA, tokenB } from '../helpers'
+import { FIX, jsonBody, req, tokenA, tokenB, seedBaileysConversation } from '../helpers'
 
 /**
  * Bandeja omnicanal (Fase 4) — integración contra BD efímera.
@@ -26,28 +26,21 @@ const igClientId = 'client-a2'
 const waPhone = '+573001110000'
 
 beforeAll(async () => {
-  // WhatsApp org-a: conversación con 1 entrante sin leer + 1 saliente
-  const conv = await db.whatsAppConversation.create({
-    data: {
-      id: waConvId,
-      organizationId: FIX.orgA.id,
-      clientId: tgClientId,
-      contactPhone: waPhone,
-      contactName: 'WA Contacto',
-      lastMessage: '¿Tienen disponibilidad?',
-      lastMessageAt: new Date('2026-01-03T10:00:00Z'),
-      lastMessageFrom: 'in',
-      unreadCount: 2,
-      isAutoReply: true,
-    },
-  })
-  waConvId = conv.id
-  await db.whatsAppMessage.createMany({
-    data: [
-      { organizationId: FIX.orgA.id, conversationId: conv.id, direction: 'inbound', fromNumber: waPhone, toNumber: 'biz', senderType: 'contact', text: 'Hola', createdAt: new Date('2026-01-03T09:59:00Z') },
-      { organizationId: FIX.orgA.id, conversationId: conv.id, direction: 'outbound', fromNumber: 'biz', toNumber: waPhone, senderType: 'user', text: '¡Hola! Bienvenido', createdAt: new Date('2026-01-03T10:00:30Z') },
+  // WhatsApp org-a (UNIFICACIÓN: siembra CANÓNICA Baileys): 2 sin leer + 1 saliente
+  const seeded = await seedBaileysConversation({
+    organizationId: FIX.orgA.id,
+    clientId: tgClientId,
+    contactPhone: waPhone,
+    contactName: 'WA Contacto',
+    unreadCount: 2,
+    lastMessage: '¿Tienen disponibilidad?',
+    lastMessageAt: new Date('2026-01-03T10:00:30Z'),
+    messages: [
+      { direction: 'in', senderType: 'contact', text: 'Hola', waMessageId: 'wamid-inbox-1', createdAt: new Date('2026-01-03T09:59:00Z') },
+      { direction: 'out', senderType: 'user', text: '¡Hola! Bienvenido', waMessageId: 'wamid-inbox-2', createdAt: new Date('2026-01-03T10:00:30Z') },
     ],
   })
+  waConvId = seeded.conversationId
 
   // Telegram org-a (timeline): 2 entrantes sin leer + 1 saliente del agente
   await db.timelineEvent.createMany({
@@ -89,14 +82,14 @@ describe('GET /api/inbox — listado unificado', () => {
     expect(channels).toEqual(new Set(['whatsapp', 'telegram', 'instagram']))
 
     const keys = convs.map((c) => c.key)
-    expect(keys).toContain(`wa:${waConvId}`)
+    expect(keys).toContain(`cc:${waConvId}`)
     expect(keys).toContain(`tg:${tgClientId}`)
     expect(keys).toContain(`ig:${igClientId}`)
 
     // Orden descendente por lastMessageAt (ig 10:05 → tg 10:02 → wa 10:00)
     const idxIg = keys.indexOf(`ig:${igClientId}`)
     const idxTg = keys.indexOf(`tg:${tgClientId}`)
-    const idxWa = keys.indexOf(`wa:${waConvId}`)
+    const idxWa = keys.indexOf(`cc:${waConvId}`)
     expect(idxIg).toBeLessThan(idxTg)
     expect(idxTg).toBeLessThan(idxWa)
 
@@ -104,7 +97,7 @@ describe('GET /api/inbox — listado unificado', () => {
     expect(tg?.unreadCount).toBe(2)
     const ig = convs.find((c) => c.key === `ig:${igClientId}`)
     expect(ig?.unreadCount).toBe(1)
-    const wa = convs.find((c) => c.key === `wa:${waConvId}`)
+    const wa = convs.find((c) => c.key === `cc:${waConvId}`)
     expect(wa?.unreadCount).toBe(2)
     expect(wa?.contactHandle).toBe(waPhone)
   })
@@ -126,13 +119,13 @@ describe('GET /api/inbox?key=... — hilo y marca de leída', () => {
   })
 
   it('hilo de WhatsApp en orden ascendente + unreadCount a 0', async () => {
-    const res = await inboxGET(req(`/inbox?key=${encodeURIComponent(`wa:${waConvId}`)}`, { token: tokenA() }))
+    const res = await inboxGET(req(`/inbox?key=${encodeURIComponent(`cc:${waConvId}`)}`, { token: tokenA() }))
     expect(res.status).toBe(200)
     const body = await jsonBody(res)
     const msgs = body.messages as Array<{ text: string; direction: string }>
     expect(msgs.map((m) => m.text)).toEqual(['Hola', '¡Hola! Bienvenido'])
 
-    const conv = await db.whatsAppConversation.findUnique({ where: { id: waConvId }, select: { unreadCount: true } })
+    const conv = await db.channelConversation.findUnique({ where: { id: waConvId }, select: { unreadCount: true } })
     expect(conv?.unreadCount).toBe(0)
   })
 
@@ -170,7 +163,7 @@ describe('POST /api/inbox/send', () => {
   })
 
   it('texto vacío → 400 (nunca envía)', async () => {
-    const res = await inboxSendPOST(req('/inbox/send', { method: 'POST', token: tokenA(), body: { key: `wa:${waConvId}`, contactHandle: waPhone, text: '   ' } }))
+    const res = await inboxSendPOST(req('/inbox/send', { method: 'POST', token: tokenA(), body: { key: `cc:${waConvId}`, contactHandle: waPhone, text: '   ' } }))
     expect(res.status).toBe(400)
     const body = await jsonBody(res)
     expect(String(body.error)).toMatch(/vacío/i)
@@ -182,7 +175,7 @@ describe('POST /api/inbox/send', () => {
     try {
       const whatsapp = await inboxSendPOST(req('/inbox/send', {
         method: 'POST', token: tokenA(),
-        body: { key: `wa:${waConvId}`, contactHandle: waPhone, text: 'No debe salir' },
+        body: { key: `wa:conv-legacy-retirada`, contactHandle: waPhone, text: 'No debe salir' },
       }))
       const telegram = await inboxSendPOST(req('/inbox/send', {
         method: 'POST', token: tokenA(),
@@ -385,19 +378,19 @@ describe('(F3) GET /api/inbox — filtros server-side de la bandeja', () => {
     const res1 = await inboxGET(req(`/inbox?q=${encodeURIComponent('disponibilidad')}`, { token: tokenA() }))
     const body1 = await jsonBody(res1)
     const convs1 = body1.conversations as Array<{ key: string }>
-    expect(convs1.some((c) => c.key === `wa:${waConvId}`)).toBe(true)
+    expect(convs1.some((c) => c.key === `cc:${waConvId}`)).toBe(true)
 
     // por nombre de contacto legacy ("WA Contacto") — case-insensitive
     const res2 = await inboxGET(req(`/inbox?q=${encodeURIComponent('wa contacto')}`, { token: tokenA() }))
     const body2 = await jsonBody(res2)
     const convs2 = body2.conversations as Array<{ key: string }>
-    expect(convs2.some((c) => c.key === `wa:${waConvId}`)).toBe(true)
+    expect(convs2.some((c) => c.key === `cc:${waConvId}`)).toBe(true)
 
     // por teléfono con '+'
     const res3 = await inboxGET(req(`/inbox?q=${encodeURIComponent(waPhone)}`, { token: tokenA() }))
     const body3 = await jsonBody(res3)
     const convs3 = body3.conversations as Array<{ key: string }>
-    expect(convs3.some((c) => c.key === `wa:${waConvId}`)).toBe(true)
+    expect(convs3.some((c) => c.key === `cc:${waConvId}`)).toBe(true)
   })
 
   it('?q sin resultados devuelve lista vacía (200, no error)', async () => {

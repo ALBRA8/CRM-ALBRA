@@ -45,36 +45,24 @@ export async function POST(req: NextRequest) {
     const secretHeader = req.headers.get('x-telegram-bot-api-secret-token')
     if (!secretHeader) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
-    // (A2-23, auditoría 2026-11-11) El secret se resuelve por HASH SHA-256 y
-    // se compara DESCIFRADO en tiempo constante: el valor en reposo está cifrado
-    // (AES-256-GCM) y la igualdad sobre ciphertext ya no es posible. Las filas
-    // legadas en texto plano se actualizan al vuelo (upgrade perezoso, sin
-    // migración destructiva).
+    // (A2-23, auditoría 2026-11-11) El secret se resuelve por HASH SHA-256 sobre
+    // ChannelConnection.webhookSecretHash y se compara DESCIFRADO en tiempo
+    // constante contra el blob de credenciales de la conexión canónica.
     const secretHash = sha256Hex(secretHeader)
-    let matched = await db.integration.findFirst({
-      where: { telegramSecretHash: secretHash },
-      select: { organizationId: true, telegramSecret: true },
+    const connectionRow = await db.channelConnection.findUnique({
+      where: { webhookSecretHash: secretHash },
+      select: { id: true, organizationId: true, channel: true, provider: true, status: true, credentialsEnc: true },
     })
-    if (matched && !safeEquals(decryptSecret(matched.telegramSecret) ?? '', secretHeader)) {
-      matched = null
+    const telegramState = connectionRow && connectionRow.channel === 'telegram' && connectionRow.provider === 'telegram_bot'
+      ? parseTelegramState(connectionRow.credentialsEnc)
+      : null
+    const matched = connectionRow && telegramState && connectionRow.status === 'connected'
+      ? { organizationId: connectionRow.organizationId }
+      : null
+    if (matched && !safeEquals(telegramState?.webhookSecret || '', secretHeader)) {
+      return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
     }
-    if (!matched) {
-      const legacy = await db.integration.findFirst({
-        where: { telegramSecret: secretHeader },
-        select: { organizationId: true },
-      })
-      if (legacy) {
-        const enc = encryptSecret(secretHeader)
-        if (enc) {
-          await db.integration.update({
-            where: { organizationId: legacy.organizationId },
-            data: { telegramSecret: enc, telegramSecretHash: secretHash },
-          }).catch(() => null)
-          matched = { organizationId: legacy.organizationId, telegramSecret: enc }
-        }
-      }
-    }
-    if (!matched) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+    if (!matched || !telegramState) return json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
     const orgId = matched.organizationId
     const update = JSON.parse(rawBody) as TgUpdate
@@ -83,18 +71,11 @@ export async function POST(req: NextRequest) {
     if (!Number.isSafeInteger(update.update_id) || update.update_id < 0) return json({ ok: true, processed: false })
 
     // Claim the provider update before any timeline, workflow, ASR or reply side effect.
-    // The bot key matches the canonical channel backfill identity.
-    const integrationFull = await db.integration.findUnique({ where: { organizationId: orgId } })
-    const telegramState = parseTelegramState(integrationFull?.telegramBotTokenEnc)
+    // La conexión canónica ya fue resuelta por el hash del secret: es la MISMA fila
+    // que mantiene getOrCreateTelegramWebhookConnection (providerAccountKey telegram:bot:<botId>).
     const botId = telegramState.token?.match(/^(\d+):/)?.[1]
     if (!botId || !telegramState.token) return json({ ok: true, processed: false })
-    const connectionCredentialsEnc = encryptSecret(JSON.stringify({ botToken: telegramState.token, webhookSecret: secretHeader }))
-    if (!connectionCredentialsEnc) return json({ ok: true, processed: false })
-    const connection = await getOrCreateTelegramWebhookConnection({
-      organizationId: orgId,
-      botId,
-      credentialsEnc: connectionCredentialsEnc,
-    })
+    const connection = { id: connectionRow!.id, organizationId: matched.organizationId }
     activeClaim = await claimChannelWebhookEvent({
       organizationId: orgId,
       connectionId: connection.id,
@@ -121,8 +102,7 @@ export async function POST(req: NextRequest) {
     if (!text && (message.voice || message.audio)) {
       const audio = message.voice || message.audio!
       try {
-        const integration0 = await db.integration.findUnique({ where: { organizationId: orgId } })
-        const state0 = parseTelegramState(integration0?.telegramBotTokenEnc)
+        const state0 = telegramState
         if (!state0.token) throw new Error('sin token de bot configurado')
         const buffer = await downloadTelegramFile({ token: state0.token, fileId: audio.file_id })
         text = await transcribeAudioBase64(buffer.toString('base64'))

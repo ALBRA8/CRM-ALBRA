@@ -50,10 +50,23 @@ export async function GET(req: NextRequest) {
     // (SOLO identidad: ids y números; JAMÁS tokens). WHATSPOWER/ULTRA lo usan
     // para saber con qué número despacha cada org (decisión #6/#7).
     if (!phoneNumberId && !connectionId) {
-      const connections = await db.whatsAppConnection.findMany({
-        where: { organizationId: identity.orgId, status: 'connected' },
+      // (UNIFICACIÓN 2026-11-21) Fuente canónica ChannelConnection (meta_cloud):
+      // identidad/números desde externalAccountId + metadata; JAMÁS tokens.
+      const rows = await db.channelConnection.findMany({
+        where: { organizationId: identity.orgId, channel: 'whatsapp', provider: 'meta_cloud', status: 'connected' },
         orderBy: { createdAt: 'asc' },
-        select: { id: true, phoneNumberId: true, phoneNumber: true, wabaId: true, displayName: true },
+        select: { id: true, externalAccountId: true, displayName: true, metadata: true },
+      })
+      const connections = rows.map((c) => {
+        let meta: Record<string, unknown> = {}
+        try { meta = c.metadata ? JSON.parse(c.metadata) as Record<string, unknown> : {} } catch {}
+        return {
+          id: c.id,
+          phoneNumberId: c.externalAccountId,
+          phoneNumber: typeof meta.phoneNumber === 'string' ? meta.phoneNumber : c.externalAccountId,
+          wabaId: typeof meta.wabaId === 'string' ? meta.wabaId : null,
+          displayName: c.displayName,
+        }
       })
       return json({ organizationId: identity.orgId, connections })
     }
@@ -63,17 +76,19 @@ export async function GET(req: NextRequest) {
     // se consulta por (connectionId, organizationId) — una credencial de
     // servicio jamás puede leer conexiones ajenas (404, sin detalles).
     if (connectionId) {
-      const connection = await db.whatsAppConnection.findFirst({
-        where: { id: connectionId, organizationId: identity.orgId, status: 'connected' },
-        select: { phoneNumberId: true },
+      const connection = await db.channelConnection.findFirst({
+        where: { id: connectionId, organizationId: identity.orgId, channel: 'whatsapp', provider: 'meta_cloud', status: 'connected' },
+        select: { externalAccountId: true },
       })
       if (!connection) return json({ error: 'No encontrada' }, { status: 404 })
-      const resolved = await resolveInternalCredentials(identity.orgId, connection.phoneNumberId)
+      const connection2 = { phoneNumberId: connection.externalAccountId }
+      if (!connection) return json({ error: 'No encontrada' }, { status: 404 })
+      const resolved = await resolveInternalCredentials(identity.orgId, connection.externalAccountId)
       if (!resolved.ok) return json({ error: resolved.code === 'not_connected' ? 'Conexión no activa' : 'No encontrada' }, { status: resolved.code === 'not_connected' ? 409 : 404 })
       return json({
         organizationId: identity.orgId,
         connectionId: resolved.connectionId,
-        phoneNumberId: connection.phoneNumberId,
+        phoneNumberId: connection.externalAccountId,
         wabaId: resolved.wabaId,
         phoneNumber: resolved.phoneNumber,
         // Token en claro SOLO por este canal autenticado, nunca logueado.

@@ -125,6 +125,10 @@ function safeMetadata(raw: string | null | undefined): Record<string, unknown> {
   }
 }
 
+function safeParseMetadataObject(raw: string | null | undefined): Record<string, unknown> {
+  return safeMetadata(raw)
+}
+
 // ---------- (M7) unificación de la doble bandeja (puros, testeables) ----------
 
 /**
@@ -248,42 +252,10 @@ export function timelineToMessages(
 
 // ---------- listado unificado ----------
 
-async function listWhatsAppConversations(orgId: string, limit: number): Promise<InboxConversation[]> {
-  try {
-    const rows = await db.whatsAppConversation.findMany({
-      where: { organizationId: orgId, status: 'active' },
-      orderBy: { lastMessageAt: 'desc' },
-      take: limit,
-      select: {
-        id: true,
-        contactPhone: true,
-        contactName: true,
-        lastMessage: true,
-        lastMessageAt: true,
-        lastMessageFrom: true,
-        unreadCount: true,
-        isAutoReply: true,
-        clientId: true,
-      },
-    })
-    return rows.map((c) => ({
-      key: makeInboxKey('whatsapp', c.id),
-      channel: 'whatsapp' as const,
-      channelLabel: CHANNEL_LABELS.whatsapp,
-      contactName: c.contactName || c.contactPhone,
-      contactHandle: c.contactPhone,
-      clientId: c.clientId,
-      lastMessage: c.lastMessage || '',
-      lastMessageAt: c.lastMessageAt?.toISOString() || null,
-      lastMessageFrom: c.lastMessageFrom === 'out' ? ('out' as const) : ('in' as const),
-      unreadCount: c.unreadCount,
-      isAutoReply: c.isAutoReply,
-    }))
-  } catch (err) {
-    console.error('[inbox] canal whatsapp no disponible', err)
-    return []
-  }
-}
+// (UNIFICACIÓN 2026-11-21) La fuente legacy del daemon (tabla
+// WhatsAppConversation) fue retirada: el daemon Baileys escribe directamente en
+// ChannelConversation/ChannelMessage y la bandeja lee SOLO del modelo canónico
+// (+ timeline para TG/IG/FB hasta que esos canales tengan conversaciones canónicas).
 
 /**
  * Conversaciones derivadas de timeline (Telegram e Instagram).
@@ -363,11 +335,12 @@ async function listCanonicalChannelConversations(orgId: string, limit: number): 
       take: limit,
     })
     return rows
-      .filter((row) => ['whatsapp', 'instagram', 'facebook', 'telegram', 'tiktok'].includes(row.channel))
-      .filter((row) => row.connection.status === 'connected' && row.connection.channel === row.channel)
+      // (UNIFICACIÓN) Messenger vive como channel='messenger' en las conexiones;
+      // la bandeja lo presenta como 'facebook'.
+      .filter((row) => ['whatsapp', 'instagram', 'facebook', 'messenger', 'telegram', 'tiktok'].includes(row.channel))
       .map((row) => ({
         key: 'cc:' + row.id,
-        channel: row.channel as InboxChannel,
+        channel: (row.channel === 'messenger' ? 'facebook' : row.channel) as InboxChannel,
         channelLabel: CHANNEL_LABELS[row.channel as InboxChannel] || 'WhatsApp',
         connectionId: row.connection.id ?? null,
         connectionName: row.connection.displayName || null,
@@ -448,19 +421,19 @@ export function filterInboxConversations(
 }
 
 /** Lista unificada, ordenada por actividad reciente y UNIFICADA por contacto (M7).
- *  Las fuentes legacy tapadas por una canónica no se repiten; el historial
- *  completo sigue en la ficha 360. (F3) los filtros se aplican ANTES del recorte. */
+ *  (UNIFICACIÓN 2026-11-21) La fuente WhatsApp es EXCLUSIVAMENTE canónica
+ *  (cc:*, escrita por el daemon Baileys y los webhooks); el historial legacy
+ *  queda visible en la ficha 360. (F3) los filtros se aplican ANTES del recorte. */
 export async function listInbox(orgId: string, limit = 100, filters: InboxFilters = {}): Promise<InboxConversation[]> {
-  const [canonical, wa, tg, ig, fb] = await Promise.all([
+  const [canonical, tg, ig, fb] = await Promise.all([
     listCanonicalChannelConversations(orgId, limit),
-    listWhatsAppConversations(orgId, limit),
     listTimelineConversations(orgId, 'telegram', limit),
     listTimelineConversations(orgId, 'instagram', limit),
     listTimelineConversations(orgId, 'facebook', limit),
   ])
   return filterInboxConversations(
     dedupeInboxConversations(
-      [...canonical, ...wa, ...tg, ...ig, ...fb]
+      [...canonical, ...tg, ...ig, ...fb]
         .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || '')),
     ),
     filters,
@@ -486,24 +459,37 @@ export interface ClientChannelOption {
  */
 export async function listClientChannels(orgId: string, clientId: string): Promise<ClientChannelOption[]> {
   const options: ClientChannelOption[] = []
+  // WhatsApp: resolución canónica. El vínculo conversación↔cliente vive en
+  // ChannelConversation.metadata.clientId (escrito por el daemon/webhooks) con
+  // respaldo por teléfono normalizado del cliente.
   try {
-    const conv = await db.whatsAppConversation.findFirst({
-      where: { organizationId: orgId, clientId, status: 'active' },
+    const client = await db.client.findUnique({ where: { id: clientId }, select: { phone: true } })
+    const waConversations = await db.channelConversation.findMany({
+      where: {
+        organizationId: orgId,
+        channel: 'whatsapp',
+        status: 'active',
+        connection: { is: { organizationId: orgId, status: 'connected' } },
+      },
       orderBy: { lastMessageAt: 'desc' },
-      select: { id: true, contactPhone: true },
+      take: 50,
+      select: { id: true, externalContactKey: true, metadata: true },
     })
+    const phoneDigits = normalizeWaPhone(client?.phone)
+    const conv =
+      waConversations.find((c) => safeParseMetadataObject(c.metadata).clientId === clientId) ||
+      waConversations.find((c) => phoneDigits && normalizeWaPhone(c.externalContactKey) === phoneDigits)
     if (conv) {
       options.push({
-        key: makeInboxKey('whatsapp', conv.id),
+        key: `cc:${conv.id}`,
         channel: 'whatsapp',
         channelLabel: 'WhatsApp',
-        contactHandle: conv.contactPhone,
+        contactHandle: conv.externalContactKey,
       })
     }
   } catch (err) {
     console.error('[inbox] canal whatsapp (cliente) no disponible', err)
   }
-  // No se ofrecen destinos WhatsApp directos legacy sin conversación canónica.
 
   try {
     const events = await db.timelineEvent.findMany({
@@ -626,22 +612,9 @@ export async function getInboxMessages(orgId: string, key: string): Promise<Inbo
   if (!parsed.channel) return []
 
   if (parsed.channel === 'whatsapp') {
-    const rows = await db.whatsAppMessage.findMany({
-      where: { organizationId: orgId, conversationId: parsed.id },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-      select: { id: true, direction: true, senderType: true, text: true, createdAt: true, messageType: true },
-    })
-    return rows
-      .map((m) => ({
-        id: m.id,
-        direction: m.direction === 'outbound' || m.direction === 'out' ? ('out' as const) : ('in' as const),
-        senderType: m.senderType === 'contact' ? ('contact' as const) : m.senderType === 'agent' ? ('agent' as const) : ('user' as const),
-        text: m.text || '',
-        createdAt: m.createdAt.toISOString(),
-        ...(m.messageType === 'voice' ? { messageType: 'voice' } : {}),
-      }))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    // (UNIFICACIÓN 2026-11-21) Las keys legacy 'wa:<id>' fueron retiradas junto
+    // con las tablas del daemon; el historial Baileys vive bajo 'cc:<id>'.
+    return []
   }
 
   const events = await db.timelineEvent.findMany({
@@ -675,10 +648,7 @@ export async function markInboxRead(orgId: string, key: string): Promise<void> {
     }
     if (!parsed.channel) return
     if (parsed.channel === 'whatsapp') {
-      await db.whatsAppConversation.updateMany({
-        where: { organizationId: orgId, id: parsed.id },
-        data: { unreadCount: 0 },
-      })
+      // Keys legacy 'wa:' retiradas: nada que marcar (no-op).
       return
     }
     // Telegram/Instagram: marcar readAt en los eventos entrantes sin leer (acotado).

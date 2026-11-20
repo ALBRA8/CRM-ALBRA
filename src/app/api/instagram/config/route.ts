@@ -2,7 +2,7 @@ import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
-import { getIntegration, parseInstagramState, encodeInstagramState } from '@/lib/integrations'
+import { getIntegration, parseInstagramState, encodeInstagramState, upsertChannelConnection } from '@/lib/integrations'
 import { maskSecret } from '@/lib/crypto'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
@@ -54,13 +54,23 @@ export async function PUT(req: NextRequest) {
     if (body.webhookSecret !== undefined && body.webhookSecret !== '') next.webhookSecret = String(body.webhookSecret).trim()
     if (body.metaAppId !== undefined) next.metaAppId = String(body.metaAppId).trim() || undefined
 
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: {
-        instagramTokenEnc: encodeInstagramState(next),
-        ...(body.igAccountId !== undefined ? { instagramAccountId: String(body.igAccountId).trim() || null } : {}),
-        enableInstagram: !!next.token,
-      },
+    // (UNIFICACIÓN 2026-11-21) La configuración de Instagram vive en
+    // ChannelConnection (provider='meta_graph'): clave 'meta:instagram:<accountId>'
+    // cuando hay cuenta, o 'instagram:org:<orgId>' mientras tanto.
+    const igAccountId = body.igAccountId !== undefined
+      ? (String(body.igAccountId).trim() || null)
+      : integration.instagramAccountId
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'instagram',
+      provider: 'meta_graph',
+      providerAccountKey: igAccountId ? `meta:instagram:${igAccountId}` : `instagram:org:${auth.orgId}`,
+      externalAccountId: igAccountId,
+      credentialsEnc: encodeInstagramState(next),
+      status: next.token ? 'connected' : 'disconnected',
+      metadata: { source: 'config' },
+      eventType: next.token ? 'connected' : 'disconnected',
+      eventDetail: 'instagram_config_updated',
     })
 
     await auditAndTimeline({
@@ -88,9 +98,19 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: { instagramTokenEnc: null, instagramAccountId: null, enableInstagram: false },
+    const integration = await getIntegration(auth.orgId)
+    await upsertChannelConnection({
+      orgId: auth.orgId,
+      channel: 'instagram',
+      provider: 'meta_graph',
+      providerAccountKey: integration.instagramAccountId
+        ? `meta:instagram:${integration.instagramAccountId}`
+        : `instagram:org:${auth.orgId}`,
+      externalAccountId: null,
+      credentialsEnc: encodeInstagramState({}),
+      status: 'disconnected',
+      eventType: 'disconnected',
+      eventDetail: 'instagram_config_disconnected',
     })
     await auditAndTimeline({
       orgId: auth.orgId,

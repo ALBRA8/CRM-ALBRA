@@ -692,14 +692,21 @@ const sendWhatsapp: McpTool = {
       const client = await db.client.findFirst({ where: { id: clientIdArg, organizationId: ctx.orgId }, select: { id: true, name: true, phone: true } })
       if (!client) throw new Error('Cliente no encontrado en esta organización')
       clientId = client.id
-      const conv = await db.whatsAppConversation.findFirst({
-        where: { organizationId: ctx.orgId, clientId: client.id },
+      const conv = await db.channelConversation.findFirst({
+        where: {
+          organizationId: ctx.orgId,
+          channel: 'whatsapp',
+          OR: [
+            { metadata: { contains: `"clientId":"${client.id}"` } },
+            ...(client.phone ? [{ externalContactKey: client.phone }] : []),
+          ],
+        },
         orderBy: { lastMessageAt: 'desc' },
-        select: { id: true, contactPhone: true },
+        select: { id: true, externalContactKey: true },
       })
       if (conv) {
-        key = `wa:${conv.id}`
-        contactHandle = conv.contactPhone
+        key = `cc:${conv.id}`
+        contactHandle = conv.externalContactKey
       } else {
         const phone = normalizeWaPhone(client.phone)
         if (!phone) throw new Error('El cliente no tiene un teléfono válido para WhatsApp; pasa phone explícitamente')
@@ -830,7 +837,7 @@ const getDashboardStats: McpTool = {
       db.opportunity.count({ where: { organizationId: ctx.orgId, status: 'won' } }),
       db.quote.count({ where: { organizationId: ctx.orgId, status: 'sent' } }),
       db.quote.count({ where: { organizationId: ctx.orgId, status: 'accepted' } }),
-      db.whatsAppConversation.aggregate({ where: { organizationId: ctx.orgId }, _sum: { unreadCount: true } }),
+      db.channelConversation.aggregate({ where: { organizationId: ctx.orgId }, _sum: { unreadCount: true } }),
     ])
     return {
       clients,

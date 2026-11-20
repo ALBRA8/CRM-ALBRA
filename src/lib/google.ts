@@ -3,10 +3,13 @@ import { decryptSecret, encryptSecret } from './crypto'
 
 /**
  * Helpers de Google Workspace sin dependencias (fetch puro contra las APIs oficiales).
- * Config guardada en Integration:
+ * Config guardada en GoogleIntegration (tabla dedicada 1:1 por organización):
  *  - googleClientJsonEnc: JSON cifrado { clientId, clientSecret }
  *  - googleRefreshTokenEnc: refresh token cifrado (OAuth offline)
  * Todo con degradación elegante: si no hay config → null / connected:false, nunca 500.
+ * (2026-11-21) Antes vivía en Integration; los tokens existentes se migraron
+ * con la migración formal drop_legacy_channel_models (INSERT INTO
+ * GoogleIntegration SELECT ... FROM Integration antes del DROP).
  */
 
 export interface GoogleClientConfig {
@@ -25,8 +28,8 @@ export const GOOGLE_SCOPES = [
 ]
 
 export async function getGoogleClientConfig(orgId: string): Promise<GoogleClientConfig | null> {
-  const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-  const raw = decryptSecret(integration?.googleClientJsonEnc)
+  const google = await db.googleIntegration.findUnique({ where: { organizationId: orgId } })
+  const raw = decryptSecret(google?.googleClientJsonEnc)
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as GoogleClientConfig
@@ -38,39 +41,29 @@ export async function getGoogleClientConfig(orgId: string): Promise<GoogleClient
 }
 
 export async function saveGoogleClientConfig(orgId: string, clientId: string, clientSecret: string): Promise<void> {
-  const existing = await db.integration.findUnique({ where: { organizationId: orgId } })
-  if (existing) {
-    await db.integration.update({
-      where: { organizationId: orgId },
-      data: { googleClientJsonEnc: encryptSecret(JSON.stringify({ clientId, clientSecret })), enableGoogle: true },
-    })
-  } else {
-    await db.integration.create({
-      data: {
-        organizationId: orgId,
-        googleClientJsonEnc: encryptSecret(JSON.stringify({ clientId, clientSecret })),
-        enableGoogle: true,
-      },
-    })
-  }
+  await db.googleIntegration.upsert({
+    where: { organizationId: orgId },
+    update: { googleClientJsonEnc: encryptSecret(JSON.stringify({ clientId, clientSecret })), calendarSyncEnabled: true },
+    create: { organizationId: orgId, googleClientJsonEnc: encryptSecret(JSON.stringify({ clientId, clientSecret })), calendarSyncEnabled: true },
+  })
 }
 
 export async function getGoogleRefreshToken(orgId: string): Promise<string | null> {
-  const integration = await db.integration.findUnique({ where: { organizationId: orgId } })
-  return decryptSecret(integration?.googleRefreshTokenEnc)
+  const google = await db.googleIntegration.findUnique({ where: { organizationId: orgId } })
+  return decryptSecret(google?.googleRefreshTokenEnc)
 }
 
 export async function saveGoogleRefreshToken(orgId: string, refreshToken: string): Promise<void> {
-  await db.integration.upsert({
+  await db.googleIntegration.upsert({
     where: { organizationId: orgId },
-    update: { googleRefreshTokenEnc: encryptSecret(refreshToken), enableGoogle: true },
-    create: { organizationId: orgId, googleRefreshTokenEnc: encryptSecret(refreshToken), enableGoogle: true },
+    update: { googleRefreshTokenEnc: encryptSecret(refreshToken), calendarSyncEnabled: true },
+    create: { organizationId: orgId, googleRefreshTokenEnc: encryptSecret(refreshToken), calendarSyncEnabled: true },
   })
 }
 
 /** Email de la cuenta conectada (userinfo al terminar el OAuth). Se muestra en Ajustes. */
 export async function saveGoogleEmail(orgId: string, email: string): Promise<void> {
-  await db.integration.upsert({
+  await db.googleIntegration.upsert({
     where: { organizationId: orgId },
     update: { googleEmail: email },
     create: { organizationId: orgId, googleEmail: email },
@@ -78,9 +71,9 @@ export async function saveGoogleEmail(orgId: string, email: string): Promise<voi
 }
 
 export async function clearGoogleConnection(orgId: string): Promise<void> {
-  await db.integration.updateMany({
+  await db.googleIntegration.updateMany({
     where: { organizationId: orgId },
-    data: { googleRefreshTokenEnc: null, googleEmail: null, enableGoogle: false },
+    data: { googleRefreshTokenEnc: null, googleEmail: null, calendarSyncEnabled: false },
   })
 }
 

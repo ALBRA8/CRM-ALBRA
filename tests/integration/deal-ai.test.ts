@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, vi } from 'vitest'
 import { POST as aiSuggestPOST } from '@/app/api/opportunities/[id]/ai-suggest/route'
 import { db } from '@/lib/db'
 import { llmChat } from '@/lib/ai'
-import { FIX, jsonBody, req, routeParams, tokenA, tokenB } from '../helpers'
+import { FIX, jsonBody, req, routeParams, tokenA, tokenB, seedBaileysConversation } from '../helpers'
 
 /**
  * IA de cierre (Fase 4) — integración del endpoint POST /api/opportunities/:id/ai-suggest
@@ -71,17 +71,15 @@ beforeAll(async () => {
     },
   })
   // Canales del cliente para la respuesta channels[] del endpoint:
-  // conversación activa de WhatsApp (daemon) + hilo Telegram con chatId.
-  await db.whatsAppConversation.create({
-    data: {
-      organizationId: FIX.orgA.id,
-      clientId: FIX.clientA1.id,
-      contactPhone: '+573001110000',
-      contactName: 'Cliente Alpha WA',
-      lastMessage: '¿Me pasas la propuesta?',
-      lastMessageAt: new Date('2026-01-12T10:00:00Z'),
-      lastMessageFrom: 'in',
-    },
+  // conversación canónica de WhatsApp (daemon Baileys) + hilo Telegram con chatId.
+  // (UNIFICACIÓN 2026-11-21: siembra canónica ChannelConversation)
+  await seedBaileysConversation({
+    organizationId: FIX.orgA.id,
+    clientId: FIX.clientA1.id,
+    contactPhone: '+573001110000',
+    contactName: 'Cliente Alpha WA',
+    lastMessage: '¿Me pasas la propuesta?',
+    lastMessageAt: new Date('2026-01-12T10:00:00Z'),
   })
   await db.timelineEvent.create({
     data: {
@@ -138,7 +136,8 @@ describe('POST /api/opportunities/:id/ai-suggest — generación con LLM mockead
     // Canales del cliente con conversación activa (para "Enviar por …")
     const channels = body.channels as Array<{ key: string; channel: string; channelLabel: string; contactHandle: string }>
     expect(channels.map((c) => c.channelLabel).sort()).toEqual(['Telegram', 'WhatsApp'])
-    expect(channels.find((c) => c.channel === 'whatsapp')?.key).toMatch(/^wa:/)
+    // (UNIFICACIÓN) La conversación WhatsApp del daemon es canónica: key cc:<id>
+    expect(channels.find((c) => c.channel === 'whatsapp')?.key).toMatch(/^cc:/)
     expect(channels.find((c) => c.channel === 'whatsapp')?.contactHandle).toBe('+573001110000')
     expect(channels.find((c) => c.channel === 'telegram')?.key).toBe(`tg:${FIX.clientA1.id}`)
     expect(channels.find((c) => c.channel === 'telegram')?.contactHandle).toBe('555099')

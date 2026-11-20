@@ -25,6 +25,47 @@ import {
 
 export const ACTIVE_STATUSES = ['connected', 'pending'] as const
 
+// (2026-11-21) Unificación de las 3 generaciones: ChannelConnection es la ÚNICA
+// fuente de conexiones WhatsApp Cloud (provider 'meta_cloud', claves
+// 'meta:whatsapp:<phoneNumberId>'). La tabla WhatsAppConnection fue retirada;
+// sus filas históricas viven en ChannelConnection tras el backfill/migración.
+
+interface WhatsAppCloudCredentialsBlob {
+  accessToken?: string
+  appSecret?: string | null
+  webhookVerifyToken?: string | null
+}
+
+function parseCloudCredentials(credentialsEnc: string | null | undefined): WhatsAppCloudCredentialsBlob {
+  const raw = decryptSecret(credentialsEnc)
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as WhatsAppCloudCredentialsBlob
+    if (parsed && typeof parsed === 'object') return parsed
+    return { accessToken: raw }
+  } catch {
+    return { accessToken: raw }
+  }
+}
+
+interface WhatsAppCloudMetadata {
+  wabaId?: string | null
+  phoneNumber?: string | null
+  source?: string
+  statusDetail?: string | null
+}
+
+function parseCloudMetadata(metadata: string | null | undefined): WhatsAppCloudMetadata {
+  if (!metadata) return {}
+  try {
+    const parsed = JSON.parse(metadata) as WhatsAppCloudMetadata
+    if (parsed && typeof parsed === 'object') return parsed
+    return {}
+  } catch {
+    return {}
+  }
+}
+
 export interface CreateConnectionInput {
   orgId: string
   phoneNumberId: string
@@ -46,7 +87,9 @@ export type CreateConnectionResult =
 
 /** Conteo de conexiones activas (ocupan cupo del plan). */
 export async function activeConnectionCount(orgId: string): Promise<number> {
-  return db.whatsAppConnection.count({ where: { organizationId: orgId, status: { in: [...ACTIVE_STATUSES] } } })
+  return db.channelConnection.count({
+    where: { organizationId: orgId, channel: 'whatsapp', provider: 'meta_cloud', status: { in: [...ACTIVE_STATUSES] } },
+  })
 }
 
 /**
@@ -130,70 +173,48 @@ export async function createConnection(input: CreateConnectionInput): Promise<Cr
         data: { updatedAt: new Date() },
       })
 
-      const activeCount = await tx.whatsAppConnection.count({
-        where: { organizationId: orgId, status: { in: [...ACTIVE_STATUSES] } },
+      const activeCount = await tx.channelConnection.count({
+        where: { organizationId: orgId, channel: 'whatsapp', provider: 'meta_cloud', status: { in: [...ACTIVE_STATUSES] } },
       })
       const gate = canAddConnection(org.plan, activeCount)
       if (!gate.allowed) return { blocked: 'plan_limit' as const, gate: { limit: gate.limit, planLabel: gate.planLabel } }
-      const duplicate = await tx.whatsAppConnection.findUnique({ where: { phoneNumberId } })
+      const duplicate = await tx.channelConnection.findUnique({ where: { providerAccountKey: `meta:whatsapp:${phoneNumberId}` } })
       if (duplicate) return { blocked: 'duplicate' as const }
       const webhookVerifyToken = generateWebhookVerifyToken()
-      const accessTokenEnc = encryptSecret(accessToken) ?? ''
-      const metaAppSecretEnc = metaAppSecret ? encryptSecret(metaAppSecret) : null
-      const conn = await tx.whatsAppConnection.create({
-        data: {
-          organizationId: orgId,
-          wabaId: wabaId ?? null,
-          phoneNumberId,
-          phoneNumber: resolvedPhone ?? 'desconocido',
-          displayName: resolvedName,
-          accessTokenEnc,
-          metaAppSecretEnc,
-          webhookVerifyToken,
-          status: 'connected',
-          statusDetail: source === 'embedded_signup' ? 'Conectada vía Embedded Signup (flujo oficial Meta)' : 'Conectada manualmente por el administrador',
-          source,
-          tokenExpiresAt: tokenExpiresAt ?? null,
-          lastVerifiedAt: new Date(),
-        },
-      })
-
-      // Shadow-write al inventario canónico. WhatsAppConnection sigue siendo
-      // la fuente de lectura durante esta fase; no cambia el webhook aún.
-      const providerAccountKey = `meta:whatsapp:${phoneNumberId}`
       const credentialsEnc = encryptSecret(JSON.stringify({
         accessToken,
         appSecret: metaAppSecret ?? null,
         webhookVerifyToken,
       }))
       if (!credentialsEnc) throw new Error('No se pudieron cifrar las credenciales canónicas')
-      const canonical = await tx.channelConnection.create({
+      const conn = await tx.channelConnection.create({
         data: {
           organizationId: orgId,
           channel: 'whatsapp',
           provider: 'meta_cloud',
-          providerAccountKey,
+          providerAccountKey: `meta:whatsapp:${phoneNumberId}`,
           externalAccountId: phoneNumberId,
           displayName: resolvedName,
           status: 'connected',
           credentialsEnc,
           tokenExpiresAt: tokenExpiresAt ?? null,
           lastVerifiedAt: new Date(),
-          metadata: JSON.stringify({ wabaId: wabaId ?? null, phoneNumber: resolvedPhone ?? null }),
+          metadata: JSON.stringify({
+            wabaId: wabaId ?? null,
+            phoneNumber: resolvedPhone ?? null,
+            source,
+            statusDetail: source === 'embedded_signup'
+              ? 'Conectada vía Embedded Signup (flujo oficial Meta)'
+              : 'Conectada manualmente por el administrador',
+          }),
         },
       })
-      await tx.channelConnectionEvent.create({
-        data: {
-          organizationId: orgId,
-          connectionId: canonical.id,
-          type: 'connected',
-          detail: 'whatsapp_cloud_connection_created',
-        },
-      })
-      return { blocked: null, conn: { id: conn.id, phoneNumber: conn.phoneNumber, status: conn.status } }
+
+      // El evento de auditoría lo escribe auditEvent() al final (único escritor).
+      return { blocked: null, conn: { id: conn.id, phoneNumber: resolvedPhone ?? phoneNumberId, status: conn.status } }
     })
   } catch (err) {
-    // Carrera residual entre instancias: el UNIQUE(phoneNumberId) es la
+    // Carrera residual entre instancias: el UNIQUE(providerAccountKey) es la
     // cerradura definitiva. Sin filtrar a qué org pertenece (aislamiento).
     if ((err as { code?: string } | null)?.code === 'P2002') {
       return { ok: false, code: 'duplicate', message: 'Este número de WhatsApp ya está conectado a otra cuenta' }
@@ -232,8 +253,8 @@ export async function disconnectConnection(
   connectionId: string,
   opts: { revoked?: boolean; detail?: string } = {},
 ): Promise<DisconnectResult> {
-  const connection = await db.whatsAppConnection.findFirst({
-    where: { id: connectionId, organizationId: orgId },
+  const connection = await db.channelConnection.findFirst({
+    where: { id: connectionId, organizationId: orgId, channel: 'whatsapp', provider: 'meta_cloud' },
   })
   if (!connection) return { ok: false, code: 'not_found', message: 'Conexión no encontrada' }
   if (connection.status === 'disconnected' || connection.status === 'revoked') {
@@ -241,41 +262,27 @@ export async function disconnectConnection(
   }
   const status = opts.revoked ? 'revoked' : 'disconnected'
   await db.$transaction(async (tx) => {
-    await tx.whatsAppConnection.update({
+    const emptyCredentials = encryptSecret('{}')
+    if (!emptyCredentials) throw new Error('No se pudieron invalidar las credenciales canónicas')
+    await tx.channelConnection.update({
       where: { id: connection.id },
       data: {
         status,
-        statusDetail: opts.detail ?? (opts.revoked
-          ? 'Autorización revocada desde Meta o por la organización'
-          : 'Desconectada por la organización'),
-        accessTokenEnc: '', // destrucción del material sensible
-        metaAppSecretEnc: null,
+        credentialsEnc: emptyCredentials, // destrucción del material sensible
         lastVerifiedAt: null,
       },
     })
-    const providerAccountKey = `meta:whatsapp:${connection.phoneNumberId}`
-    const canonical = await tx.channelConnection.findUnique({
-      where: { providerAccountKey },
-      select: { id: true, organizationId: true },
+    await tx.channelConnectionEvent.create({
+      data: {
+        organizationId: orgId,
+        connectionId: connection.id,
+        type: status,
+        detail: opts.detail ?? (opts.revoked ? 'whatsapp_cloud_connection_revoked' : 'whatsapp_cloud_connection_disconnected'),
+      },
     })
-    if (canonical?.organizationId === orgId) {
-      const emptyCredentials = encryptSecret('{}')
-      if (!emptyCredentials) throw new Error('No se pudieron invalidar las credenciales canónicas')
-      await tx.channelConnection.update({
-        where: { id: canonical.id },
-        data: { status, credentialsEnc: emptyCredentials, lastVerifiedAt: null },
-      })
-      await tx.channelConnectionEvent.create({
-        data: {
-          organizationId: orgId,
-          connectionId: canonical.id,
-          type: status,
-          detail: 'whatsapp_cloud_connection_disconnected',
-        },
-      })
-    }
   })
-  await auditEvent(connection.id, orgId, status, `Número ${connection.phoneNumber}: ${status}`)
+  const meta = parseCloudMetadata(connection.metadata)
+  await auditEvent(connection.id, orgId, status, `Número ${meta.phoneNumber ?? connection.externalAccountId}: ${status}`)
   return { ok: true, status }
 }
 
@@ -287,20 +294,28 @@ export async function disconnectConnection(
  */
 export async function resolveOrgByPhoneNumberId(phoneNumberId: string) {
   if (!phoneNumberId) return null
-  return db.whatsAppConnection.findUnique({
-    where: { phoneNumberId },
-    select: { id: true, organizationId: true, status: true, metaAppSecretEnc: true, webhookVerifyToken: true },
+  const connection = await db.channelConnection.findUnique({
+    where: { providerAccountKey: `meta:whatsapp:${phoneNumberId}` },
+    select: { id: true, organizationId: true, status: true, credentialsEnc: true },
   })
+  if (!connection) return null
+  const creds = parseCloudCredentials(connection.credentialsEnc)
+  return {
+    id: connection.id,
+    organizationId: connection.organizationId,
+    status: connection.status,
+    credentials: creds,
+  }
 }
 
 /** Token en claro de una conexión (solo en memoria; NUNCA logueado). */
 export async function resolveConnectionCredentials(orgId: string, connectionId: string): Promise<string | null> {
-  const connection = await db.whatsAppConnection.findFirst({
-    where: { id: connectionId, organizationId: orgId, status: 'connected' },
-    select: { accessTokenEnc: true },
+  const connection = await db.channelConnection.findFirst({
+    where: { id: connectionId, organizationId: orgId, channel: 'whatsapp', provider: 'meta_cloud', status: 'connected' },
+    select: { credentialsEnc: true },
   })
-  if (!connection?.accessTokenEnc) return null
-  return decryptSecret(connection.accessTokenEnc)
+  if (!connection?.credentialsEnc) return null
+  return parseCloudCredentials(connection.credentialsEnc).accessToken ?? null
 }
 
 /**
@@ -317,28 +332,27 @@ export async function resolveInternalCredentials(orgId: string, phoneNumberId: s
   wabaId?: string | null
   phoneNumber?: string
 }> {
-  const connection = await db.whatsAppConnection.findUnique({
-    where: { phoneNumberId },
-    select: {
-      id: true, organizationId: true, status: true, accessTokenEnc: true, wabaId: true, phoneNumber: true,
-    },
+  const connection = await db.channelConnection.findUnique({
+    where: { providerAccountKey: `meta:whatsapp:${phoneNumberId}` },
+    select: { id: true, organizationId: true, status: true, credentialsEnc: true, metadata: true, externalAccountId: true },
   })
   // Un phoneNumberId de OTRA organización se reporta como no encontrado
   // (404): el llamador no aprende que el número existe ni a quién pertenece.
   if (!connection || connection.organizationId !== orgId) return { ok: false, code: 'not_found' }
   if (connection.status !== 'connected') return { ok: false, code: 'not_connected' }
-  const token = decryptSecret(connection.accessTokenEnc)
-  if (!token) return { ok: false, code: 'not_connected' }
+  const creds = parseCloudCredentials(connection.credentialsEnc)
+  if (!creds.accessToken) return { ok: false, code: 'not_connected' }
+  const meta = parseCloudMetadata(connection.metadata)
   return {
     ok: true,
     connectionId: connection.id,
-    accessToken: token,
-    wabaId: connection.wabaId,
-    phoneNumber: connection.phoneNumber,
+    accessToken: creds.accessToken,
+    wabaId: meta.wabaId ?? null,
+    phoneNumber: meta.phoneNumber ?? connection.externalAccountId,
   }
 }
 
-/** Audit event (best-effort: el fallo del audit no rompe la operación). */
+/** Audit event canónico (best-effort: el fallo del audit no rompe la operación). */
 export async function auditEvent(
   connectionId: string | null,
   orgId: string,
@@ -346,7 +360,7 @@ export async function auditEvent(
   detail?: string,
 ): Promise<void> {
   try {
-    await db.whatsAppConnectionEvent.create({
+    await db.channelConnectionEvent.create({
       data: { connectionId: connectionId ?? null, organizationId: orgId, type, detail: detail ?? null },
     })
   } catch (err) {

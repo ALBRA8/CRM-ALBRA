@@ -19,14 +19,37 @@ import { planLimitFor } from '@/lib/whatsapp-plans'
 export async function GET(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAuth(req)
-    const connections = await db.whatsAppConnection.findMany({
-      where: { organizationId: auth.orgId },
+    // (UNIFICACIÓN 2026-11-21) Fuente canónica ChannelConnection; la respuesta
+    // conserva la forma del panel (phoneNumberId/phoneNumber/wabaId desde
+    // externalAccountId + metadata).
+    const rows = await db.channelConnection.findMany({
+      where: { organizationId: auth.orgId, channel: 'whatsapp', provider: 'meta_cloud' },
       orderBy: { createdAt: 'desc' },
       select: {
-        id: true, wabaId: true, phoneNumberId: true, phoneNumber: true, displayName: true,
-        status: true, statusDetail: true, source: true, tokenExpiresAt: true,
+        id: true, externalAccountId: true, displayName: true,
+        status: true, tokenExpiresAt: true,
         lastVerifiedAt: true, lastErrorAt: true, createdAt: true, updatedAt: true,
+        metadata: true,
       },
+    })
+    const connections = rows.map((c) => {
+      let meta: Record<string, unknown> = {}
+      try { meta = c.metadata ? JSON.parse(c.metadata) as Record<string, unknown> : {} } catch {}
+      return {
+        id: c.id,
+        wabaId: typeof meta.wabaId === 'string' ? meta.wabaId : null,
+        phoneNumberId: c.externalAccountId,
+        phoneNumber: typeof meta.phoneNumber === 'string' ? meta.phoneNumber : c.externalAccountId,
+        displayName: c.displayName,
+        status: c.status,
+        statusDetail: typeof meta.statusDetail === 'string' ? meta.statusDetail : null,
+        source: typeof meta.source === 'string' ? meta.source : 'embedded_signup',
+        tokenExpiresAt: c.tokenExpiresAt,
+        lastVerifiedAt: c.lastVerifiedAt,
+        lastErrorAt: c.lastErrorAt,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+      }
     })
     const active = await activeConnectionCount(auth.orgId)
     const plan = await db.organization.findUnique({

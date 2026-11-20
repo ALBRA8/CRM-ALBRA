@@ -51,6 +51,11 @@ function stubGraphOk(phoneNumberId: string): ReturnType<typeof vi.fn> {
 }
 
 /** Crea una conexión sin tocar Graph API real (verifyAgainstGraph=false). */
+// (UNIFICACIÓN 2026-11-21) La única fuente es ChannelConnection (meta_cloud).
+function cloudKey(phoneNumberId: string): string {
+  return `meta:whatsapp:${phoneNumberId}`
+}
+
 async function seedConnection(orgId: string, phoneNumberId: string, opts: { status?: string } = {}) {
   const { createConnection } = await import('@/lib/wa-connections')
   const res = await createConnection({
@@ -61,17 +66,23 @@ async function seedConnection(orgId: string, phoneNumberId: string, opts: { stat
   })
   if (!res.ok) throw new Error(`seedConnection falló: ${JSON.stringify(res)}`)
   if (opts.status && opts.status !== 'connected') {
-    await db.whatsAppConnection.update({ where: { phoneNumberId }, data: { status: opts.status } })
+    await db.channelConnection.update({ where: { providerAccountKey: cloudKey(phoneNumberId) }, data: { status: opts.status } })
   }
-  return db.whatsAppConnection.findUnique({ where: { phoneNumberId } })
+  return db.channelConnection.findUnique({ where: { providerAccountKey: cloudKey(phoneNumberId) } })
+}
+
+/** Credenciales del blob cifrado de una conexión Cloud canónica. */
+async function cloudCredentials(phoneNumberId: string): Promise<{ accessToken?: string; appSecret?: string | null; webhookVerifyToken?: string | null }> {
+  const conn = await db.channelConnection.findUnique({ where: { providerAccountKey: cloudKey(phoneNumberId) } })
+  const { decryptSecret } = await import('@/lib/crypto')
+  const raw = decryptSecret(conn?.credentialsEnc)
+  return raw ? (JSON.parse(raw) as Record<string, string>) : {}
 }
 
 beforeEach(async () => {
   // Limpieza determinista del área bajo prueba (las demás tablas quedan intactas).
   await db.channelConnectionEvent.deleteMany()
   await db.channelConnection.deleteMany({ where: { provider: 'meta_cloud' } })
-  await db.whatsAppConnectionEvent.deleteMany()
-  await db.whatsAppConnection.deleteMany()
 })
 
 afterEach(async () => {
@@ -88,10 +99,10 @@ describe('OLEADA 2 — credenciales cifradas y asociadas a su organización', ()
   it('el token se guarda CIFRADO en BD y jamás aparece en las respuestas de API', async () => {
     const conn = await seedConnection('org-a', '111000111')
     expect(conn).toBeTruthy()
-    expect(conn!.accessTokenEnc).not.toContain('EAAG-token-de-prueba') // en claro NUNCA en reposo
-    expect(conn!.accessTokenEnc.startsWith('v1:')).toBe(true) // blob AES-256-GCM
-    const { decryptSecret } = await import('@/lib/crypto')
-    expect(decryptSecret(conn!.accessTokenEnc)).toBe(`EAAG-token-de-prueba-111000111-0123456789`)
+    expect(conn!.credentialsEnc).not.toContain('EAAG-token-de-prueba') // en claro NUNCA en reposo
+    expect(conn!.credentialsEnc.startsWith('v1:')).toBe(true) // blob AES-256-GCM
+    const creds = await cloudCredentials('111000111')
+    expect(creds.accessToken).toBe(`EAAG-token-de-prueba-111000111-0123456789`)
 
     const res = await connectionsGet(req('/api/whatsapp/connections', { token: tokenA() }))
     const text = JSON.stringify(await jsonBody(res))
@@ -108,7 +119,7 @@ describe('OLEADA 2 — credenciales cifradas y asociadas a su organización', ()
       body: { phoneNumberId: '222000222', accessToken: 'EAAG-token-admin-0123456789' },
     }))
     expect(res.status).toBe(201)
-    const events = await db.whatsAppConnectionEvent.findMany({ where: { type: 'connected' } })
+    const events = await db.channelConnectionEvent.findMany({ where: { type: 'connected' } })
     expect(events).toHaveLength(1)
     expect(events[0].organizationId).toBe('org-a')
 
@@ -154,7 +165,7 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
     expect(r2.status).toBe(402)
     const body = await jsonBody(r2)
     expect(body.error).toContain('plan')
-    const blocked = await db.whatsAppConnectionEvent.findFirst({ where: { type: 'plan_limit_blocked' } })
+    const blocked = await db.channelConnectionEvent.findFirst({ where: { type: 'plan_limit_blocked' } })
     expect(blocked).toBeTruthy()
   })
 
@@ -219,8 +230,8 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
     expect(successes).toHaveLength(1)
     expect(blocked).toHaveLength(1)
 
-    const count = await db.whatsAppConnection.count({
-      where: { organizationId: 'org-a', status: { in: ['connected', 'pending'] } },
+    const count = await db.channelConnection.count({
+      where: { organizationId: 'org-a', channel: 'whatsapp', provider: 'meta_cloud', status: { in: ['connected', 'pending'] } },
     })
     expect(count).toBe(1)
   })
@@ -248,8 +259,8 @@ describe('OLEADA 2 — límite de números por plan (punto 1)', () => {
     expect(successes).toHaveLength(1)
     expect(duplicates).toHaveLength(1)
 
-    const allWithPhone = await db.whatsAppConnection.findMany({
-      where: { phoneNumberId: '777000777' },
+    const allWithPhone = await db.channelConnection.findMany({
+      where: { providerAccountKey: 'meta:whatsapp:777000777' },
     })
     expect(allWithPhone).toHaveLength(1)
   })
@@ -272,9 +283,10 @@ describe('OLEADA 2 — aislamiento multi-organización (punto 8)', () => {
       routeParams(conn!.id),
     )
     expect(res.status).toBe(404)
-    const still = await db.whatsAppConnection.findUnique({ where: { phoneNumberId: '888000889' } })
+    const still = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:888000889' } })
     expect(still!.status).toBe('connected')
-    expect(still!.accessTokenEnc).not.toBe('') // token no destruido
+    const stillCreds = await cloudCredentials('888000889')
+    expect(stillCreds.accessToken).toBeTruthy() // token no destruido
   })
 
   it('el listado de org-b nunca incluye conexiones de org-a', async () => {
@@ -388,12 +400,14 @@ describe('OLEADA 2 — desconexión/revocación aislada (punto 9)', () => {
       routeParams(connA!.id),
     )
     expect(res.status).toBe(200)
-    const afterA = await db.whatsAppConnection.findUnique({ where: { id: connA!.id } })
-    const afterB = await db.whatsAppConnection.findUnique({ where: { id: connB!.id } })
+    const afterA = await db.channelConnection.findUnique({ where: { id: connA!.id } })
+    const afterB = await db.channelConnection.findUnique({ where: { id: connB!.id } })
     expect(afterA!.status).toBe('revoked')
-    expect(afterA!.accessTokenEnc).toBe('') // material destruido
+    const afterACreds = await cloudCredentials('101000101')
+    expect(afterACreds.accessToken).toBeUndefined() // material destruido (credentialsEnc = '{}')
     expect(afterB!.status).toBe('connected') // la otra org intacta
-    expect(afterB!.accessTokenEnc).not.toBe('')
+    const afterBCreds = await cloudCredentials('101000102')
+    expect(afterBCreds.accessToken).toBeTruthy()
   })
 })
 
@@ -502,14 +516,15 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
   it('procesa mensajes entrantes batch por conexión y tenant sin mezclar conversaciones', async () => {
     await seedConnection('org-a', '121000301')
     await seedConnection('org-b', '121000302')
-    await db.whatsAppConnection.create({
+    await db.channelConnection.create({
       data: {
         organizationId: 'org-a',
-        phoneNumberId: '121000303',
-        phoneNumber: '+15550303',
+        channel: 'whatsapp',
+        provider: 'meta_cloud',
+        providerAccountKey: 'meta:whatsapp:121000303',
+        externalAccountId: '121000303',
         displayName: 'Cuenta desconectada batch',
-        accessTokenEnc: 'not-a-real-ciphertext',
-        webhookVerifyToken: 'fixture-disconnected-batch-token',
+        credentialsEnc: 'fixture-disconnected-ciphertext',
         status: 'disconnected',
       },
     })
@@ -580,14 +595,15 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
   it('procesa status callbacks batch de dos números/tenants y los reconcilia por opaque callback data', async () => {
     await seedConnection('org-a', '121000201')
     await seedConnection('org-b', '121000202')
-    await db.whatsAppConnection.create({
+    await db.channelConnection.create({
       data: {
         organizationId: 'org-a',
-        phoneNumberId: '121000203',
-        phoneNumber: '+15550203',
+        channel: 'whatsapp',
+        provider: 'meta_cloud',
+        providerAccountKey: 'meta:whatsapp:121000203',
+        externalAccountId: '121000203',
         displayName: 'Cuenta desconectada de prueba',
-        accessTokenEnc: 'not-a-real-ciphertext',
-        webhookVerifyToken: 'fixture-disconnected-verify-token',
+        credentialsEnc: 'fixture-disconnected-ciphertext',
         status: 'disconnected',
       },
     })
@@ -771,8 +787,9 @@ describe('OLEADA 2 — webhook Meta: atribución automática por número (punto 
   })
 
   it('la verificación GET del webhook responde con el challenge del verify_token POR conexión', async () => {
-    const conn = await seedConnection('org-a', '121000124')
-    const res = await webhookGet(req(`/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(conn!.webhookVerifyToken)}&hub.challenge=CHALLENGE-42`))
+    await seedConnection('org-a', '121000124')
+    const verifyCreds = await cloudCredentials('121000124')
+    const res = await webhookGet(req(`/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(verifyCreds.webhookVerifyToken!)}&hub.challenge=CHALLENGE-42`))
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('CHALLENGE-42')
   })
@@ -827,12 +844,15 @@ describe('OLEADA 2 — Embedded Signup oficial (punto 10, sin contraseñas)', ()
     const body = await jsonBody(res)
     expect(body.ok).toBe(true)
 
-    const conn = await db.whatsAppConnection.findUnique({ where: { phoneNumberId: '131000131' } })
+    const conn = await db.channelConnection.findUnique({ where: { providerAccountKey: 'meta:whatsapp:131000131' } })
     expect(conn!.status).toBe('connected')
-    expect(conn!.source).toBe('embedded_signup')
-    expect(conn!.wabaId).toBe('waba-alfa')
     expect(conn!.displayName).toBe('Alfa Demo')
-    expect(conn!.accessTokenEnc).not.toContain('EAAG-token-embedded') // cifrado
+    expect(conn!.credentialsEnc).not.toContain('EAAG-token-embedded') // cifrado
+    const signupMeta = JSON.parse(conn!.metadata || '{}') as Record<string, unknown>
+    expect(signupMeta.source).toBe('embedded_signup')
+    expect(signupMeta.wabaId).toBe('waba-alfa')
+    const signupCreds = await cloudCredentials('131000131')
+    expect(signupCreds.accessToken).toBe('EAAG-token-embedded-0123456789')
     // El canje se hizo contra el endpoint de OAuth con client_id + client_secret:
     const oauthUrl = String(fetchMock.mock.calls[0][0])
     expect(oauthUrl).toContain('client_id=app-id-test')

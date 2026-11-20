@@ -9,8 +9,7 @@ import { FIX, req, tokenA } from '../helpers'
 const accountId = '17840000000999123'
 const providerAccountKey = `meta:instagram:${accountId}`
 let createdConnectionId: string | null = null
-let originalIntegration: { instagramTokenEnc: string | null; metaAppSecretEnc: string | null } | null = null
-let createdIntegration = false
+let seededInstagramConnectionId: string | null = null
 
 afterEach(async () => {
   if (createdConnectionId) {
@@ -18,40 +17,32 @@ afterEach(async () => {
     await db.channelConnection.deleteMany({ where: { id: createdConnectionId } })
     createdConnectionId = null
   }
-  if (createdIntegration) {
-    await db.integration.deleteMany({ where: { organizationId: FIX.orgA.id } })
-    createdIntegration = false
-  } else if (originalIntegration) {
-    await db.integration.update({
-      where: { organizationId: FIX.orgA.id },
-      data: originalIntegration,
-    })
+  if (seededInstagramConnectionId) {
+    await db.channelConnectionEvent.deleteMany({ where: { connectionId: seededInstagramConnectionId } })
+    await db.channelConnection.deleteMany({ where: { id: seededInstagramConnectionId } })
+    seededInstagramConnectionId = null
   }
-  originalIntegration = null
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
 describe('Instagram OAuth callback tenant ownership', () => {
   it('refuses an Instagram account already owned by another organization', async () => {
-    const existingIntegration = await db.integration.findUnique({ where: { organizationId: FIX.orgA.id } })
-    if (existingIntegration) {
-      originalIntegration = {
-        instagramTokenEnc: existingIntegration.instagramTokenEnc,
-        metaAppSecretEnc: existingIntegration.metaAppSecretEnc,
-      }
-    } else {
-      await db.integration.create({ data: { organizationId: FIX.orgA.id } })
-      createdIntegration = true
-    }
+    // (UNIFICACIÓN 2026-11-21) La configuración de Instagram de org-a vive en
+    // su ChannelConnection (credentialsEnc: metaAppId + webhookSecret).
     const appSecret = ['instagram', 'oauth', 'isolation', 'secret', 'fixture'].join('-')
-    await db.integration.update({
-      where: { organizationId: FIX.orgA.id },
+    const orgSeed = await db.channelConnection.create({
       data: {
-        instagramTokenEnc: encodeInstagramState({ metaAppId: 'fixture-app-id', webhookSecret: appSecret }),
-        metaAppSecretEnc: null,
+        organizationId: FIX.orgA.id,
+        channel: 'instagram',
+        provider: 'meta_graph',
+        providerAccountKey: `instagram:org:${FIX.orgA.id}:oauth-isolation`,
+        externalAccountId: `instagram-org-${FIX.orgA.id}`,
+        credentialsEnc: encodeInstagramState({ metaAppId: 'fixture-app-id', webhookSecret: appSecret })!,
+        status: 'disconnected',
       },
     })
+    seededInstagramConnectionId = orgSeed.id
 
     const foreignCredentials = encryptSecret(JSON.stringify({
       accessToken: ['foreign', 'tenant', 'token', 'must', 'remain', 'unchanged'].join('-'),

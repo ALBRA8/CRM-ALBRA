@@ -1,9 +1,8 @@
 import type { NextRequest } from 'next/server'
 import { requireAdmin, HttpError } from '@/lib/auth'
 import { handle, json } from '@/lib/api-helpers'
-import { db } from '@/lib/db'
-import { decryptSecret, encryptSecret, maskSecret, sha256Hex } from '@/lib/crypto'
-import { getIntegration, parseTelegramState, encodeTelegramState, generateWebhookSecret } from '@/lib/integrations'
+import { decryptSecret, encryptSecret, maskSecret } from '@/lib/crypto'
+import { getIntegration, parseTelegramState, encodeTelegramState, generateWebhookSecret, saveTelegramConnection } from '@/lib/integrations'
 import { auditAndTimeline } from '@/lib/api-helpers'
 
 /**
@@ -53,7 +52,7 @@ export async function PUT(req: NextRequest) {
 
     // Secret para validar el webhook (X-Telegram-Bot-Api-Secret-Token) — se genera una vez.
     // (A2-23) Se LEE descifrado (decryptSecret devuelve el plano legacy tal cual)
-    // y se PERSISTE cifrado + hash de lookup.
+    // y se PERSISTE cifrado dentro del blob + hash de lookup en la conexión canónica.
     const telegramSecret = decryptSecret(integration.telegramSecret) || generateWebhookSecret()
 
     // (reauditoría ciclo 2) Falla EXPLÍCITA si no hay clave de cifrado: persistir
@@ -62,15 +61,9 @@ export async function PUT(req: NextRequest) {
     if (!encSecret) {
       throw new HttpError(500, 'Cifrado no disponible: configura APP_ENCRYPTION_KEY o APP_SECRET')
     }
-    const updated = await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: {
-        telegramBotTokenEnc: encodeTelegramState(next),
-        telegramSecret: encSecret,
-        telegramSecretHash: sha256Hex(telegramSecret),
-        enableTelegram: !!next.token,
-      },
-    })
+    // Conexión canónica: blob = estado Telegram (token + autoReply + webhookSecret);
+    // el hash del secret vive indexado en ChannelConnection.webhookSecretHash.
+    await saveTelegramConnection(auth.orgId, { ...next, webhookSecret: telegramSecret })
 
     await auditAndTimeline({
       orgId: auth.orgId,
@@ -84,7 +77,7 @@ export async function PUT(req: NextRequest) {
       success: true,
       configured: !!next.token,
       config: {
-        isActive: updated.enableTelegram,
+        isActive: !!next.token,
         autoReply: next.autoReply !== false,
         botUsername: next.botUsername || null,
         hasBotToken: !!next.token,
@@ -96,10 +89,9 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: { telegramBotTokenEnc: null, enableTelegram: false },
-    })
+    // Desconexión canónica: el blob se vacía y la conexión queda disconnected
+    // (la fila y su historial de eventos se conservan como audit trail).
+    await saveTelegramConnection(auth.orgId, {}, { status: 'disconnected' })
     await auditAndTimeline({
       orgId: auth.orgId,
       userId: auth.userId,

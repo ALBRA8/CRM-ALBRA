@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/auth'
 import { handle, json, auditAndTimeline } from '@/lib/api-helpers'
 import { db } from '@/lib/db'
 import { APP_VERSION } from '@/lib/version'
+import { getIntegration } from '@/lib/integrations'
 
 /**
  * GET /api/doctor — AUDIT → DIAGNOSE → VERIFY → REPORT del sistema (owner/admin).
@@ -172,8 +173,10 @@ export async function GET(req: NextRequest) {
     }
 
     // ---------- 9) Integraciones (solo booleans, jamás secretos) ----------
-    const integ = (await db.integration.findUnique({ where: { organizationId: auth.orgId } })) as
-      | { telegramBotTokenEnc?: string | null; instagramTokenEnc?: string | null; enableGoogle?: boolean } | null
+    // (UNIFICACIÓN 2026-11-21) La vista ensamblada canónica reemplaza la fila
+    // Integration: Telegram/Instagram viven en ChannelConnection, Google en
+    // GoogleIntegration (enableGoogle = calendarSyncEnabled).
+    const integ = await getIntegration(auth.orgId)
     checks.push({
       id: 'integrations',
       label: 'Integraciones de canal',

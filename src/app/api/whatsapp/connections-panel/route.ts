@@ -95,19 +95,37 @@ export async function GET(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAuth(req)
 
-    const [connections, active, org] = await Promise.all([
-      db.whatsAppConnection.findMany({
-        where: { organizationId: auth.orgId },
+    // (UNIFICACIÓN 2026-11-21) Fuente canónica ChannelConnection (meta_cloud):
+    // phoneNumberId/phoneNumber/statusDetail/source se resuelven de metadata.
+    const [rows, active, org] = await Promise.all([
+      db.channelConnection.findMany({
+        where: { organizationId: auth.orgId, channel: 'whatsapp', provider: 'meta_cloud' },
         orderBy: { createdAt: 'desc' },
         select: {
-          id: true, phoneNumberId: true, phoneNumber: true, displayName: true,
-          status: true, statusDetail: true, source: true,
-          lastVerifiedAt: true, lastErrorAt: true, createdAt: true,
+          id: true, externalAccountId: true, displayName: true,
+          status: true, lastVerifiedAt: true, lastErrorAt: true, createdAt: true,
+          metadata: true,
         },
       }),
       activeConnectionCount(auth.orgId),
       db.organization.findUnique({ where: { id: auth.orgId }, select: { plan: true } }),
     ])
+    const connections = rows.map((c) => {
+      let meta: Record<string, unknown> = {}
+      try { meta = c.metadata ? JSON.parse(c.metadata) as Record<string, unknown> : {} } catch {}
+      return {
+        id: c.id,
+        phoneNumberId: c.externalAccountId,
+        phoneNumber: typeof meta.phoneNumber === 'string' ? meta.phoneNumber : c.externalAccountId,
+        displayName: c.displayName,
+        status: c.status,
+        statusDetail: typeof meta.statusDetail === 'string' ? meta.statusDetail : null,
+        source: typeof meta.source === 'string' ? meta.source : 'embedded_signup',
+        lastVerifiedAt: c.lastVerifiedAt,
+        lastErrorAt: c.lastErrorAt,
+        createdAt: c.createdAt,
+      }
+    })
 
     const limit = planLimitFor(org?.plan)
     const { verdict, session } = await resolveBaileysStatus(auth.orgId)

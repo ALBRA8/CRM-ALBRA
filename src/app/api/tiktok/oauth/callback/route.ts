@@ -144,10 +144,8 @@ export async function GET(req: NextRequest) {
         throw new Error('TIKTOK_ACCOUNT_OWNERSHIP_CONFLICT')
       }
 
-      await tx.integration.update({
-        where: { organizationId: auth.orgId },
-        data: { tiktokTokenEnc: next, enableTikTok: true },
-      })
+      // (UNIFICACIÓN 2026-11-21) Ya no existe Integration: el blob cifrado vive
+      // en credentialsEnc de la ChannelConnection canónica (abajo).
 
       if (existing) {
         await tx.channelConnection.update({

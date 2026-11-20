@@ -388,3 +388,15 @@ Re-emparejamiento con el remoto (PAT nuevo verificado en git y REST), línea bas
   - El árbol queda completamente limpio de secretos y de violaciones de PII.
 
 
+
+## Unificación de modelos de canales — 2026-11-21 (FASE 1–4 ejecutada)
+
+**Estado: implementado y probado en `repair/produccion-real`. Las 3 generaciones de canales convergieron en la arquitectura 100% canónica.**
+
+- Fuente única de conexiones: `ChannelConnection` (credentialsEnc AES-256-GCM + `webhookSecretHash` para atribución de webhooks). Providers activos: `whatsapp_baileys` (QR, 1 conexión por organización), `meta_cloud` (WhatsApp Cloud multi-número), `telegram_bot`, `meta_graph` (Instagram y Messenger), `tiktok_business`.
+- Fuente única de conversaciones/mensajes: `ChannelConversation`/`ChannelMessage` (aisladas por connectionId + contacto externo; dedup durable por `(conversationId, externalMessageId)`).
+- Google (no es canal de chat): tabla dedicada `GoogleIntegration` 1:1 por organización.
+- AGENTE-LEADS: secret HMAC en `Settings.agentLeadsSecretEnc`.
+- Las tablas legacy (`Integration`, `WhatsAppConnection(±Event)`, `WhatsAppConversation`, `WhatsAppMessage`) fueron DROPEADAS por migración formal con backfill previo (cero pérdida verificada sobre datos sintéticos con paridad exacta).
+- El daemon Baileys escribe directamente en el modelo canónico vía better-sqlite3 (sin Prisma) y registra su conexión con la misma clave `whatsapp_baileys:<orgId>` que el backfill y la migración.
+- La bandeja (`listInbox`) lee WhatsApp exclusivamente del modelo canónico; Telegram/Instagram/Facebook siguen derivando de Timeline hasta que sus conversaciones canónicas acumulen historial (comportamiento documentado en el plan de unificación).

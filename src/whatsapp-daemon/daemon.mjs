@@ -30,6 +30,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs'
 import { authDirFor, planBootRestore, decideUnscopedSend, validateOrgId } from './session-registry.mjs'
+import { createCipheriv, createHash, randomBytes } from 'crypto'
 import { ensureIdempotencyTable, reserveDaemonSend, markDaemonSendDone, markDaemonSendFailed } from './idempotency.mjs'
 import { safeSecretEqual, normalizeOrigin, isOriginAllowed } from './security-helpers.mjs'
 import { MAX_AUDIO_BYTES, MAX_IMAGE_BYTES, assertStreamLimit, isAllowedImageMime, normalizeMime, audioMediaKind } from './media-guard.mjs'
@@ -174,13 +175,109 @@ function orgExists(orgId) {
   return !!db.prepare('SELECT id FROM Organization WHERE id = ?').get(orgId)
 }
 
+function generateId() {
+  return 'c' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8)
+}
+
+// ============ Modelo canónico (unificación de las 3 generaciones) ============
+// El daemon YA NO escribe en WhatsAppConversation/WhatsAppMessage: escribe en
+// ChannelConversation/ChannelMessage bajo una ChannelConnection canónica
+// provider='whatsapp_baileys' por organización (una por org, una sola).
+
+const BAILEYS_PROVIDER = 'whatsapp_baileys'
+
+/** Cifrado AES-256-GCM formato v1 (mismo contrato que src/lib/crypto.ts). */
+function encryptSecretV1(plain) {
+  const raw = process.env.APP_ENCRYPTION_KEY || process.env.APP_SECRET
+  if (!raw) return null
+  try {
+    const key = createHash('sha256').update(raw).digest()
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', key, iv)
+    const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()])
+    const tag = cipher.getAuthTag()
+    return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
+function safeParseMetadata(raw) {
+  try { return raw ? JSON.parse(raw) : {} } catch { return {} }
+}
+
+function metadataClientId(conv) {
+  const meta = safeParseMetadata(conv?.metadata)
+  return typeof meta.clientId === 'string' ? meta.clientId : null
+}
+
+/**
+ * Crea o verifica la ChannelConnection canónica de la sesión Baileys de la
+ * organización (channel='whatsapp', provider='whatsapp_baileys'). Idempotente:
+ * la clave de proveedor es estable por organización. Devuelve el id de la
+ * conexión o null (fail-closed sin bloquear el flujo del daemon).
+ */
+function ensureBaileysChannelConnection(orgId, phone) {
+  if (!db || !orgId || !orgExists(orgId)) return null
+  try {
+    const key = `whatsapp_baileys:${orgId}`
+    const credentialsEnc = encryptSecretV1(JSON.stringify({ provider: BAILEYS_PROVIDER, organizationId: orgId })) || 'daemon-managed'
+    const existing = db.prepare('SELECT id, organizationId, channel, status FROM ChannelConnection WHERE providerAccountKey = ?').get(key)
+    if (existing) {
+      if (existing.organizationId !== orgId || existing.channel !== 'whatsapp') return null
+      if (existing.status !== 'connected' || phone) {
+        db.prepare("UPDATE ChannelConnection SET status = 'connected', externalAccountId = COALESCE(?, externalAccountId), credentialsEnc = ?, lastVerifiedAt = datetime('now'), updatedAt = datetime('now') WHERE id = ?")
+          .run(phone || null, credentialsEnc, existing.id)
+      }
+      return existing.id
+    }
+    const id = generateId()
+    db.prepare(`
+      INSERT INTO ChannelConnection (id, organizationId, channel, provider, providerAccountKey, externalAccountId, displayName, status, credentialsEnc, metadata, createdAt, updatedAt)
+      VALUES (?, ?, 'whatsapp', ?, ?, ?, ?, 'connected', ?, ?, datetime('now'), datetime('now'))
+    `).run(id, orgId, BAILEYS_PROVIDER, key, phone || orgId, 'WhatsApp QR (Baileys)', credentialsEnc, JSON.stringify({ source: 'daemon_baileys' }))
+    db.prepare(`
+      INSERT INTO ChannelConnectionEvent (id, organizationId, connectionId, type, detail, createdAt)
+      VALUES (?, ?, ?, 'connected', 'whatsapp_baileys_session_connected', datetime('now'))
+    `).run(generateId(), orgId, id)
+    return id
+  } catch (err) {
+    console.error('[WA] No se pudo registrar la ChannelConnection canónica:', err?.message || err)
+    return null
+  }
+}
+
+/** Mapa la fila canónica al contrato que consume la página WhatsApp (daemon-proxy). */
+function mapDaemonConversation(row) {
+  const meta = safeParseMetadata(row.metadata)
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    contactPhone: row.externalContactKey,
+    contactName: row.contactName,
+    clientId: typeof meta.clientId === 'string' ? meta.clientId : null,
+    clientName: row.clientName ?? null,
+    lastMessage: row.lastMessage,
+    lastMessageAt: row.lastMessageAt,
+    lastMessageFrom: row.lastDirection === 'in' ? 'contact' : (row.lastSenderType || 'user'),
+    unreadCount: row.unreadCount,
+    isAutoReply: meta.isAutoReply !== false ? 1 : 0,
+    status: row.status,
+    transferredTo: typeof meta.transferredTo === 'string' ? meta.transferredTo : null,
+    isAutoReplyMetadataStored: true,
+  }
+}
+
 function getOrCreateConversation(orgId, contactPhone, contactName) {
   if (!db || !orgId) return null
 
-  let conv = db.prepare('SELECT * FROM WhatsAppConversation WHERE organizationId = ? AND contactPhone = ?').get(orgId, contactPhone)
+  const connectionId = ensureBaileysChannelConnection(orgId, sessionPhone(orgId))
+  if (!connectionId) return null
+
+  let conv = db.prepare('SELECT * FROM ChannelConversation WHERE connectionId = ? AND externalContactKey = ?').get(connectionId, contactPhone)
 
   if (!conv) {
-    // Busca o crea el cliente de la organización
+    // Busca o crea el cliente de la organización (mismo flujo que el legado)
     let client = db.prepare('SELECT id FROM Client WHERE organizationId = ? AND phone = ?').get(orgId, contactPhone)
 
     if (!client) {
@@ -193,20 +290,18 @@ function getOrCreateConversation(orgId, contactPhone, contactName) {
     }
 
     const convId = generateId()
+    const metadata = JSON.stringify({ clientId: client.id, isAutoReply: true, transferredTo: null })
     db.prepare(`
-      INSERT INTO WhatsAppConversation (id, organizationId, clientId, contactPhone, contactName, lastMessage, lastMessageAt, lastMessageFrom, unreadCount, isAutoReply, status, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, NULL, datetime('now'), 'contact', 1, 1, 'active', datetime('now'), datetime('now'))
-    `).run(convId, orgId, client.id, contactPhone, contactName || contactPhone)
+      INSERT INTO ChannelConversation (id, organizationId, connectionId, channel, externalContactKey, contactName, lastMessage, lastMessageAt, unreadCount, status, metadata, createdAt, updatedAt)
+      VALUES (?, ?, ?, 'whatsapp', ?, ?, NULL, datetime('now'), 0, 'active', ?, datetime('now'), datetime('now'))
+    `).run(convId, orgId, connectionId, contactPhone, contactName || contactPhone, metadata)
 
-    conv = { id: convId, clientId: client.id, organizationId: orgId, contactPhone, contactName, isAutoReply: 1, status: 'active' }
+    conv = { id: convId, organizationId: orgId, connectionId, clientId: client.id, externalContactKey: contactPhone, isAutoReply: 1, status: 'active', unreadCount: 0, metadata }
   } else {
-    db.prepare(`
-      UPDATE WhatsAppConversation
-      SET unreadCount = unreadCount + 1,
-          status = CASE WHEN status = 'closed' THEN 'active' ELSE status END,
-          updatedAt = datetime('now')
-      WHERE id = ?
-    `).run(conv.id)
+    // Reactiva conversaciones cerradas al llegar un mensaje nuevo (como el legado)
+    if (conv.status === 'closed') {
+      db.prepare("UPDATE ChannelConversation SET status = 'active', updatedAt = datetime('now') WHERE id = ?").run(conv.id)
+    }
   }
 
   return conv
@@ -219,29 +314,31 @@ function saveMessage(conversationId, orgId, direction, fromNumber, toNumber, tex
   // que nosotros mismos guardamos vuelven por messages.upsert). Sin este
   // guard habría mensajes duplicados en el hilo y doble respuesta IA.
   if (waMessageId) {
-    const dup = db.prepare('SELECT 1 FROM WhatsAppMessage WHERE conversationId = ? AND waMessageId = ? LIMIT 1').get(conversationId, waMessageId)
+    const dup = db.prepare('SELECT 1 FROM ChannelMessage WHERE conversationId = ? AND externalMessageId = ? LIMIT 1').get(conversationId, waMessageId)
     if (dup) return null
   }
 
   const msgId = generateId()
+  const dir = direction === 'outbound' ? 'out' : 'in'
   db.prepare(`
-    INSERT INTO WhatsAppMessage (id, organizationId, conversationId, waMessageId, direction, fromNumber, toNumber, text, messageType, senderType, isRead, createdAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `).run(msgId, orgId, conversationId, waMessageId, direction, fromNumber, toNumber, text, messageType, senderType, direction === 'outbound' ? 1 : 0)
+    INSERT INTO ChannelMessage (id, conversationId, externalMessageId, direction, senderType, body, messageType, metadata, createdAt)
+    VALUES (?, ?, ?, ?, ?, COALESCE(?, ''), ?, ?, datetime('now'))
+  `).run(
+    msgId, conversationId, waMessageId, dir, senderType, text, messageType,
+    JSON.stringify({ from: fromNumber, to: toNumber, ...(direction === 'outbound' ? { deliveryStatus: 'sent' } : {}) })
+  )
 
-  // Actualiza el último mensaje de la conversación
-  const lastFrom = direction === 'inbound' ? 'contact' : senderType
+  // Actualiza el último mensaje de la conversación (+no leído SOLO en entrantes)
   db.prepare(`
-    UPDATE WhatsAppConversation
-    SET lastMessage = ?, lastMessageAt = datetime('now'), lastMessageFrom = ?, updatedAt = datetime('now')
+    UPDATE ChannelConversation
+    SET lastMessage = substr(COALESCE(?, ''), 1, 100),
+        lastMessageAt = datetime('now'),
+        unreadCount = unreadCount + ?,
+        updatedAt = datetime('now')
     WHERE id = ?
-  `).run(text?.substring(0, 100), lastFrom, conversationId)
+  `).run(text, dir === 'in' ? 1 : 0, conversationId)
 
   return msgId
-}
-
-function generateId() {
-  return 'c' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8)
 }
 
 // ============ Media (ASR y visión vía endpoints internos del CRM) ============
@@ -528,6 +625,8 @@ async function connectToWhatsApp(orgId) {
           console.log(`[WA:${orgId.slice(-6)}] Phone: ${s.phone}`)
         }
       } catch {}
+      // Registro en el inventario canónico (ChannelConnection provider='whatsapp_baileys')
+      ensureBaileysChannelConnection(orgId, s.phone || null)
     }
   })
 
@@ -656,8 +755,9 @@ async function connectToWhatsApp(orgId) {
         )
 
         // Actualiza último contacto del cliente (solo con mensajes del cliente)
-        if (!isOwner && conv.clientId && db) {
-          db.prepare("UPDATE Client SET lastContactAt = datetime('now'), updatedAt = datetime('now') WHERE id = ?").run(conv.clientId)
+        const convClientId = metadataClientId(conv)
+        if (!isOwner && convClientId && db) {
+          db.prepare("UPDATE Client SET lastContactAt = datetime('now'), updatedAt = datetime('now') WHERE id = ?").run(convClientId)
         }
 
         // Auto-respuesta con IA si está habilitada (voz: solo si se transcribió;
@@ -696,13 +796,13 @@ async function connectToWhatsApp(orgId) {
 async function triggerAgentReply(orgId, conv, messageText, replyJid) {
   try {
     const recentMsgs = db.prepare(`
-      SELECT direction, text, senderType FROM WhatsAppMessage
+      SELECT direction, body AS text, senderType FROM ChannelMessage
       WHERE conversationId = ?
       ORDER BY createdAt DESC LIMIT 20
     `).all(conv.id).reverse()
 
     const history = recentMsgs.map(m => ({
-      role: m.direction === 'inbound' ? 'user' : 'assistant',
+      role: m.direction === 'in' ? 'user' : 'assistant',
       content: m.text || ''
     }))
 
@@ -717,7 +817,7 @@ async function triggerAgentReply(orgId, conv, messageText, replyJid) {
       },
       body: JSON.stringify({
         message: messageText,
-        clientId: conv.clientId,
+        clientId: metadataClientId(conv),
         conversationHistory: history,
         source: 'whatsapp',
       }),
@@ -995,9 +1095,14 @@ const server = createServer(async (req, res) => {
       if (db) {
         try {
           const digits = String(to).replace(/\D+/g, '')
-          let conv = db.prepare('SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND contactPhone = ?').get(orgId, to)
-          if (!conv && digits) {
-            conv = db.prepare("SELECT id FROM WhatsAppConversation WHERE organizationId = ? AND REPLACE(REPLACE(REPLACE(REPLACE(contactPhone, ' ', ''), '-', ''), '(', ''), ')', '') = ?").get(orgId, digits)
+          const connectionId = ensureBaileysChannelConnection(orgId, s.phone)
+          let conv = null
+          if (connectionId) {
+            conv = db.prepare('SELECT id FROM ChannelConversation WHERE connectionId = ? AND externalContactKey = ?').get(connectionId, to)
+            if (!conv && digits) {
+              const candidates = db.prepare('SELECT id, externalContactKey FROM ChannelConversation WHERE connectionId = ?').all(connectionId)
+              conv = candidates.find((c) => String(c.externalContactKey || '').replace(/\D+/g, '') === digits) || null
+            }
           }
           if (!conv) {
             // Conversación/cliente nuevos: misma vía que los entrantes (round-robin NO aplica aquí; queda prospect)
@@ -1029,13 +1134,18 @@ const server = createServer(async (req, res) => {
         return
       }
       const conversations = db.prepare(`
-        SELECT c.*, cl.name as clientName
-        FROM WhatsAppConversation c
-        LEFT JOIN Client cl ON c.clientId = cl.id
+        SELECT c.id, c.organizationId, c.externalContactKey AS contactPhone, c.contactName,
+               c.lastMessage, c.lastMessageAt, c.unreadCount, c.status, c.metadata,
+               (SELECT m.direction FROM ChannelMessage m WHERE m.conversationId = c.id ORDER BY m.createdAt DESC LIMIT 1) AS lastDirection,
+               (SELECT m.senderType FROM ChannelMessage m WHERE m.conversationId = c.id ORDER BY m.createdAt DESC LIMIT 1) AS lastSenderType,
+               cl.name as clientName
+        FROM ChannelConversation c
+        LEFT JOIN Client cl ON json_extract(c.metadata, '$.clientId') = cl.id
         WHERE c.organizationId = ?
+          AND c.connectionId IN (SELECT id FROM ChannelConnection WHERE organizationId = ? AND provider = 'whatsapp_baileys')
         ORDER BY c.lastMessageAt DESC
-      `).all(orgId)
-      jsonResponse(res, { conversations, orgId })
+      `).all(orgId, orgId)
+      jsonResponse(res, { conversations: conversations.map(mapDaemonConversation), orgId })
       return
     }
 
@@ -1054,27 +1164,47 @@ const server = createServer(async (req, res) => {
       }
 
       const conv = db.prepare(`
-        SELECT c.*, cl.name as clientName
-        FROM WhatsAppConversation c
-        LEFT JOIN Client cl ON c.clientId = cl.id
+        SELECT c.id, c.organizationId, c.externalContactKey AS contactPhone, c.contactName,
+               c.lastMessage, c.lastMessageAt, c.unreadCount, c.status, c.metadata,
+               (SELECT m.direction FROM ChannelMessage m WHERE m.conversationId = c.id ORDER BY m.createdAt DESC LIMIT 1) AS lastDirection,
+               (SELECT m.senderType FROM ChannelMessage m WHERE m.conversationId = c.id ORDER BY m.createdAt DESC LIMIT 1) AS lastSenderType,
+               cl.name as clientName
+        FROM ChannelConversation c
+        LEFT JOIN Client cl ON json_extract(c.metadata, '$.clientId') = cl.id
         WHERE c.id = ? AND c.organizationId = ?
-      `).get(convId, orgId)
+          AND c.connectionId IN (SELECT id FROM ChannelConnection WHERE organizationId = ? AND provider = 'whatsapp_baileys')
+      `).get(convId, orgId, orgId)
 
       if (!conv) {
         jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
         return
       }
 
-      const messages = db.prepare(`
-        SELECT * FROM WhatsAppMessage
+      const messageRows = db.prepare(`
+        SELECT * FROM ChannelMessage
         WHERE conversationId = ?
         ORDER BY createdAt ASC
       `).all(convId)
+      const messages = messageRows.map((m) => {
+        const meta = safeParseMetadata(m.metadata)
+        return {
+          id: m.id,
+          conversationId: m.conversationId,
+          waMessageId: m.externalMessageId,
+          direction: m.direction === 'out' ? 'outbound' : 'inbound',
+          fromNumber: typeof meta.from === 'string' ? meta.from : '',
+          toNumber: typeof meta.to === 'string' ? meta.to : '',
+          text: m.body,
+          messageType: m.messageType,
+          senderType: m.senderType,
+          isRead: m.direction === 'out' ? 1 : 0,
+          createdAt: m.createdAt,
+        }
+      })
 
-      db.prepare('UPDATE WhatsAppMessage SET isRead = 1 WHERE conversationId = ? AND isRead = 0').run(convId)
-      db.prepare('UPDATE WhatsAppConversation SET unreadCount = 0 WHERE id = ?').run(convId)
+      db.prepare("UPDATE ChannelConversation SET unreadCount = 0, updatedAt = datetime('now') WHERE id = ?").run(convId)
 
-      jsonResponse(res, { conversation: { ...conv, messages } })
+      jsonResponse(res, { conversation: { ...mapDaemonConversation(conv), messages } })
       return
     }
 
@@ -1088,19 +1218,9 @@ const server = createServer(async (req, res) => {
       }
 
       const updates = []
-      const values = []
-      if (body.isAutoReply !== undefined) {
-        updates.push('isAutoReply = ?')
-        values.push(body.isAutoReply ? 1 : 0)
-      }
-      if (body.status !== undefined) {
-        updates.push('status = ?')
-        values.push(body.status)
-      }
-      if (body.transferredTo !== undefined) {
-        updates.push('transferredTo = ?')
-        values.push(body.transferredTo)
-      }
+      if (body.isAutoReply !== undefined) updates.push('isAutoReply')
+      if (body.status !== undefined) updates.push('status')
+      if (body.transferredTo !== undefined) updates.push('transferredTo')
       if (updates.length > 0) {
         // Aislamiento multi-tenant (P0): el proxy envía orgId del JWT; el UPDATE
         // solo toca conversaciones de ESA organización. Sin esto, un usuario de
@@ -1109,10 +1229,22 @@ const server = createServer(async (req, res) => {
           jsonResponse(res, { error: 'orgId requerido (aislamiento multi-tenant)' }, 400)
           return
         }
-        updates.push("updatedAt = datetime('now')")
-        values.push(body.orgId)
-        values.push(convId)
-        const out = db.prepare(`UPDATE WhatsAppConversation SET ${updates.join(', ')} WHERE id = ? AND organizationId = ?`).run(...values)
+        const conv = db.prepare('SELECT id, metadata, status FROM ChannelConversation WHERE id = ? AND organizationId = ?').get(convId, body.orgId)
+        if (!conv) {
+          jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
+          return
+        }
+        const meta = safeParseMetadata(conv.metadata)
+        if (body.isAutoReply !== undefined) meta.isAutoReply = !!body.isAutoReply
+        if (body.transferredTo !== undefined) meta.transferredTo = body.transferredTo
+        const setClauses = ['metadata = ?', "updatedAt = datetime('now')"]
+        const setValues = [JSON.stringify(meta)]
+        if (body.status !== undefined) {
+          setClauses.push('status = ?')
+          setValues.push(body.status)
+        }
+        setValues.push(convId)
+        const out = db.prepare(`UPDATE ChannelConversation SET ${setClauses.join(', ')} WHERE id = ? AND organizationId = ?`).run(...setValues, body.orgId)
         if (!out || out.changes === 0) {
           jsonResponse(res, { error: 'Conversación no encontrada' }, 404)
           return

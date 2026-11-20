@@ -6,7 +6,6 @@ import { getOrCreateChannelConversation } from '@/lib/channel-conversations'
 import { claimChannelWebhookEvent, completeChannelWebhookEvent, failChannelWebhookEvent, getChannelWebhookEventStatus } from '@/lib/channel-webhook-events'
 import { createChannelOutboundIntent, markChannelOutboundSent, updateChannelMessageDeliveryStatus } from '@/lib/channel-outbox'
 import { json } from '@/lib/api-helpers'
-import { decryptSecret } from '@/lib/crypto'
 import { safeEqual } from '@/lib/internal-org-auth'
 import {
   verifyMetaSignature,
@@ -15,6 +14,7 @@ import {
   buildNichoContext,
   getHandoffKeywords,
   safeEquals,
+  parseWhatsAppCloudCredentials,
 } from '@/lib/integrations'
 import { llmReplyOrNotification } from '@/lib/channel-autoresponder'
 import { forwardInboundToWhatspower } from '@/lib/whatspower-bridge'
@@ -75,28 +75,21 @@ export async function GET(req: NextRequest) {
     return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
   }
 
-  // FASE 1 (OLEADA 2): verify_token POR CONEXIÓN — cada número conectado
-  // (WhatsAppConnection) recibe su propio webhookVerifyToken al crearse. La
-  // suscripción de un número en Meta se valida SOLO con su token (comparación
-  // en tiempo constante; el token NUNCA se devuelve en la respuesta).
-  const connections = await db.whatsAppConnection.findMany({
-    where: { status: { in: ['connected', 'pending'] } },
-    select: { webhookVerifyToken: true },
+  // FASE 1 (OLEADA 2) → UNIFICACIÓN (2026-11-21): verify_token POR CONEXIÓN
+  // canónica. Cada número conectado (ChannelConnection provider='meta_cloud')
+  // guarda su webhookVerifyToken y appSecret en credentialsEnc. La suscripción
+  // de un número en Meta se valida SOLO con su token (comparación en tiempo
+  // constante; el token NUNCA se devuelve en la respuesta).
+  const cloudConnections = await db.channelConnection.findMany({
+    where: { channel: 'whatsapp', provider: 'meta_cloud', status: { in: ['connected', 'pending'] } },
+    select: { credentialsEnc: true },
   })
-  for (const connection of connections) {
-    if (safeEqual(token, connection.webhookVerifyToken)) {
+  for (const connection of cloudConnections) {
+    const creds = parseWhatsAppCloudCredentials(connection.credentialsEnc)
+    if (creds.webhookVerifyToken && safeEqual(token, creds.webhookVerifyToken)) {
       return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
     }
-  }
-
-  // verify_token por organización = App Secret configurado en Integration
-  const integrations = await db.integration.findMany({
-    where: { metaAppSecretEnc: { not: null } },
-    select: { metaAppSecretEnc: true },
-  })
-  for (const integration of integrations) {
-    const secret = decryptSecret(integration.metaAppSecretEnc)
-    if (secret && safeEquals(token, secret)) {
+    if (creds.appSecret && safeEquals(token, creds.appSecret)) {
       return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
     }
   }
@@ -125,50 +118,31 @@ export async function POST(req: NextRequest) {
       .map((change) => change.value)
       .filter((value): value is WaValue => !!value)
     const phoneNumberIds = [...new Set(allValues.map((value) => value.metadata?.phone_number_id).filter((id): id is string => !!id))]
-    const matchedTargets: Array<{ orgId: string; phoneId: string; cloudToken: string | null; fallbackValue: WaValue }> = []
+    const matchedTargets: Array<{ orgId: string; phoneId: string; cloudToken: string | null; connectionId: string; fallbackValue: WaValue }> = []
 
     for (const phoneId of phoneNumberIds) {
-      const connection = await db.whatsAppConnection.findUnique({
-        where: { phoneNumberId: phoneId },
-        select: { organizationId: true, status: true, accessTokenEnc: true, metaAppSecretEnc: true },
+      // UNIFICACIÓN (2026-11-21): la atribución es 100% canónica por
+      // providerAccountKey 'meta:whatsapp:<phoneNumberId>'. La firma se valida
+      // con el appSecret de la conexión (o el global META_APP_SECRET).
+      const canonical = await db.channelConnection.findUnique({
+        where: { providerAccountKey: `meta:whatsapp:${phoneId}` },
+        select: { id: true, organizationId: true, channel: true, provider: true, status: true, credentialsEnc: true },
       })
-      if (connection) {
-        if (connection.status !== 'connected') continue
-        const secrets = [decryptSecret(connection.metaAppSecretEnc), process.env.META_APP_SECRET].filter((secret): secret is string => !!secret)
-        const validSignature = secrets.some((secret) => verifyMetaSignature(rawBody, secret, signature))
-        if (validSignature) {
-          const matchingValue = allValues.find((value) => value.metadata?.phone_number_id === phoneId)
-          if (matchingValue) {
-            matchedTargets.push({
-              orgId: connection.organizationId,
-              phoneId,
-              cloudToken: decryptSecret(connection.accessTokenEnc),
-              fallbackValue: matchingValue,
-            })
-          }
-        }
-        // Una conexión canónica existente es autoritativa: nunca degradar a
-        // Integration ante firma inválida o estado desconectado.
-        continue
-      }
-
-      // Compatibilidad con organizaciones aún no migradas a WhatsAppConnection.
-      const legacyCandidates = await db.integration.findMany({
-        where: { metaAppSecretEnc: { not: null }, whatsappPhoneId: phoneId },
-        select: { organizationId: true, metaAppSecretEnc: true, whatsappCloudTokenEnc: true, whatsappPhoneId: true },
-      })
-      for (const candidate of legacyCandidates) {
-        const secret = decryptSecret(candidate.metaAppSecretEnc)
-        if (!secret || !verifyMetaSignature(rawBody, secret, signature)) continue
-        const matchingValue = allValues.find((value) => value.metadata?.phone_number_id === phoneId)
-        if (!matchingValue) continue
+      if (!canonical || canonical.channel !== 'whatsapp' || canonical.provider !== 'meta_cloud') continue
+      if (canonical.status !== 'connected') continue
+      const creds = parseWhatsAppCloudCredentials(canonical.credentialsEnc)
+      const secrets = [creds.appSecret || null, process.env.META_APP_SECRET].filter((secret): secret is string => !!secret)
+      const validSignature = secrets.some((secret) => verifyMetaSignature(rawBody, secret, signature))
+      if (!validSignature) continue
+      const matchingValue = allValues.find((value) => value.metadata?.phone_number_id === phoneId)
+      if (matchingValue) {
         matchedTargets.push({
-          orgId: candidate.organizationId,
+          orgId: canonical.organizationId,
           phoneId,
-          cloudToken: decryptSecret(candidate.whatsappCloudTokenEnc),
+          cloudToken: creds.accessToken ?? null,
+          connectionId: canonical.id,
           fallbackValue: matchingValue,
         })
-        break
       }
     }
 
@@ -181,33 +155,8 @@ export async function POST(req: NextRequest) {
       const matchedOrgId = target.orgId
       const matchedPhoneId = target.phoneId
       const fallbackValue = target.fallbackValue
-      let matchedCloudToken = target.cloudToken
-      let matchedCanonicalConnectionId: string | null = null
-      // La conexión canónica es la lectura primaria de credenciales cuando
-      // existe. WhatsAppConnection se conserva como autoridad de atribución y
-      // fallback durante la migración gradual.
-      if (matchedPhoneId) {
-        const providerAccountKey = `meta:whatsapp:${matchedPhoneId}`
-        const canonical = await db.channelConnection.findUnique({
-          where: { providerAccountKey },
-          select: { id: true, organizationId: true, channel: true, status: true, credentialsEnc: true },
-        })
-        if (canonical) {
-          matchedCanonicalConnectionId = canonical.id
-          if (canonical.organizationId !== matchedOrgId || canonical.channel !== 'whatsapp' || canonical.status !== 'connected') {
-            continue
-          }
-          const plaintext = decryptSecret(canonical.credentialsEnc)
-          if (!plaintext) continue
-          try {
-            const credentials = JSON.parse(plaintext) as { accessToken?: string }
-            if (!credentials.accessToken) continue
-            matchedCloudToken = credentials.accessToken
-          } catch {
-            continue
-          }
-        }
-      }
+      const matchedCloudToken = target.cloudToken
+      const matchedCanonicalConnectionId = target.connectionId
   
         // (A1-09, auditoría 2026-11-11) Meta puede agrupar VARIAS entry/changes
       // en un solo POST: se procesan TODAS las ocurrencias del número de la org
@@ -333,25 +282,11 @@ export async function POST(req: NextRequest) {
           activeWebhookEventClaim = claim
         }
         // ================================================================
-        // (A4-02, auditoría 2026-11-11) DEDUP por waMessageId: Meta re-entrega
-        // webhooks ante timeout; sin dedup, la auto-respuesta IA salía DOS
-        // veces al cliente. El índice único (organizationId, waMessageId) —
-        // migración 4 — respalda el lookup; si ya existe, se omite (200 temprano
-        // ya fue respondido por Meta en la primera entrega).
+        // (A4-02 → UNIFICACIÓN 2026-11-21) DEDUP por waMessageId: el claim
+        // durable de ChannelWebhookEvent (eventKey 'message:<id>') ya garantiza
+        // la idempotencia por conexión canónica; los reintentos de Meta
+        // reciben 200 temprano sin timeline ni respuestas duplicadas.
         // ================================================================
-        if (message.id) {
-          const seen = await db.whatsAppMessage.findFirst({
-            where: { organizationId: matchedOrgId, waMessageId: message.id },
-            select: { id: true },
-          })
-          if (seen) {
-            if (activeWebhookEventClaim) {
-              await completeChannelWebhookEvent(activeWebhookEventClaim)
-              activeWebhookEventClaim = null
-            }
-            continue
-          }
-        }
         let text = message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title
         let isVoice = false
   

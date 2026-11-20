@@ -84,3 +84,91 @@ export function digitsOf(formatted: string): string {
 }
 
 export { FIX }
+
+// ============================================================================
+// (UNIFICACIÓN 2026-11-21) Siembra CANÓNICA de conversaciones WhatsApp del
+// daemon Baileys. Las tablas WhatsAppConversation/WhatsAppMessage fueron
+// retiradas: el historial se siembra en ChannelConnection (provider
+// 'whatsapp_baileys') + ChannelConversation + ChannelMessage.
+// ============================================================================
+import { encryptSecret } from '@/lib/crypto'
+
+export async function seedBaileysConversation(opts: {
+  organizationId: string
+  clientId?: string | null
+  contactPhone: string
+  contactName?: string | null
+  unreadCount?: number
+  isAutoReply?: boolean
+  lastMessage?: string | null
+  lastMessageAt?: Date | null
+  messages?: Array<{
+    direction: 'in' | 'out'
+    senderType?: 'contact' | 'agent' | 'user'
+    text: string
+    waMessageId?: string | null
+    messageType?: string
+    createdAt?: Date
+  }>,
+}): Promise<{ connectionId: string; conversationId: string }> {
+  const { db } = await import('@/lib/db')
+  const providerAccountKey = `whatsapp_baileys:${opts.organizationId}`
+  const connection = await db.channelConnection.upsert({
+    where: { providerAccountKey },
+    create: {
+      organizationId: opts.organizationId,
+      channel: 'whatsapp',
+      provider: 'whatsapp_baileys',
+      providerAccountKey,
+      externalAccountId: opts.contactPhone,
+      displayName: 'WhatsApp QR (Baileys)',
+      status: 'connected',
+      credentialsEnc: encryptSecret(JSON.stringify({ provider: 'whatsapp_baileys' })) || 'test-seed',
+    },
+    update: { status: 'connected' },
+  })
+  const conversation = await db.channelConversation.upsert({
+    where: {
+      connectionId_externalContactKey: { connectionId: connection.id, externalContactKey: opts.contactPhone },
+    },
+    create: {
+      organizationId: opts.organizationId,
+      connectionId: connection.id,
+      channel: 'whatsapp',
+      externalContactKey: opts.contactPhone,
+      contactName: opts.contactName ?? opts.contactPhone,
+      unreadCount: opts.unreadCount ?? 0,
+      status: 'active',
+      lastMessage: opts.lastMessage ?? null,
+      lastMessageAt: opts.lastMessageAt ?? null,
+      metadata: JSON.stringify({
+        clientId: opts.clientId ?? null,
+        isAutoReply: opts.isAutoReply ?? true,
+        transferredTo: null,
+      }),
+    },
+    update: {},
+  })
+  for (const m of opts.messages ?? []) {
+    try {
+      await db.channelMessage.create({
+        data: {
+          conversationId: conversation.id,
+          externalMessageId: m.waMessageId ?? null,
+          direction: m.direction,
+          senderType: m.senderType ?? (m.direction === 'in' ? 'contact' : 'user'),
+          body: m.text,
+          messageType: m.messageType ?? 'text',
+          metadata: JSON.stringify({
+            from: m.direction === 'in' ? opts.contactPhone : '573000000000',
+            to: opts.contactPhone,
+          }),
+          ...(m.createdAt ? { createdAt: m.createdAt } : {}),
+        },
+      })
+    } catch {
+      // Duplicado por (conversationId, externalMessageId): se omite (idempotente).
+    }
+  }
+  return { connectionId: connection.id, conversationId: conversation.id }
+}

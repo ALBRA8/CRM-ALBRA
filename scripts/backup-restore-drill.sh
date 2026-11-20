@@ -131,7 +131,7 @@ const snap = new D('$SNAP', { readonly: true });
 const rest = new D('$SANDBOX/custom.db', { readonly: true });
 const c1 = rest.pragma('integrity_check', { simple: true });
 if (c1 !== 'ok') process.exit(2);
-const tables = ['Organization','User','Client','Opportunity','Quote','Automation','WhatsAppConversation','AgentMemory','AuditLog','Settings'].filter(t => {
+const tables = ['Organization','User','Client','Opportunity','Quote','Automation','ChannelConversation','AgentMemory','AuditLog','Settings'].filter(t => {
   try { rest.prepare('SELECT 1 FROM ' + t + ' LIMIT 1').get(); return true } catch { return false }
 });
 let mismatches = 0;

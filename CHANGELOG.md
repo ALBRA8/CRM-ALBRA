@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2026-11-21 — Unificación de las 3 generaciones de canales (100% canónico)
+
+- **Qué**: ejecución completa del plan de simplificación (`CONTEXTO CRM/AUDITORIA_REDUNDANCIAS_*`): daemon Baileys escribiendo en `ChannelConnection/ChannelConversation/ChannelMessage`, `GoogleIntegration` dedicada, backfill total del historial, redirección de conexiones/webhooks/bandeja al modelo canónico y DROP formal de `Integration`, `WhatsAppConnection(±Event)`, `WhatsAppConversation` y `WhatsAppMessage` con backfill previo (cero pérdida).
+- **Por qué**: eliminar la deuda técnica de 3 generaciones coexistentes (Integration monocuenta → WhatsAppConnection Cloud → Channel* canónico) que duplicaba lecturas en bandeja, webhooks y credenciales.
+- **Esquema**: 2 migraciones (expand aditiva + contract destructiva con backfill SQL); `webhookSecretHash` para atribución de webhooks por hash; `agentLeadsSecretEnc` en Settings; 43 modelos Prisma (antes 48).
+- **Verificación**: tsc 0 errores; **1104/1104 tests (128 archivos)**; security:scan 0 secretos; check:pii OK; secuencia de migración probada sobre BD con datos legacy (paridad exacta 5/5 mensajes, 3/3 conversaciones, Google y agentLeads migrados).
+- **Runbook de producción** en `CONTEXTO CRM/PENDIENTES.md` (backup → backfill opcional → migrate deploy → verify-unification).
+
 ## 2026-11-20 — Sesión 7: fix de entorno de preview (HMR dev bloqueado por origen)
 
 - **Síntoma**: en el sandbox de preview la SPA quedaba clavada en «Cargando CRM ALBRA...» — sin errores de página, chunks al 200 % y cero llamadas a `/api` desde el cliente; la hidratación nunca terminaba.

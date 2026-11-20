@@ -124,8 +124,8 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
     expect(res.status).toBe(409)
     expect(await jsonBody(res)).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
     expect(fetchMock).not.toHaveBeenCalled()
-    const conv = await db.whatsAppConversation.findUnique({
-      where: { organizationId_contactPhone: { organizationId: FIX.orgA.id, contactPhone: CLIENT_PHONE } },
+    const conv = await db.channelConversation.findFirst({
+      where: { organizationId: FIX.orgA.id, externalContactKey: CLIENT_PHONE },
     })
     expect(conv).toBeNull()
   })
@@ -139,7 +139,7 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
     }))
     expect(res.status).toBe(409)
     expect(fetchMock).not.toHaveBeenCalled()
-    const convs = await db.whatsAppConversation.findMany({ where: { organizationId: FIX.orgA.id, contactPhone: CLIENT_PHONE } })
+    const convs = await db.channelConversation.findMany({ where: { organizationId: FIX.orgA.id, externalContactKey: CLIENT_PHONE } })
     expect(convs).toHaveLength(0)
   })
 
@@ -154,8 +154,8 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     const body = await jsonBody(res)
     expect(body).toMatchObject({ code: 'LEGACY_SEND_DISABLED' })
-    const conv = await db.whatsAppConversation.findUnique({
-      where: { organizationId_contactPhone: { organizationId: FIX.orgA.id, contactPhone: '573109998877' } },
+    const conv = await db.channelConversation.findFirst({
+      where: { organizationId: FIX.orgA.id, externalContactKey: '573109998877' },
     })
     expect(conv).toBeNull()
   })
@@ -180,11 +180,11 @@ describe('POST /api/inbox/send — key "wa-new:<teléfono>"', () => {
     }))
     expect(res.status).toBe(409)
     expect(fetchMock).not.toHaveBeenCalled()
-    const inA = await db.whatsAppConversation.findUnique({
-      where: { organizationId_contactPhone: { organizationId: FIX.orgA.id, contactPhone: '573201234567' } },
+    const inA = await db.channelConversation.findFirst({
+      where: { organizationId: FIX.orgA.id, externalContactKey: '573201234567' },
     })
-    const inB = await db.whatsAppConversation.findUnique({
-      where: { organizationId_contactPhone: { organizationId: FIX.orgB.id, contactPhone: '573201234567' } },
+    const inB = await db.channelConversation.findFirst({
+      where: { organizationId: FIX.orgB.id, externalContactKey: '573201234567' },
     })
     expect(inA).toBeNull()
     expect(inB).toBeNull()

@@ -1,12 +1,15 @@
-import { createHmac, timingSafeEqual, randomBytes } from 'crypto'
+import { createHmac, timingSafeEqual, randomBytes, createHash } from 'crypto'
 import { db } from './db'
 import { assignLeadRoundRobin } from './lead-routing'
 import { decryptSecret, encryptSecret } from './crypto'
-import type { Integration } from '@prisma/client'
 
 /**
  * Helpers compartidos de integraciones (Telegram / Instagram / WhatsApp / Google).
- * - Fila Integration por organización (get-or-create)
+ * - Vista ensamblada de integraciones (getIntegration) sobre el modelo CANÓNICO:
+ *   las credenciales de canales viven en ChannelConnection (credentialsEnc cifrado
+ *   + webhookSecretHash para atribución de webhooks) y Google en GoogleIntegration.
+ *   (2026-11-21) La tabla Integration fue retirada; la vista mantiene la MISMA
+ *   forma para que las rutas de configuración conserven su contrato.
  * - Normalización de clientes de canales (find-or-create por teléfono/ID de plataforma)
  * - Validación de firmas de webhooks (Meta X-Hub-Signature-256, Telegram secret token)
  * - Envío por APIs oficiales (WhatsApp Cloud, Telegram Bot, Instagram Graph) con degradación elegante
@@ -17,11 +20,197 @@ export function normalizePhone(raw: string | null | undefined): string {
   return raw.replace(/[^\d+]/g, '')
 }
 
-/** Obtiene (o crea) la fila Integration de la organización */
-export async function getIntegration(orgId: string): Promise<Integration> {
-  const existing = await db.integration.findUnique({ where: { organizationId: orgId } })
-  if (existing) return existing
-  return db.integration.create({ data: { organizationId: orgId } })
+export function sha256HexLookup(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+// ============ Vista ensamblada canónica (reemplazo de Integration) ============
+
+export interface AssembledIntegration {
+  organizationId: string
+  telegramBotTokenEnc: string | null
+  telegramSecret: string | null
+  telegramSecretHash: string | null
+  instagramTokenEnc: string | null
+  instagramAccountId: string | null
+  googleRefreshTokenEnc: string | null
+  googleClientJsonEnc: string | null
+  googleEmail: string | null
+  metaAppSecretEnc: string | null
+  whatsappPhoneId: string | null
+  whatsappCloudTokenEnc: string | null
+  facebookTokenEnc: string | null
+  facebookPageId: string | null
+  facebookPageName: string | null
+  facebookUserEmail: string | null
+  tiktokTokenEnc: string | null
+  agentLeadsSecretEnc: string | null
+  enableWhatsApp: boolean
+  enableTelegram: boolean
+  enableInstagram: boolean
+  enableFacebook: boolean
+  enableTikTok: boolean
+  enableGoogle: boolean
+}
+
+function safeJsonParse<T>(raw: string | null | undefined): T | null {
+  try {
+    return raw ? (JSON.parse(raw) as T) : null
+  } catch {
+    return null
+  }
+}
+
+interface WhatsAppCloudCredentialsBlob {
+  accessToken?: string
+  appSecret?: string | null
+  webhookVerifyToken?: string | null
+}
+
+/** Credenciales de una conexión WhatsApp Cloud canónica (credentialsEnc). */
+export function parseWhatsAppCloudCredentials(credentialsEnc: string | null | undefined): WhatsAppCloudCredentialsBlob {
+  const raw = decryptSecret(credentialsEnc)
+  const parsed = safeJsonParse<WhatsAppCloudCredentialsBlob>(raw)
+  if (parsed && typeof parsed === 'object') return parsed
+  return raw ? { accessToken: raw } : {}
+}
+
+/**
+ * Vista ensamblada de la configuración de integraciones de la organización,
+ * con la MISMA forma que tenía la fila Integration: cada campo se resuelve
+ * desde su hogar canónico (ChannelConnection / GoogleIntegration / Settings).
+ * Nunca lanza: si un canal no está conectado, sus campos son null/false.
+ */
+export async function getIntegration(orgId: string): Promise<AssembledIntegration> {
+  const [connections, google, settings] = await Promise.all([
+    db.channelConnection.findMany({
+      where: { organizationId: orgId, channel: { in: ['telegram', 'instagram', 'facebook', 'whatsapp', 'tiktok'] } },
+      orderBy: { updatedAt: 'desc' },
+    }),
+    db.googleIntegration.findUnique({ where: { organizationId: orgId } }),
+    db.settings.findUnique({ where: { organizationId: orgId }, select: { agentLeadsSecretEnc: true } }),
+  ])
+
+  const telegram = connections.find((c) => c.channel === 'telegram' && c.provider === 'telegram_bot') || null
+  const instagram = connections.find((c) => c.channel === 'instagram' && c.provider === 'meta_graph') || null
+  // Messenger vive como channel='messenger' (convención del helper de webhooks y del backfill);
+  // se tolera 'facebook' por compatibilidad con filas antiguas.
+  const facebook = connections.find((c) => (c.channel === 'messenger' || c.channel === 'facebook') && c.provider === 'meta_graph') || null
+  const whatsappCloud = connections.find((c) => c.channel === 'whatsapp' && c.provider === 'meta_cloud' && c.status === 'connected')
+    || connections.find((c) => c.channel === 'whatsapp' && c.provider === 'meta_cloud')
+    || null
+  const tiktok = connections.find((c) => c.channel === 'tiktok') || null
+
+  const telegramState = telegram ? parseTelegramState(telegram.credentialsEnc) : {}
+  const instagramState = instagram ? parseInstagramState(instagram.credentialsEnc) : {}
+  const facebookState = facebook ? parseFacebookState(facebook.credentialsEnc) : {}
+  const whatsappCreds = whatsappCloud ? parseWhatsAppCloudCredentials(whatsappCloud.credentialsEnc) : {}
+  const tiktokState = tiktok ? parseTikTokState(tiktok.credentialsEnc) : {}
+
+  const metaAppSecret = instagramState.webhookSecret || facebookState.appSecret || whatsappCreds.appSecret || null
+
+  return {
+    organizationId: orgId,
+    telegramBotTokenEnc: telegram?.credentialsEnc ?? null,
+    telegramSecret: telegramState.webhookSecret ? encryptSecret(telegramState.webhookSecret) : null,
+    telegramSecretHash: telegram?.webhookSecretHash ?? null,
+    instagramTokenEnc: instagram?.credentialsEnc ?? null,
+    instagramAccountId: instagram?.externalAccountId ?? null,
+    googleRefreshTokenEnc: google?.googleRefreshTokenEnc ?? null,
+    googleClientJsonEnc: google?.googleClientJsonEnc ?? null,
+    googleEmail: google?.googleEmail ?? null,
+    metaAppSecretEnc: metaAppSecret ? encryptSecret(metaAppSecret) : null,
+    whatsappPhoneId: whatsappCloud?.externalAccountId ?? null,
+    whatsappCloudTokenEnc: whatsappCreds.accessToken ? encryptSecret(whatsappCreds.accessToken) : null,
+    facebookTokenEnc: facebook?.credentialsEnc ?? null,
+    facebookPageId: facebook?.externalAccountId ?? facebookState.pageId ?? null,
+    facebookPageName: facebookState.pageName ?? null,
+    facebookUserEmail: facebookState.userEmail ?? null,
+    tiktokTokenEnc: tiktok?.credentialsEnc ?? null,
+    agentLeadsSecretEnc: settings?.agentLeadsSecretEnc ?? null,
+    enableWhatsApp: !!(whatsappCreds.accessToken || whatsappCloud),
+    enableTelegram: !!telegramState.token,
+    enableInstagram: !!instagramState.token,
+    enableFacebook: !!facebookState.pageToken,
+    enableTikTok: !!tiktokState.accessToken,
+    enableGoogle: !!(google?.googleRefreshTokenEnc || google?.calendarSyncEnabled),
+  }
+}
+
+/** Entrada genérica para crear/actualizar una conexión canónica por blob cifrado. */
+export interface UpsertChannelConnectionInput {
+  orgId: string
+  channel: string
+  provider: string
+  providerAccountKey: string
+  externalAccountId?: string | null
+  displayName?: string | null
+  credentialsEnc: string | null
+  webhookSecretHash?: string | null
+  status?: string
+  metadata?: Record<string, unknown>
+  eventType?: string
+  eventDetail?: string
+}
+
+/**
+ * Crea o actualiza la ChannelConnection canónica de un canal por
+ * providerAccountKey (idempotente; nunca borra filas). Audit evento best-effort.
+ */
+export async function upsertChannelConnection(input: UpsertChannelConnectionInput): Promise<void> {
+  const status = input.status || 'connected'
+  const externalAccountId = input.externalAccountId || input.providerAccountKey
+  const data = {
+    externalAccountId,
+    ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+    ...(input.credentialsEnc !== undefined && input.credentialsEnc !== null ? { credentialsEnc: input.credentialsEnc } : {}),
+    ...(input.webhookSecretHash !== undefined ? { webhookSecretHash: input.webhookSecretHash } : {}),
+    status,
+    ...(input.metadata ? { metadata: JSON.stringify(input.metadata) } : {}),
+  }
+  const connection = await db.channelConnection.upsert({
+    where: { providerAccountKey: input.providerAccountKey },
+    create: {
+      organizationId: input.orgId,
+      channel: input.channel,
+      provider: input.provider,
+      providerAccountKey: input.providerAccountKey,
+      credentialsEnc: input.credentialsEnc || '',
+      ...data,
+    },
+    update: data,
+  })
+  try {
+    await db.channelConnectionEvent.create({
+      data: {
+        organizationId: input.orgId,
+        connectionId: connection.id,
+        type: input.eventType || 'connected',
+        detail: input.eventDetail || `upsert:${input.providerAccountKey}`,
+      },
+    })
+  } catch (err) {
+    console.error('[integrations] evento de conexión falló (best-effort)', err instanceof Error ? err.message : err)
+  }
+}
+
+/** Upsert de la conexión Telegram canónica (blob = estado Telegram + webhookSecret). */
+export async function saveTelegramConnection(orgId: string, state: TelegramState, opts: { status?: string } = {}): Promise<void> {
+  const botId = state.token?.match(/^(\d+):/)?.[1] || null
+  const credentialsEnc = encodeTelegramState(state)
+  if (!credentialsEnc) return
+  await upsertChannelConnection({
+    orgId,
+    channel: 'telegram',
+    provider: 'telegram_bot',
+    providerAccountKey: botId ? `telegram:bot:${botId}` : `telegram:org:${orgId}`,
+    externalAccountId: botId,
+    credentialsEnc,
+    webhookSecretHash: state.webhookSecret ? sha256HexLookup(state.webhookSecret) : null,
+    status: opts.status || (state.token ? 'connected' : 'disconnected'),
+    metadata: { botUsername: state.botUsername ?? null },
+    eventType: state.token ? 'connected' : 'disconnected',
+  })
 }
 
 /**
@@ -32,6 +221,8 @@ export interface TelegramState {
   token?: string
   botUsername?: string
   autoReply?: boolean
+  /** Secret de verificación del webhook (X-Telegram-Bot-Api-Secret-Token); su hash vive en ChannelConnection.webhookSecretHash */
+  webhookSecret?: string
 }
 
 export function parseTelegramState(enc: string | null | undefined): TelegramState {
@@ -103,6 +294,8 @@ export interface FacebookState {
   pageId?: string
   pageName?: string
   userEmail?: string
+  /** App Secret de Meta compartido con Instagram (HMAC del webhook) */
+  appSecret?: string
 }
 
 export function parseFacebookState(enc: string | null | undefined): FacebookState {

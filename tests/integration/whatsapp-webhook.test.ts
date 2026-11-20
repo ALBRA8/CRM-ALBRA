@@ -8,7 +8,6 @@ import { encryptSecret } from '@/lib/crypto'
 const APP_SECRET = ['whatsapp', 'test', 'secret'].join('-').repeat(2)
 let organizationId: string | null = null
 let channelConnectionId: string | null = null
-let whatsappConnectionId: string | null = null
 
 afterEach(async () => {
   if (channelConnectionId) {
@@ -18,11 +17,6 @@ afterEach(async () => {
     await db.channelConnectionEvent.deleteMany({ where: { connectionId: channelConnectionId } })
     await db.channelConnection.deleteMany({ where: { id: channelConnectionId } })
     channelConnectionId = null
-  }
-  if (whatsappConnectionId) {
-    await db.whatsAppConnectionEvent.deleteMany({ where: { connectionId: whatsappConnectionId } })
-    await db.whatsAppConnection.deleteMany({ where: { id: whatsappConnectionId } })
-    whatsappConnectionId = null
   }
   if (organizationId) {
     await db.organization.deleteMany({ where: { id: organizationId } })
@@ -53,19 +47,8 @@ describe('POST /api/whatsapp/webhook — stable event identity', () => {
     })
     organizationId = org.id
 
-    const waConnection = await db.whatsAppConnection.create({
-      data: {
-        organizationId: org.id,
-        phoneNumberId,
-        phoneNumber: '+573001234567',
-        accessTokenEnc: encryptSecret(accessToken)!,
-        metaAppSecretEnc: encryptSecret(APP_SECRET),
-        webhookVerifyToken: `verify-${suffix}`,
-        status: 'connected',
-      },
-    })
-    whatsappConnectionId = waConnection.id
-
+    // (UNIFICACIÓN 2026-11-21) La única conexión es la canónica; el app secret
+    // vive dentro del blob cifrado de credenciales.
     const canonical = await db.channelConnection.create({
       data: {
         organizationId: org.id,
@@ -73,7 +56,7 @@ describe('POST /api/whatsapp/webhook — stable event identity', () => {
         provider: 'meta_cloud',
         providerAccountKey: `meta:whatsapp:${phoneNumberId}`,
         externalAccountId: phoneNumberId,
-        credentialsEnc: encryptSecret(JSON.stringify({ accessToken }))!,
+        credentialsEnc: encryptSecret(JSON.stringify({ accessToken, appSecret: APP_SECRET }))!,
         status: 'connected',
       },
     })

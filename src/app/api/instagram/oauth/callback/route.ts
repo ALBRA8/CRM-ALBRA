@@ -192,14 +192,9 @@ export async function GET(req: NextRequest) {
           },
         })
       }
-      await tx.integration.update({
-        where: { organizationId: auth.orgId },
-        data: {
-          instagramTokenEnc: next,
-          instagramAccountId: selectedAccount.id,
-          enableInstagram: true,
-        },
-      })
+      // (UNIFICACIÓN 2026-11-21) Ya no existe Integration: el blob cifrado vive
+      // en credentialsEnc de la ChannelConnection creada arriba.
+      void next
     })
 
     // 5) best-effort: suscribir todas las cuentas registradas.

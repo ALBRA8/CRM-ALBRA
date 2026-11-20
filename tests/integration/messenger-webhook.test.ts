@@ -17,7 +17,6 @@ afterEach(async () => {
     connectionId = null
   }
   if (organizationId) {
-    await db.integration.deleteMany({ where: { organizationId } })
     await db.organization.deleteMany({ where: { id: organizationId } })
     organizationId = null
   }
@@ -44,12 +43,17 @@ describe('POST /api/facebook/webhook — stable event identity', () => {
       },
     })
     organizationId = org.id
-    await db.integration.create({
+    // (UNIFICACIÓN 2026-11-21) La conexión Messenger es canónica; el app secret
+    // vive dentro del blob cifrado de credenciales.
+    await db.channelConnection.create({
       data: {
         organizationId: org.id,
-        facebookPageId: pageId,
-        facebookTokenEnc: encryptSecret(JSON.stringify({ pageToken: 'synthetic-page-token', pageId }))!,
-        metaAppSecretEnc: encryptSecret(APP_SECRET)!,
+        channel: 'messenger',
+        provider: 'meta_graph',
+        providerAccountKey: `meta:messenger:${pageId}`,
+        externalAccountId: pageId,
+        credentialsEnc: encryptSecret(JSON.stringify({ pageToken: 'synthetic-page-token', pageId, appSecret: APP_SECRET }))!,
+        status: 'connected',
       },
     })
 

@@ -86,10 +86,21 @@ export async function POST(req: NextRequest) {
     // NO se llama al LLM. reply vacío → el daemon NO envía nada.
     const wantsHuman = keywords.some((k) => k && message.toLowerCase().includes(k.toLowerCase()))
     if (wantsHuman) {
-      await db.whatsAppConversation.updateMany({
-        where: { organizationId: orgId, clientId },
-        data: { isAutoReply: false, updatedAt: new Date() },
+      // (UNIFICACIÓN 2026-11-21) La pausa persiste en ChannelConversation
+      // (metadata.isAutoReply): el daemon Baileys la lee de los mismos metadatos.
+      const waConversations = await db.channelConversation.findMany({
+        where: { organizationId: orgId, channel: 'whatsapp', metadata: { contains: `"clientId":"${clientId}"` } },
+        select: { id: true, metadata: true },
       })
+      for (const conv of waConversations) {
+        let meta: Record<string, unknown> = {}
+        try { meta = conv.metadata ? JSON.parse(conv.metadata) as Record<string, unknown> : {} } catch {}
+        if (meta.isAutoReply === false) continue
+        await db.channelConversation.update({
+          where: { id: conv.id },
+          data: { metadata: JSON.stringify({ ...meta, isAutoReply: false }), updatedAt: new Date() },
+        })
+      }
       await notifyOrganization(orgId, {
         type: 'integration',
         title: 'WhatsApp: el cliente pide un humano',

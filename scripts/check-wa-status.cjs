@@ -13,7 +13,7 @@ async function main() {
       organizationId: true, conversationId: true,
     },
   });
-  console.log('=== WhatsAppMessage total:', total, '===');
+  console.log('=== ChannelMessage total:', total, '===');
   for (const m of latest) {
     const dt = m.createdAt ? new Date(m.createdAt).toISOString() : '?';
     console.log(`[${dt}] ${m.direction}/${m.senderType} read=${m.isRead} org=${(m.organizationId||'').slice(0,8)} conv=${(m.conversationId||'').slice(0,10)} from=${(m.fromNumber||'').slice(0,15)} :: ${(m.text||'').slice(0,60).replace(/\n/g,' ')}`);

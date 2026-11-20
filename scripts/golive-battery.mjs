@@ -69,12 +69,13 @@ report('G13 doctor: daemon alcanzable pero NO vinculado (coherente con G4)',
 const { PrismaClient } = await import('@prisma/client')
 const db = new PrismaClient()
 try {
-  const msgs = await db.whatsAppMessage.count()
-  const convs = await db.whatsAppConversation.count()
+  // (UNIFICACIÓN 2026-11-21) La mensajería vive en el modelo canónico.
+  const msgs = await db.channelMessage.count()
+  const convs = await db.channelConversation.count()
   const orgs = await db.organization.findMany({ take: 3, select: { id: true, name: true } })
   let ar = null
   if (orgs[0]) ar = await db.nichoConfig.findUnique({ where: { organizationId: orgs[0].id } }).catch(() => null)
-  report('G14 DB CRM accesible: WhatsAppMessage + Conversaciones contables', typeof msgs === 'number' && typeof convs === 'number',
+  report('G14 DB CRM accesible: ChannelMessage + ChannelConversation contables', typeof msgs === 'number' && typeof convs === 'number',
     `mensajes=${msgs} conversaciones=${convs}`)
   console.log(`INFO autoReply org#1=${ar ? ar.autoReplyEnabled : '(sin config)'} orgs=${orgs.length}`)
 } catch (e) {

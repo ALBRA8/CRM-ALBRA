@@ -67,17 +67,8 @@ export async function GET(req: NextRequest) {
     } catch { /* no autorizar credenciales corruptas */ }
   }
 
-  // Compatibilidad temporal para conexiones legacy sin ChannelConnection.
-  const integrations = await db.integration.findMany({
-    where: { instagramTokenEnc: { not: null } },
-    select: { instagramTokenEnc: true },
-  })
-  for (const integration of integrations) {
-    const state = parseInstagramState(integration.instagramTokenEnc)
-    if (state.webhookVerifyToken && safeEquals(token, state.webhookVerifyToken)) {
-      return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
-    }
-  }
+  // (UNIFICACIÓN 2026-11-21) El legado Integration fue retirado: la única
+  // fuente de verify tokens es ChannelConnection.
   return new Response('Forbidden', { status: 403 })
 }
 
@@ -120,42 +111,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Fallback de compatibilidad: solo cuentas no migradas al modelo canónico.
-    {
-      const legacyCandidates = await db.integration.findMany({
-        where: { instagramTokenEnc: { not: null } },
-        select: { organizationId: true, instagramTokenEnc: true, instagramAccountId: true },
-      })
-      for (const candidate of legacyCandidates) {
-        // Una conexión canónica existente es autoritativa incluso si está
-        // desconectada o su firma no valida: nunca degradar a Integration.
-        const canonicalAccount = candidate.instagramAccountId
-          ? await db.channelConnection.findFirst({
-              where: {
-                channel: 'instagram',
-                provider: 'meta_graph',
-                externalAccountId: candidate.instagramAccountId,
-              },
-              select: { id: true },
-            })
-          : null
-        if (canonicalAccount) continue
-        const state = parseInstagramState(candidate.instagramTokenEnc)
-        if (!state.webhookSecret || !candidate.instagramAccountId) continue
-        if (!verifyMetaSignature(rawBody, state.webhookSecret, signature)) continue
-        if (matchedTargets.some((target) => target.accountId === candidate.instagramAccountId)) continue
-        const entries = (body.entry || []).filter((item) => item.id === candidate.instagramAccountId)
-        for (const entry of entries) {
-          if (!state.token) continue
-          matchedTargets.push({
-            orgId: candidate.organizationId,
-            entry,
-            accountId: candidate.instagramAccountId,
-            accessToken: state.token,
-          })
-        }
-      }
-    }
+    // (UNIFICACIÓN 2026-11-21) El fallback a Integration fue retirado junto con
+    // la tabla: la atribución de Instagram es 100% canónica.
 
     if (matchedTargets.length === 0) {
       return json({ error: 'Firma inválida o destinatario desconocido' }, { status: 401 })

@@ -16,11 +16,11 @@ export async function GET(req: NextRequest) {
     const auth = await requireAdmin(req)
     const client = await getGoogleClientConfig(auth.orgId)
     const refreshToken = await getGoogleRefreshToken(auth.orgId)
-    const integration = await db.integration.findUnique({ where: { organizationId: auth.orgId }, select: { enableGoogle: true, googleEmail: true } })
+    const google = await db.googleIntegration.findUnique({ where: { organizationId: auth.orgId }, select: { calendarSyncEnabled: true, googleEmail: true } })
     return json({
       configured: !!client,
       connected: !!refreshToken,
-      googleEmail: integration?.googleEmail || null,
+      googleEmail: google?.googleEmail || null,
       config: client
         ? {
             clientId: client.clientId,
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
             scopes: GOOGLE_SCOPES,
           }
         : null,
-      enableGoogle: integration?.enableGoogle ?? false,
+      enableGoogle: google?.calendarSyncEnabled ?? false,
     })
   })
 }
@@ -62,7 +62,7 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   return handle(async () => {
     const auth = await requireAdmin(req)
-    await db.integration.updateMany({ where: { organizationId: auth.orgId }, data: { googleClientJsonEnc: null } })
+    await db.googleIntegration.updateMany({ where: { organizationId: auth.orgId }, data: { googleClientJsonEnc: null } })
     await clearGoogleConnection(auth.orgId)
     await auditAndTimeline({ orgId: auth.orgId, userId: auth.userId, action: 'updated', entity: 'integration', details: { provider: 'google', cleared: true } })
     return json({ success: true, configured: false, connected: false })

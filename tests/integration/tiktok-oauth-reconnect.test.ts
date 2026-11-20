@@ -30,7 +30,6 @@ afterEach(async () => {
     await db.channelConnection.deleteMany({ where: { id: { in: connectionIds } } })
     connectionIds.length = 0
   }
-  await db.integration.deleteMany({ where: { organizationId: FIX.orgC.id } })
 })
 
 function callbackRequest() {
@@ -69,18 +68,8 @@ function mockTikTokExchange() {
 
 describe('TikTok OAuth reconnection persistence', () => {
   it('replaces uncertain credentials atomically and fences stale refresh workers', async () => {
-    const existingIntegration = await db.integration.create({
-      data: {
-        organizationId: FIX.orgC.id,
-        tiktokTokenEnc: encodeTikTokState({
-          appKey: ['synthetic', 'client', 'key'].join('-'),
-          appSecret: ['synthetic', 'client', 'secret'].join('-'),
-          accessToken: ['synthetic', 'old', 'access', 'token'].join('-'),
-          refreshToken: ['synthetic', 'old', 'refresh', 'token'].join('-'),
-        }),
-        enableTikTok: false,
-      },
-    })
+    // (UNIFICACIÓN 2026-11-21) El estado previo de TikTok vive en la conexión
+    // canónica; ya no existe Integration que reflejar.
     const connection = await db.channelConnection.create({
       data: {
         organizationId: FIX.orgC.id,
@@ -88,7 +77,12 @@ describe('TikTok OAuth reconnection persistence', () => {
         provider: 'tiktok_business',
         providerAccountKey,
         externalAccountId: openId,
-        credentialsEnc: encryptSecret(JSON.stringify({ accessToken: ['synthetic', 'quarantined', 'token'].join('-') }))!,
+        credentialsEnc: encodeTikTokState({
+          accessToken: ['synthetic', 'quarantined', 'token'].join('-'),
+          refreshToken: ['synthetic', 'old', 'refresh', 'token'].join('-'),
+          appKey: ['synthetic', 'client', 'key'].join('-'),
+          appSecret: ['synthetic', 'client', 'secret'].join('-'),
+        })!,
         status: 'reconnect_required',
         refreshState: 'uncertain',
         refreshLeaseToken: 'synthetic-stale-lease',
@@ -100,16 +94,13 @@ describe('TikTok OAuth reconnection persistence', () => {
     mockTikTokExchange()
 
     const response = await tiktokOAuthCallback(callbackRequest())
-    const [storedIntegration, storedConnection, events] = await Promise.all([
-      db.integration.findUnique({ where: { organizationId: FIX.orgC.id } }),
+    const [storedConnection, events] = await Promise.all([
       db.channelConnection.findUnique({ where: { id: connection.id } }),
       db.channelConnectionEvent.findMany({ where: { connectionId: connection.id } }),
     ])
     const state = parseTikTokState(storedConnection?.credentialsEnc)
 
     expect(response.status).toBe(307)
-    expect(existingIntegration.enableTikTok).toBe(false)
-    expect(storedIntegration?.enableTikTok).toBe(true)
     expect(state).toMatchObject({
       accessToken: ['synthetic', 'new', 'access', 'token'].join('-'),
       refreshToken: ['synthetic', 'new', 'refresh', 'token'].join('-'),
@@ -133,15 +124,23 @@ describe('TikTok OAuth reconnection persistence', () => {
   })
 
   it('does not accept a token response without both expiry values', async () => {
-    await db.integration.create({
+    // (UNIFICACIÓN 2026-11-21) El estado configurado (sin OAuth completado)
+    // vive en la conexión org-level 'tiktok:org:<orgId>'.
+    const seedConnection = await db.channelConnection.create({
       data: {
         organizationId: FIX.orgC.id,
-        tiktokTokenEnc: encodeTikTokState({
+        channel: 'tiktok',
+        provider: 'tiktok_business',
+        providerAccountKey: `tiktok:org:${FIX.orgC.id}`,
+        externalAccountId: `tiktok-org-${FIX.orgC.id}`,
+        credentialsEnc: encodeTikTokState({
           appKey: ['synthetic', 'client', 'key'].join('-'),
           appSecret: ['synthetic', 'client', 'secret'].join('-'),
-        }),
+        })!,
+        status: 'disconnected',
       },
     })
+    connectionIds.push(seedConnection.id)
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       access_token: ['synthetic', 'access', 'token'].join('-'),
       refresh_token: ['synthetic', 'refresh', 'token'].join('-'),
@@ -151,11 +150,11 @@ describe('TikTok OAuth reconnection persistence', () => {
 
     const response = await tiktokOAuthCallback(callbackRequest())
     const connection = await db.channelConnection.findUnique({ where: { providerAccountKey } })
-    const integration = await db.integration.findUnique({ where: { organizationId: FIX.orgC.id } })
+    const unchanged = await db.channelConnection.findUnique({ where: { id: seedConnection.id } })
 
     expect(response.status).toBe(307)
     expect(new URL(response.headers.get('location')!).searchParams.get('tt_error')).toBe('token_exchange_failed')
     expect(connection).toBeNull()
-    expect(parseTikTokState(integration?.tiktokTokenEnc).accessToken).toBeUndefined()
+    expect(parseTikTokState(unchanged?.credentialsEnc).accessToken).toBeUndefined()
   })
 })

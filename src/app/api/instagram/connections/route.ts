@@ -22,12 +22,10 @@ export async function GET(req: NextRequest) {
         lastVerifiedAt: true,
       },
     })
-    const integration = await db.integration.findUnique({
-      where: { organizationId: auth.orgId },
-      select: { instagramAccountId: true },
-    })
+    // (UNIFICACIÓN 2026-11-21) La cuenta seleccionada se resuelve de la propia
+    // fila canónica (la conexión conectada con blob de credenciales vigente).
     return NextResponse.json({
-      selectedConnectionId: connections.find((connection) => connection.externalAccountId === integration?.instagramAccountId)?.id || null,
+      selectedConnectionId: connections.find((connection) => connection.status === 'connected')?.id || null,
       connections: connections.map((connection) => {
         let metadata: { username?: string | null; pageName?: string | null } = {}
         try { metadata = JSON.parse(connection.metadata || '{}') } catch { /* metadata no confiable: omitir */ }
@@ -75,12 +73,14 @@ export async function POST(req: NextRequest) {
     }
     if (!credentials.accessToken) return NextResponse.json({ error: 'Token no disponible; reconecta la cuenta' }, { status: 409 })
 
-    const integration = await getIntegration(auth.orgId)
-    const current = parseInstagramState(integration.instagramTokenEnc)
+    // (UNIFICACIÓN 2026-11-21) El blob de credenciales de Instagram vive en la
+    // propia ChannelConnection: se actualiza credentialsEnc de la fila elegida.
+    const current = parseInstagramState(connection.credentialsEnc)
     const next = encodeInstagramState({ ...current, token: credentials.accessToken })
-    await db.integration.update({
-      where: { organizationId: auth.orgId },
-      data: { instagramTokenEnc: next, instagramAccountId: connection.externalAccountId, enableInstagram: true },
+    if (!next) return NextResponse.json({ error: 'Cifrado no disponible' }, { status: 500 })
+    await db.channelConnection.update({
+      where: { id: connection.id },
+      data: { credentialsEnc: next, status: 'connected', updatedAt: new Date() },
     })
     return NextResponse.json({ success: true, selectedConnectionId: connection.id })
   })
