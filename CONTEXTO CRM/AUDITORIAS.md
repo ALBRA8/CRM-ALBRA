@@ -227,7 +227,7 @@ Los 9 kits de integración preparados en `CRM-ALBRA/integration-kits/wp-ultra/` 
 
 ---
 
-## A-009 — Auditoría de Ejecución: Unificación Canónica de Canales y Simplificación del Esquema (2026-11-21)
+## A-010 — Auditoría de Ejecución: Unificación Canónica de Canales y Simplificación del Esquema (2026-11-21)
 
 **Fecha:** 2026-11-21. **Rama:** `repair/produccion-real`. **Commit:** `46f0210`.  
 **Documentos rectores:** `AUDITORIA_REDUNDANCIAS_Y_SIMPLIFICACION_FASE_POSTERIOR.md` e `INFORME_AUDITORIA_REDUNDANCIAS_Y_SIMPLIFICACION.md`.  
