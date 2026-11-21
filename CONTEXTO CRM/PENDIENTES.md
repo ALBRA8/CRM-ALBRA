@@ -418,10 +418,14 @@ Correcciones entregadas por el constructor (z.ai) y verificadas por Antigravity 
   - WHATSPOWER-ULTRA (Capa 2B): kits S4, S7, M2, M3, M4, M6, I6 + 7 suites nativas + fix de colisión de puerto en DP-19 (`eb5f89f`). Suite completa en verde: **324 passed, 0 failed**.
   - CRM-ALBRA: suites canónicas de los 9 kits (`tests/kits/`): **51 passed, 0 failed**.
 
-### Fase Posterior: Auditoría de Redundancias y Simplificación
-- [ ] **Auditoría de Redundancias (`AUDITORIA_REDUNDANCIAS_Y_SIMPLIFICACION_FASE_POSTERIOR.md`)**:
-  - Planificada para ejecutarse una vez aceptado el plan actual y probado en operación.
-  - Objetivo: evaluar y unificar modelos legados (`WhatsAppConversation` vs `ChannelConversation`, `WhatsAppMessage` vs `ChannelMessage`, `Integration` vs `WhatsAppConnection`) para reducir complejidad sin perder datos ni compatibilidad.
+### Fase Posterior: Auditoría de Redundancias y Simplificación — CERRADO 2026-11-21
+- [x] **Auditoría de Redundancias y Simplificación Canónica (`AUDITORIA_REDUNDANCIAS_Y_SIMPLIFICACION_FASE_POSTERIOR.md` e `INFORME_AUDITORIA_REDUNDANCIAS_Y_SIMPLIFICACION.md`)**:
+  - Ejecutado el plan en 4 fases (commit `46f0210`).
+  - Daemon Baileys adaptado a `ChannelConnection`/`ChannelConversation`/`ChannelMessage`.
+  - Google OAuth desacoplado a `GoogleIntegration`.
+  - Backfill determinista dual (TS + SQL) de historial de mensajes WhatsApp.
+  - DROP formal de tablas legacy (`Integration`, `WhatsAppConnection(±Event)`, `WhatsAppConversation`, `WhatsAppMessage`) reduciendo de 47 a 43 modelos canónicos.
+  - TypeScript 0 errores, seguridad y PII limpios.
 
 ### Hallazgos de Higiene Inmediatos en CI — CERRADO 2026-11-20
 - [x] **check:pii**: Incorporados a `FICTITIOUS_EXACT` en `scripts/check-pii.mjs` los números ficticios colombianos añadidos en `scripts/demo-sectors.mjs` y pruebas de integración (`ad09b99`). `npm run check:pii` exit 0 (árbol limpio).

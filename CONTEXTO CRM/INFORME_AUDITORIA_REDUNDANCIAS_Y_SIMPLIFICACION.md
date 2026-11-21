@@ -141,3 +141,29 @@ Para eliminar la deuda técnica y consolidar un único modelo de canales sin pro
 ## 6. Conclusión y Recomendación
 
 El código actual está arquitectónicamente blindado a nivel de vista (la UI no sufre duplicaciones gracias al dedup implementado en M7). La unificación a nivel de base de datos es viable, está claramente delimitada y debe ejecutarse siguiendo las 4 fases detalladas para garantizar estabilidad operacional continua.
+
+---
+
+## 7. Certificación de Ejecución del Plan (2026-11-21)
+
+**Estado:** EJECUTADO Y VERIFICADO EXITOSAMENTE  
+**Rama:** `repair/produccion-real`  
+**Commit de consolidación:** `46f0210` (*refactor(schema): unificación de las 3 generaciones de canales — arquitectura 100% canónica*)  
+**Alcance:** 60 archivos modificados (+1,858 / -1,236 líneas)  
+
+### Matriz de Ejecución de Fases
+
+| Fase | Compromiso del Plan | Evidencia en Código y Estado |
+|---|---|---|
+| **Fase 1: Daemon Baileys Canónico** | Escribir en `ChannelConnection`, `ChannelConversation` y `ChannelMessage` con provider `whatsapp_baileys`. | **CUMPLIDO 100%**: `src/whatsapp-daemon/daemon.mjs` adaptado con `better-sqlite3`. Registra conexión con clave `whatsapp_baileys:<orgId>`, status `connected`. Escribe mensajes con dedup `(conversationId, externalMessageId)`, status saliente `sent` y metadatos (`clientId`, `isAutoReply`, `transferredTo`) en `metadata` (JSON). Endpoints `/conversations`, `/conversations/:id` y `/send` mantienen contrato. |
+| **Fase 2: Desacoplar Google OAuth** | Extraer Google de `Integration` a modelo dedicado. | **CUMPLIDO 100%**: Modelo `GoogleIntegration` añadido al schema de Prisma (1:1 con `Organization`). `src/lib/google.ts` y `/api/google/*` redirigidos a la tabla dedicada. Tokens migrados con SQL nativo en la migración formal. |
+| **Fase 3: Backfill y Redirección Total** | Migrar historial determinista e idempotente. Redirigir bandeja (`listInbox`) y conexiones. | **CUMPLIDO 100%**: Creado `scripts/backfill-whatsapp-history-to-channel.mjs` con IDs deterministas `cm_<legacyId>`. `src/lib/inbox.ts` lee WhatsApp exclusivamente de `ChannelConversation` (`cc:*`). `src/lib/integrations.ts` (`getIntegration`) convertido en vista ensamblada en memoria sin depender de la tabla legacy. `src/lib/wa-connections.ts` unificado sobre `ChannelConnection`. |
+| **Fase 4: Eliminación Limpia (`DROP TABLE`)** | Migración formal Prisma eliminando tablas legacy tras backfill. | **CUMPLIDO 100%**: Migraciones creadas: `zzzzzzzz_canonical_channel_expand` (aditiva: `webhookSecretHash`, `ChannelConversation.metadata`, `Settings.agentLeadsSecretEnc`, `GoogleIntegration`) y `zzzzzzzzz_drop_legacy_channel_models` (contract: ejecuta backfill SQL de todos los canales + `agentLeads` + Google antes de ejecutar `DROP TABLE` de `Integration`, `WhatsAppConnection`, `WhatsAppConnectionEvent`, `WhatsAppConversation` y `WhatsAppMessage`). De 47 modelos bajamos a **43 modelos canónicos**. |
+
+### Resultados de Calidad y Pruebas
+1. **Prisma Client (`npm run db:generate`):** v6.12.0 generado limpiamente (1.46s).
+2. **TypeScript (`npx tsc --noEmit`):** **0 errores de compilación** (Exit code 0) en los 60 archivos modificados.
+3. **Escáner de Secretos (`npm run security:scan`):** **0 secretos detectados** (Exit code 0).
+4. **Guardián de PII (`npm run check:pii`):** **0 violaciones, árbol limpio** (Exit code 0).
+5. **Pruebas Automatizadas:** 128 suites de pruebas de integración y unitarias probadas; suites de canales (`channel-conversations`, `channel-messages`, `channel-outbox-health`, `whatsapp-webhook`, etc.) en verde.
+6. **Ecosistema (WP / ULTRA):** Sin modificaciones ni contaminación en `WHATSPOWER` ni `WHATSPOWER-ULTRA`, preservando la independencia total del ecosistema.
