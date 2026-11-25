@@ -1,15 +1,15 @@
 # Estado actual
 
-**Base revisada:** rama main; README, esquema Prisma, daemon Baileys, webhook Instagram y docs/HARNESS.md. Revisión selectiva, sin ejecutar pruebas ni inspeccionar el despliegue.
+**Base revisada:** rama `repair/produccion-real` (última actualización: 2026-11-26, corrección A-010 de la migración destructiva). Las secciones siguientes son un registro cronológico; cada hallazgo conserva su fecha de verificación y los que fueron corregidos están marcados como supersedidos en su propia sección.
 
 ## Capacidades declaradas
 CRM multi-tenant con organizaciones, usuarios, clientes, oportunidades, pipeline, reservas, cotizaciones, finanzas, reportes, equipo, automatizaciones, WhatsApp, Instagram, Telegram, Google, SMTP, contratos REST/MCP y memoria MemoryDV. Docker separa aplicación y daemon WhatsApp. Son declaraciones de documentación, no certificación de producción.
 
-## Evidencia en código
-- Organization es raíz del esquema Prisma y modelos comerciales usan organizationId.
-- Integration.organizationId tiene restricción única: una configuración Integration por organización, no un registro N-a-N de cuentas por canal.
-- daemon.mjs mantiene un socket, estado de conexión y linkedOrgId globales; la sesión Baileys se almacena en un directorio local. No acredita múltiples sesiones simultáneas.
-- Webhook Instagram verifica HMAC, pero permite matching cuando instagramAccountId no está configurado. Se requiere resolución exacta y no ambigua.
+## Evidencia en código (estado vigente, actualizado 2026-11-26)
+- Organization es raíz del esquema Prisma y los modelos comerciales usan organizationId.
+- **Canales: arquitectura 100% canónica desde 2026-11-21** — `ChannelConnection` / `ChannelConversation` / `ChannelMessage` + `GoogleIntegration` (1:1 por org para Google). Las tablas legacy (`Integration`, `WhatsAppConnection`, `WhatsAppConnectionEvent`, `WhatsAppConversation`, `WhatsAppMessage`) fueron dropeadas por la migración formal `zzzzzzzzz_drop_legacy_channel_models`, corregida el 2026-11-26 tras el hallazgo A-010 (blobs cifrados no son JSON; ver `AUDITORIAS.md`). 43 modelos Prisma.
+- **daemon.mjs (WhatsApp Baileys):** sesiones independientes por organización (`Map<orgId, sesión>`, credenciales separadas en `.wa-auth/<orgId>/`) — verificado directamente el 2026-11-06 (sección P0.1) — y desde 2026-11-21 escribe directamente en las tablas canónicas vía better-sqlite3, registrando la conexión con la clave `whatsapp_baileys:<orgId>`. La descripción histórica de «un solo socket y linkedOrgId globales» queda supersedida.
+- **Webhook Instagram:** verificación ESTRICTA de `X-Hub-Signature-256` (HMAC-SHA256 del body crudo con el App Secret cifrado por organización) y matching EXACTO `entry[].id === ChannelConnection.externalAccountId` — la resolución multi-tenant no es ambigua. El hallazgo histórico de matching permisivo queda supersedido.
 - docs/HARNESS.md describe REST /api/crm/actions, MCP /api/mcp y MemoryDV.
 
 ## Actualización de seguridad — 2026-11-05
@@ -400,3 +400,14 @@ Re-emparejamiento con el remoto (PAT nuevo verificado en git y REST), línea bas
 - Las tablas legacy (`Integration`, `WhatsAppConnection(±Event)`, `WhatsAppConversation`, `WhatsAppMessage`) fueron DROPEADAS por migración formal con backfill previo (cero pérdida verificada sobre datos sintéticos con paridad exacta).
 - El daemon Baileys escribe directamente en el modelo canónico vía better-sqlite3 (sin Prisma) y registra su conexión con la misma clave `whatsapp_baileys:<orgId>` que el backfill y la migración.
 - La bandeja (`listInbox`) lee WhatsApp exclusivamente del modelo canónico; Telegram/Instagram/Facebook siguen derivando de Timeline hasta que sus conversaciones canónicas acumulen historial (comportamiento documentado en el plan de unificación).
+
+## Sesión 2026-11-26 — Corrección A-010: migración destructiva con blobs cifrados y backfill v2
+
+- **Hallazgo del propietario + Antigravity** sobre `repair/produccion-real` @ `d3f34ff`: `zzzzzzzzz_drop_legacy_channel_models` abortaba con «malformed JSON» si existía una fila `Integration` con `facebookTokenEnc` o `tiktokTokenEnc` no nulos — son blobs cifrados `v1:iv:tag:datos` (AES-256-GCM), NO JSON, y las sentencias 3e/3f usaban `json_extract` sobre ellos.
+- **Segundo hallazgo destapado por la prueba exigida**: la sentencia 3c (Telegram) escribía `externalAccountId = NULL` contra una columna NOT NULL y el `INSERT OR IGNORE` descartaba la fila en silencio — la conexión Telegram nunca migraba (pérdida silenciosa). Corregido con el mismo patrón de identidad estable.
+- **Migración v2**: cero `json_extract` sobre columnas cifradas (los únicos usos de JSON son `json_object`, constructor seguro); Facebook por `facebookPageId` plana — sin pageId/token la fila NO se migra y queda constancia en `ChannelConnectionEvent` (`migration_backfill_skipped`, sin secretos); Telegram/TikTok con clave estable por organización, blob cifrado copiado tal cual y `metadata.pendingDecrypt` declarado.
+- **Prueba automatizada nueva** (`tests/integration/migration-drop-legacy-channels.test.ts`, A1–A13): construye una BD SQLite efímera con todas las migraciones, siembra las 3 generaciones legacy realistas (tokens `v1:...` no-JSON, 2 organizaciones, Facebook con y sin pageId), aplica las dos migraciones finales y verifica conteos, texto intacto, blobs byte a byte y PRAGMAs limpios. **Falla con «malformed JSON» antes del fix (verificado) y pasa 13/13 después.**
+- **`scripts/backfill-channel-connections.ts` v2**: lecturas legacy por SQL crudo con guarda de existencia (el cliente Prisma ya no expone `db.integration`/`db.whatsAppConnection` — el script quedó roto en runtime tras la unificación) y pase de **enriquecimiento Telegram/TikTok** idempotente que descifra con la clave de la app y rellena botId/openId/displayName, con reporte de duplicados. Smoke real: dry-run `wouldEnrich=2` → apply `enriched=2` → re-run idempotente → `integrity_check=ok`.
+- **Runbook de migración/reversión** añadido a `AUDITORIAS.md` (A-010) y **verificado empíricamente con el motor real de Prisma**: deploy completo 21/21; abort reproducido con la migración original (error idéntico); rollback total sin backfill parcial (`Integration` intacta, `ChannelConnection` en 0, registro `finished_at NULL`); `prisma migrate resolve --rolled-back` operativo; redeploy con v2 exitoso sobre la misma BD (TikTok migrado + constancia Facebook + integridad ok).
+- **Puertas de calidad (reales, esta sesión):** `npx tsc --noEmit` 0 errores; suite completa **129/129 archivos, 1117/1117 pruebas** (incluye la nueva de migración); `npm run security:scan` 0 secretos; `npm run check:pii` árbol limpio. Bloque canónico de `PRODUCTION_READINESS.md` actualizado (`archivos_prueba: 129`).
+- Sin cambios en WHATSPOWER ni WHATSPOWER-ULTRA. Sin force push; commit normal sobre `repair/produccion-real`.

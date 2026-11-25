@@ -2,6 +2,17 @@
 -- Backfill de datos + DROP de Integration, WhatsAppConnection(±Event),
 -- WhatsAppConversation y WhatsAppMessage. El backfill corre ANTES de los DROP:
 -- CERO PÉRDIDA incluso si no se ejecutó el backfill TS.
+--
+-- v2 (2026-11-26, hallazgo A-010): facebookTokenEnc y tiktokTokenEnc son blobs
+-- cifrados "v1:iv:tag:datos" (AES-256-GCM), NO JSON. json_extract sobre ellos
+-- abortaba la migración con "malformed JSON". Reglas vigentes:
+--   * NINGÚN json_extract sobre columnas cifradas (los únicos usos de JSON en
+--     este archivo son json_object, constructor seguro que nunca parsea entrada).
+--   * Facebook: identidad SOLO por Integration.facebookPageId (columna plana);
+--     si falta, la fila NO se migra y se deja constancia en ChannelConnectionEvent.
+--   * Telegram/TikTok: clave estable por organización, blob cifrado copiado tal
+--     cual; botId/openId/displayName los rellena el backfill TS descifrando con
+--     la clave de la app (scripts/backfill-channel-connections.ts), nunca SQL.
 
 
 -- ============================================================
@@ -39,10 +50,15 @@ FROM "Integration" i
 WHERE i."whatsappPhoneId" IS NOT NULL AND i."whatsappCloudTokenEnc" IS NOT NULL;
 
 -- 3c) Telegram: Integration → ChannelConnection (blob + hash del secret del webhook)
+--     externalAccountId es NOT NULL y el botId vive DENTRO del blob cifrado
+--     (formato "<botId>:<secret>"): SQL no puede descifrarlo, así que se usa el
+--     placeholder organizationId (antes NULL violaba el NOT NULL y el INSERT OR
+--     IGNORE descartaba la fila en silencio — hallazgo A-010). El backfill TS
+--     rellena el botId descifrando con la clave de la app, nunca SQL.
 INSERT OR IGNORE INTO "ChannelConnection" ("id", "organizationId", "channel", "provider", "providerAccountKey", "externalAccountId", "displayName", "status", "credentialsEnc", "webhookSecretHash", "metadata", "createdAt", "updatedAt")
-SELECT 'conn_tg_' || i."organizationId", i."organizationId", 'telegram', 'telegram_bot', 'telegram:org:' || i."organizationId", NULL, NULL,
+SELECT 'conn_tg_' || i."organizationId", i."organizationId", 'telegram', 'telegram_bot', 'telegram:org:' || i."organizationId", i."organizationId", NULL,
        CASE WHEN i."enableTelegram" = 1 THEN 'connected' ELSE 'pending' END, i."telegramBotTokenEnc", i."telegramSecretHash",
-       json_object('legacyBackfill', 'Integration.telegram'),
+       json_object('legacyBackfill', 'Integration.telegram', 'pendingDecrypt', 'botId'),
        COALESCE(i."updatedAt", CURRENT_TIMESTAMP), COALESCE(i."updatedAt", CURRENT_TIMESTAMP)
 FROM "Integration" i
 WHERE i."telegramBotTokenEnc" IS NOT NULL;
@@ -57,19 +73,40 @@ FROM "Integration" i
 WHERE i."instagramAccountId" IS NOT NULL AND i."instagramTokenEnc" IS NOT NULL;
 
 -- 3e) Facebook/Messenger: Integration → ChannelConnection
+--     La identidad sale SOLO de Integration.facebookPageId (columna plana).
+--     facebookTokenEnc es un blob cifrado (v1:iv:tag:datos): jamás json_extract.
 INSERT OR IGNORE INTO "ChannelConnection" ("id", "organizationId", "channel", "provider", "providerAccountKey", "externalAccountId", "displayName", "status", "credentialsEnc", "metadata", "createdAt", "updatedAt")
-SELECT 'conn_fb_' || i."organizationId", i."organizationId", 'messenger', 'meta_graph', 'meta:messenger:' || COALESCE(NULLIF(json_extract(i."facebookTokenEnc", '$.pageId'), ''), i."facebookPageId"), COALESCE(i."facebookPageId", json_extract(i."facebookTokenEnc", '$.pageId')), i."facebookPageName",
+SELECT 'conn_fb_' || i."organizationId", i."organizationId", 'messenger', 'meta_graph', 'meta:messenger:' || i."facebookPageId", i."facebookPageId", i."facebookPageName",
        CASE WHEN i."enableFacebook" = 1 THEN 'connected' ELSE 'pending' END, i."facebookTokenEnc",
        json_object('legacyBackfill', 'Integration.facebook', 'userEmail', i."facebookUserEmail"),
        COALESCE(i."updatedAt", CURRENT_TIMESTAMP), COALESCE(i."updatedAt", CURRENT_TIMESTAMP)
 FROM "Integration" i
-WHERE i."facebookTokenEnc" IS NOT NULL AND (i."facebookPageId" IS NOT NULL OR json_extract(i."facebookTokenEnc", '$.pageId') IS NOT NULL);
+WHERE i."facebookTokenEnc" IS NOT NULL AND i."facebookPageId" IS NOT NULL;
+
+-- 3e-bis) Constancia de filas Facebook con datos parciales NO migradas:
+--     el blob cifrado no se puede leer en SQL (no es JSON) y ChannelConnection
+--     exige credentialsEnc NOT NULL, así que una fila sin token, o sin pageId,
+--     no puede migrarse. Se registra en ChannelConnectionEvent (connectionId
+--     NULL, sin secretos en el detalle) para que el operador la rescatase con
+--     el backfill TS ANTES del DROP o la reconstruya después por OAuth.
+INSERT OR IGNORE INTO "ChannelConnectionEvent" ("id", "organizationId", "connectionId", "type", "detail", "createdAt")
+SELECT 'cce_fb_skip_' || i."organizationId", i."organizationId", NULL, 'migration_backfill_skipped',
+       json_object('legacyTable', 'Integration', 'channel', 'messenger',
+                   'reason', CASE WHEN i."facebookPageId" IS NULL THEN 'missing_facebookPageId' ELSE 'missing_facebookTokenEnc' END,
+                   'note', 'fila legacy no migrada; sin secretos en este detalle'),
+       COALESCE(i."updatedAt", CURRENT_TIMESTAMP)
+FROM "Integration" i
+WHERE (i."facebookTokenEnc" IS NOT NULL OR i."facebookPageId" IS NOT NULL)
+  AND (i."facebookTokenEnc" IS NULL OR i."facebookPageId" IS NULL);
 
 -- 3f) TikTok: Integration → ChannelConnection
+--     Clave estable que NO depende del blob: tiktok:business:<organizationId>.
+--     El blob cifrado se copia tal cual a credentialsEnc; openId/displayName los
+--     rellena el backfill TS (descifra con la clave de la app), nunca SQL.
 INSERT OR IGNORE INTO "ChannelConnection" ("id", "organizationId", "channel", "provider", "providerAccountKey", "externalAccountId", "displayName", "status", "credentialsEnc", "metadata", "createdAt", "updatedAt")
-SELECT 'conn_tt_' || i."organizationId", i."organizationId", 'tiktok', 'tiktok_business', 'tiktok:business:' || COALESCE(json_extract(i."tiktokTokenEnc", '$.openId'), i."organizationId"), json_extract(i."tiktokTokenEnc", '$.openId'), json_extract(i."tiktokTokenEnc", '$.displayName'),
+SELECT 'conn_tt_' || i."organizationId", i."organizationId", 'tiktok', 'tiktok_business', 'tiktok:business:' || i."organizationId", i."organizationId", NULL,
        CASE WHEN i."enableTikTok" = 1 THEN 'connected' ELSE 'pending' END, i."tiktokTokenEnc",
-       json_object('legacyBackfill', 'Integration.tiktok'),
+       json_object('legacyBackfill', 'Integration.tiktok', 'pendingDecrypt', 'openId,displayName'),
        COALESCE(i."updatedAt", CURRENT_TIMESTAMP), COALESCE(i."updatedAt", CURRENT_TIMESTAMP)
 FROM "Integration" i
 WHERE i."tiktokTokenEnc" IS NOT NULL;

@@ -9,6 +9,16 @@
  * Nunca actualiza ni borra Integration/WhatsAppConnection. Los conflictos
  * (misma clave de proveedor asociada a otro tenant o datos incompatibles) se
  * reportan como conteos sin revelar IDs, tokens o nombres de cuenta.
+ *
+ * v2 (2026-11-26, hallazgo A-010):
+ *  - Las tablas legacy se leen por SQL crudo SI EXISTEN (el cliente Prisma ya
+ *    no tiene esos delegados tras la unificación). Después del DROP la parte
+ *    legacy se omite y el script sigue siendo útil.
+ *  - Pase de ENRIQUECIMIENTO Telegram/TikTok: la migración SQL crea las
+ *    conexiones con claves estables por organización y los blobs cifrados tal
+ *    cual (no son JSON y SQL no puede descifrarlos). Este script descifra con
+ *    la clave de la app y rellena la identidad real (botId / openId) y
+ *    displayName en las filas canónicas. Nunca SQL.
  */
 import { db } from '../src/lib/db'
 import { decryptSecret, encryptSecret } from '../src/lib/crypto'
@@ -60,6 +70,72 @@ function safeParseState<T extends object>(parser: (value: string | null | undefi
   } catch {
     return {} as T
   }
+}
+
+function safeJsonParse(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+// Lecturas legacy por SQL crudo: tras el DROP (migración
+// zzzzzzzzz_drop_legacy_channel_models) estas tablas ya no existen y el cliente
+// Prisma ya no expone sus delegados. Existencia primero, SELECT después.
+type LegacyWhatsAppConnectionRow = {
+  id: string
+  organizationId: string
+  wabaId: string | null
+  phoneNumberId: string
+  phoneNumber: string
+  displayName: string | null
+  accessTokenEnc: string
+  metaAppSecretEnc: string | null
+  webhookVerifyToken: string
+  status: string
+}
+
+type LegacyIntegrationRow = {
+  organizationId: string
+  telegramBotTokenEnc: string | null
+  telegramSecret: string | null
+  instagramTokenEnc: string | null
+  instagramAccountId: string | null
+  metaAppSecretEnc: string | null
+  whatsappPhoneId: string | null
+  whatsappCloudTokenEnc: string | null
+  facebookTokenEnc: string | null
+  facebookPageId: string | null
+  facebookPageName: string | null
+  tiktokTokenEnc: string | null
+  enableWhatsApp: number
+  enableTelegram: number
+  enableInstagram: number
+  enableFacebook: number
+  enableTikTok: number
+}
+
+type CanonicalConnectionRow = {
+  id: string
+  organizationId: string
+  providerAccountKey: string
+  externalAccountId: string
+  displayName: string | null
+  credentialsEnc: string
+  metadata: string | null
+}
+
+async function tableExists(table: string): Promise<boolean> {
+  const rows = await db.$queryRawUnsafe<{ n: number }[]>(
+    `SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    table
+  )
+  return Number(rows[0]?.n ?? 0) > 0
 }
 
 async function persistPlan(plan: ConnectionPlan): Promise<Result> {
@@ -146,9 +222,21 @@ async function main() {
 
   const plans: ConnectionPlan[] = []
 
+  // Las tablas legacy desaparecen con el DROP: si ya no existen, la parte
+  // legacy se omite limpiamente (el enriquecimiento TikTok sigue aplicando).
+  const legacyWhatsApp = (await tableExists('WhatsAppConnection'))
+    ? await db.$queryRawUnsafe<LegacyWhatsAppConnectionRow[]>(
+        `SELECT "id", "organizationId", "wabaId", "phoneNumberId", "phoneNumber", "displayName", "accessTokenEnc", "metaAppSecretEnc", "webhookVerifyToken", "status" FROM "WhatsAppConnection"`
+      )
+    : []
+  const legacyIntegrations = (await tableExists('Integration'))
+    ? await db.$queryRawUnsafe<LegacyIntegrationRow[]>(
+        `SELECT "organizationId", "telegramBotTokenEnc", "telegramSecret", "instagramTokenEnc", "instagramAccountId", "metaAppSecretEnc", "whatsappPhoneId", "whatsappCloudTokenEnc", "facebookTokenEnc", "facebookPageId", "facebookPageName", "tiktokTokenEnc", "enableWhatsApp", "enableTelegram", "enableInstagram", "enableFacebook", "enableTikTok" FROM "Integration"`
+      )
+    : []
+
   // WhatsApp Cloud: prefer the per-number inventory; preserve legacy lifecycle.
-  const whatsappConnections = await db.whatsAppConnection.findMany()
-  for (const legacy of whatsappConnections) {
+  for (const legacy of legacyWhatsApp) {
     const phoneId = legacy.phoneNumberId?.trim()
     const accessToken = safeDecrypt(legacy.accessTokenEnc)
     if (!phoneId || !accessToken) {
@@ -185,8 +273,7 @@ async function main() {
   }
 
   // Legacy single-account Integration records: create only when identity + token are exact.
-  const integrations = await db.integration.findMany()
-  for (const legacy of integrations) {
+  for (const legacy of legacyIntegrations) {
     const appSecret = safeDecrypt(legacy.metaAppSecretEnc) || process.env.META_APP_SECRET || null
 
     if (legacy.instagramAccountId && legacy.instagramTokenEnc && legacy.enableInstagram) {
@@ -338,6 +425,111 @@ async function main() {
     const result = await persistPlan(plan)
     count(plan.channel, result)
   }
+
+  // ENRIQUECIMIENTO Telegram/TikTok (A-010): la migración SQL copia los blobs
+  // cifrados tal cual con claves estables por organización (telegram:org:<orgId>,
+  // tiktok:business:<orgId>) porque SQL no puede descifrar. Aquí se descifra con
+  // la clave de la app y se rellena la identidad real en externalAccountId
+  // (botId / openId) y displayName. Idempotente por metadata.enrichedAt; jamás
+  // imprime identificadores de cuenta ni secretos.
+  const enrich = {
+    scanned: 0,
+    enriched: 0,
+    wouldEnrich: 0,
+    indescifrable: 0,
+    duplicateWithTsKey: 0,
+    alreadyEnriched: 0,
+  }
+
+  type EnrichSpec = {
+    provider: string
+    marker: string
+    keyPrefix: string
+    identity: (credentialsEnc: string) => string | null
+    displayName: (credentialsEnc: string) => string | null
+  }
+
+  const enrichSpecs: EnrichSpec[] = [
+    {
+      provider: 'telegram_bot',
+      marker: 'Integration.telegram',
+      keyPrefix: 'telegram:bot:',
+      identity: (credentialsEnc) => safeDecrypt(credentialsEnc)?.match(/^(\d+):/)?.[1] ?? null,
+      displayName: () => null,
+    },
+    {
+      provider: 'tiktok_business',
+      marker: 'Integration.tiktok',
+      keyPrefix: 'tiktok:business:',
+      identity: (credentialsEnc) => safeParseState(parseTikTokState, credentialsEnc).openId ?? null,
+      displayName: (credentialsEnc) => safeParseState(parseTikTokState, credentialsEnc).displayName ?? null,
+    },
+  ]
+
+  for (const spec of enrichSpecs) {
+    if (!(await tableExists('ChannelConnection'))) break
+    const rows = await db.$queryRawUnsafe<CanonicalConnectionRow[]>(
+      `SELECT "id", "organizationId", "providerAccountKey", "externalAccountId", "displayName", "credentialsEnc", "metadata"
+       FROM "ChannelConnection"
+       WHERE "provider" = ?
+         AND "externalAccountId" = "organizationId"
+         AND "metadata" LIKE ?`,
+      spec.provider,
+      `%${spec.marker}%`
+    )
+    for (const row of rows) {
+      enrich.scanned += 1
+      const meta = safeJsonParse(row.metadata)
+      if (meta && typeof meta.enrichedAt === 'string') {
+        enrich.alreadyEnriched += 1
+        continue
+      }
+      const identity = spec.identity(row.credentialsEnc)
+      if (!identity) {
+        enrich.indescifrable += 1
+        continue
+      }
+      const canonicalKey = `${spec.keyPrefix}${identity}`
+      const clash = await db.channelConnection.findFirst({
+        where: { providerAccountKey: canonicalKey, NOT: { id: row.id } },
+        select: { id: true },
+      })
+      if (clash) {
+        // El backfill TS ya creó la conexión con clave por identidad real antes
+        // del DROP: la fila migrada por SQL es duplicado; se reporta sin tocarla.
+        enrich.duplicateWithTsKey += 1
+        continue
+      }
+      if (!apply) {
+        enrich.wouldEnrich += 1
+        continue
+      }
+      const newMeta = JSON.stringify({
+        ...(meta ?? {}),
+        legacyBackfill: spec.marker,
+        enrichedBy: 'backfill-channel-connections',
+        enrichedAt: new Date().toISOString(),
+      })
+      await db.channelConnection.update({
+        where: { id: row.id },
+        data: {
+          externalAccountId: identity,
+          displayName: row.displayName ?? spec.displayName(row.credentialsEnc),
+          metadata: newMeta,
+        },
+      })
+      await db.channelConnectionEvent.create({
+        data: {
+          organizationId: row.organizationId,
+          connectionId: row.id,
+          type: 'legacy_backfill_enriched',
+          detail: `source=${spec.marker}; identidad real rellenada descifrando el blob legacy (sin secretos en el detalle)`,
+        },
+      })
+      enrich.enriched += 1
+    }
+  }
+  Object.assign(totals, { legacyIdentityEnrichment: enrich })
 
   console.log(JSON.stringify(totals, null, 2))
   if (totals.conflicts > 0) process.exitCode = 2

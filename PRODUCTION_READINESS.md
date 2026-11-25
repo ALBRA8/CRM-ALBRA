@@ -49,7 +49,7 @@ sigue se escribe a mano:
 
 <!-- FIGURAS-CANONICAS-INICIO (verificado por scripts/verify-doc-figures.mjs — no editar a mano) -->
 rutas_api: 128
-archivos_prueba: 128
+archivos_prueba: 129
 modelos_prisma: 43
 migraciones: 21
 componentes_ui: 106

@@ -441,9 +441,11 @@ Correcciones entregadas por el constructor (z.ai) y verificadas por Antigravity 
 - [x] FASE 4: DROP formal de Integration/WhatsAppConnection(±Event)/WhatsAppConversation/WhatsAppMessage con backfill previo; tsc 0 errores; 1104/1104 tests; security:scan y check:pii limpios.
 
 ### Pendiente operacional (despliegue a producción, requiere la máquina del propietario)
-- [ ] Ejecutar backup completo y drill antes de migrar (scripts/backup-restore-drill.sh).
+- [ ] Ejecutar backup completo y drill antes de migrar (scripts/backup-restore-drill.sh); respaldo `VACUUM INTO` con `PRAGMA integrity_check = ok` — runbook en `AUDITORIAS.md` (A-010).
 - [ ] (Opcional, recomendado) `BACKFILL_WHATSAPP_HISTORY_CONFIRM=1 node scripts/backfill-whatsapp-history-to-channel.mjs --apply` — verificación previa de paridad.
-- [ ] `npx prisma migrate deploy` (aplica expand → contract; la contract incluye el backfill SQL de todos los canales).
+- [ ] (Recomendado ANTES del deploy) dry-run del backfill TS `bun run scripts/backfill-channel-connections.ts` — reporta filas Facebook sin `facebookPageId` que NO son recuperables tras el DROP; rescatarlas con `--apply` si el dry-run las detecta.
+- [ ] `npx prisma migrate deploy` (aplica expand → contract v2 corregida A-010; la contract incluye el backfill SQL de todos los canales; si aborta, `prisma migrate resolve --rolled-back` y reintento — verificado empíricamente 2026-11-26).
+- [ ] POST-migración: enriquecimiento de identidades `bun run scripts/backfill-channel-connections.ts` (dry-run) y `BACKFILL_CHANNEL_CONNECTIONS_CONFIRM=1 ... --apply` — rellena botId de Telegram y openId/displayName de TikTok descifrando con la clave de la app.
 - [ ] Verificación post-migración: `node scripts/verify-unification.mjs` (0 tablas legacy, paridad de conteos) + suite completa + smoke del daemon QR y de la bandeja.
 - [ ] Las conexiones Telegram migradas desde Integration conservan el secret del webhook (hash copiado a webhookSecretHash); verificar un update real tras el despliegue.
 - [ ] Las conversaciones Telegram/Instagram/Facebook históricas siguen en Timeline (no se migran a Channel*); visible en ficha 360. Migración de ese historial queda como fase posterior opcional si el negocio la requiere.

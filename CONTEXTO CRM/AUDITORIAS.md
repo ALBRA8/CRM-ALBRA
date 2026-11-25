@@ -266,4 +266,68 @@ Los 9 kits de integración preparados en `CRM-ALBRA/integration-kits/wp-ultra/` 
 - **Pruebas Automatizadas:** 128 suites de prueba; pruebas de canales canónicos, webhooks y outbox en verde.
 - **Ecosistema:** WHATSPOWER y WHATSPOWER-ULTRA conservados intactos e independientes.
 
+### Hallazgo y corrección post-cierre (2026-11-26) — migración destructiva con blobs cifrados
+
+**Disparador:** el propietario y Antigravity revisaron la rama `repair/produccion-real` (@ `d3f34ff`) y la migración `zzzzzzzzz_drop_legacy_channel_models` **abortaba con «malformed JSON»** cuando existía una fila `Integration` con `facebookTokenEnc` o `tiktokTokenEnc` no nulos.
+
+**Causa raíz (confirmada):** esas columnas guardan blobs cifrados AES-256-GCM en formato `v1:iv:tag:datos` (`encryptSecret`, `src/lib/crypto.ts`), **NO JSON**. Las sentencias 3e (Facebook) y 3f (TikTok) del backfill SQL usaban `json_extract(i."facebookTokenEnc", '$.pageId')` y `json_extract(i."tiktokTokenEnc", '$.openId'|'$.displayName')`, que abortan sobre texto no-JSON.
+
+**Hallazgo adicional del mismo tipo — pérdida silenciosa:** la sentencia 3c (Telegram) escribía `externalAccountId = NULL` contra una columna `NOT NULL`; el `INSERT OR IGNORE` tragaba la violación y **la conexión Telegram nunca se migraba** (el bot se perdía al hacer DROP). La prueba automatizada con semilla realista la destapó.
+
+**Corrección (v2 de la migración):**
+1. **Cero `json_extract` sobre columnas cifradas.** Los únicos usos de JSON que quedan son `json_object` (constructor, nunca parsea entrada): no puede abortar. No quedó ningún `json_extract` que proteger con `json_valid`; la prueba añade una aserción estática (A12) que impide reintroducirlo.
+2. **Facebook:** identidad SOLO por `Integration.facebookPageId` (columna plana). Si falta `facebookPageId` o falta el token, la fila NO se migra y se deja **constancia** en `ChannelConnectionEvent` (`type='migration_backfill_skipped'`, razón `missing_facebookPageId`/`missing_facebookTokenEnc`, `connectionId` NULL, sin secretos en el detalle). El blob cifrado jamás se lee en SQL.
+3. **Telegram/TikTok:** clave estable que no depende del blob (`telegram:org:<organizationId>`, `tiktok:business:<organizationId>`), blob cifrado copiado tal cual a `credentialsEnc`, `externalAccountId` = organizationId como placeholder, `metadata.pendingDecrypt` declarado. El script TS de backfill rellena la identidad real (botId / openId / displayName) **descifrando con la clave de la app, nunca en SQL**.
+4. **WhatsApp/Instagram/Google/agentLeads:** sin cambios (no leían blobs con `json_extract`).
+
+**Prueba automatizada (`tests/integration/migration-drop-legacy-channels.test.ts`, 13 aserciones):** construye una base SQLite efímera con TODAS las migraciones hasta antes de las dos finales, siembra las 3 generaciones de datos legacy REALISTAS (WhatsApp Cloud, Baileys, Google, Telegram, Instagram, Facebook ×2 —con y sin `facebookPageId`— y TikTok, todos los tokens en formato `v1:...:...:...` no-JSON, 2 organizaciones para verificar aislamiento), aplica `zzzzzzzz_canonical_channel_expand` + `zzzzzzzzz_drop_legacy_channel_models` y verifica: migración OK, 5 tablas legacy eliminadas, conteos exactos de `ChannelConnection` (8) / `ChannelConversation` (2) / `ChannelMessage` (3), texto de mensajes intacto (acentos incluidos), blobs copiados byte a byte, constancia del skip Facebook y `PRAGMA integrity_check`/`foreign_key_check` limpios. **Demostración real: antes del fix falla con «malformed JSON» (13 tests abortados); después pasa 13/13.**
+
+**Backfill TS v2 (`scripts/backfill-channel-connections.ts`):** las lecturas legacy se hacen por SQL crudo con guarda de existencia en `sqlite_master` — el cliente Prisma ya no expone `db.integration`/`db.whatsAppConnection` tras la unificación y el script quedó roto en runtime. Nuevo pase de **enriquecimiento Telegram/TikTok** idempotente (por `metadata.enrichedAt`): descifra el blob, rellena `externalAccountId` (botId/openId) y `displayName`, registra el evento `legacy_backfill_enriched`, reporta duplicados si el backfill TS ya creó la fila con clave por identidad real (sin modificarla) y jamás imprime identificadores ni secretos. Smoke verificado sobre BD migrada sintética: dry-run `wouldEnrich=2`, apply `enriched=2` (botId `1234567890` y openId/displayName TikTok rellenados), re-ejecución idempotente, `integrity_check=ok`.
+
+**Puertas de calidad tras la corrección (2026-11-26):** `npx tsc --noEmit` 0 errores; suite completa **129/129 archivos, 1117/1117 pruebas** (incluye la nueva A-010 de migración); `npm run security:scan` 0 secretos; `npm run check:pii` árbol limpio. Bloque canónico de `PRODUCTION_READINESS.md` actualizado a `archivos_prueba: 129` por `scripts/verify-doc-figures.mjs`.
+
+#### Runbook — migración destructiva en producción (corto)
+
+```bash
+# 0) RESPALDO PREVIO (obligatorio, con integridad verificada)
+sqlite3 db/custom.db "VACUUM INTO 'backups/crm-pre-unificacion-$(date +%Y%m%d-%H%M).db'"
+sqlite3 backups/crm-pre-unificacion-*.db "PRAGMA integrity_check;"   # debe responder: ok
+
+# 1) Estado de migraciones
+npx prisma migrate status
+
+# 2) Aplicar (expand → drop; Prisma envuelve CADA migración en una transacción:
+#    un abort revierte TODA la migración, sin backfill parcial)
+npx prisma migrate deploy
+
+# 3) Post-migración: enriquecimiento de identidades (Telegram botId, TikTok openId/displayName)
+DATABASE_URL=file:db/custom.db bun run scripts/backfill-channel-connections.ts           # dry-run
+DATABASE_URL=file:db/custom.db BACKFILL_CHANNEL_CONNECTIONS_CONFIRM=1 \
+  BACKFILL_CHANNEL_CONNECTIONS_ALLOW_PRODUCTION=1 bun run scripts/backfill-channel-connections.ts --apply
+
+# 4) Verificación
+npx prisma migrate status          # sin pendientes ni fallos
+node scripts/verify-unification.mjs # 0 tablas legacy, paridad de conteos
+```
+
+**Si una migración falla:**
+```bash
+npx prisma migrate status                                   # la muestra en "failed"
+npx prisma migrate resolve --rolled-back "zzzzzzzzz_drop_legacy_channel_models"
+# Corrige la causa (esta rama ya trae la v2 corregida) y reintenta:
+npx prisma migrate deploy
+```
+Gracias a la transacción por migración no queda backfill parcial tras un abort; no es necesario restaurar respaldo por el solo hecho de abortar.
+
+**Verificación empírica del runbook (2026-11-26, motor real de Prisma sobre SQLite):**
+1. `prisma migrate deploy` con la cadena completa (21 migraciones) sobre BD vacía → aplicadas todas; `integrity_check=ok`, `foreign_key_check` vacío, 0 tablas legacy.
+2. Con la migración ORIGINAL (d3f34ff) y una fila `Integration` con `facebookTokenEnc`/`tiktokTokenEnc` en formato `v1:...`: el deploy **aborta con el error exacto** `Database error code: 1 — malformed JSON`.
+3. Tras el abort: `Integration` y `WhatsAppConversation` SIGUEN existiendo con sus filas intactas, `ChannelConnection` en 0 (sin backfill parcial) y `_prisma_migrations` registra la migración con `finished_at NULL` y el error en `logs`.
+4. `prisma migrate resolve --rolled-back zzzzzzzzz_drop_legacy_channel_models` → marcada como rolled back; `migrate status` vuelve a estar operativo.
+5. Redeploy con la migración v2 corregida sobre la MISMA BD que antes abortaba → aplicada con éxito: TikTok migrado con clave estable `tiktok:business:<orgId>`, Facebook sin `facebookPageId` NO migrado con constancia en `ChannelConnectionEvent` (`reason=missing_facebookPageId`), `integrity_check=ok`.
+
+**Plan de reversión:** la migración es destructiva y no tiene inversa automática. Si tras aplicarla hay que volver atrás por un incidente: detener CRM y daemon, restaurar el respaldo del paso 0 en `db/custom.db` (procedimiento estándar de `scripts/backup-restore-drill.sh`) y NO volver a ejecutar `prisma migrate deploy` hasta reployar el código compatible con ese estado de `_prisma_migrations`. Las filas Facebook sin `facebookPageId` no son recuperables tras el DROP (así lo acepta el diseño); si existieran, rescatarlas ANTES del deploy con el dry-run del backfill TS, que las reporta.
+
+**Nota de verificación (2026-11-26):** esta corrección se validó en sandbox Linux con Node 24 y `node:sqlite` (SQLite 3.54.1). El fallo `spawn node_modules/.bin/vitest ENOENT` de `scheduler-multiprocess.test.ts` observado en el sandbox es artefacto del entorno (clon con `node_modules` parcial), no del repo: con el binario disponible el test pasa 1/1.
+
 
