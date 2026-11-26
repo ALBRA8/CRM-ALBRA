@@ -34,7 +34,12 @@ afterAll(async () => {
 
 describe('scheduler claims across independent Node processes', () => {
   it('creates exactly one durable run when two workers race for the same due automation', async () => {
-    const vitestBin = path.join(process.cwd(), 'node_modules', '.bin', 'vitest')
+    // Multiplataforma (Windows incluido): NO usar node_modules/.bin/vitest — en
+    // Windows es un shell script que execFile no puede ejecutar (no hay shebang,
+    // y el wrapper .cmd/.ps1 no sirve para execFile). Se invoca el punto de
+    // entrada real del paquete con el MISMO ejecutable de Node del proceso padre
+    // (hallazgo Antigravity 2026-11-26: ENOENT spawn node_modules/.bin/vitest).
+    const vitestMjs = path.join(process.cwd(), 'node_modules', 'vitest', 'vitest.mjs')
     const args = [
       'run',
       '--config',
@@ -49,8 +54,8 @@ describe('scheduler claims across independent Node processes', () => {
     // Each invocation starts a separate Vitest/Node process with its own
     // scheduler module state and Prisma client, sharing only the test SQLite file.
     const workers = await Promise.all([
-      execFileAsync(vitestBin, args, { cwd: process.cwd(), env, timeout: 90_000, maxBuffer: 4 * 1024 * 1024 }),
-      execFileAsync(vitestBin, args, { cwd: process.cwd(), env, timeout: 90_000, maxBuffer: 4 * 1024 * 1024 }),
+      execFileAsync(process.execPath, [vitestMjs, ...args], { cwd: process.cwd(), env, timeout: 90_000, maxBuffer: 4 * 1024 * 1024 }),
+      execFileAsync(process.execPath, [vitestMjs, ...args], { cwd: process.cwd(), env, timeout: 90_000, maxBuffer: 4 * 1024 * 1024 }),
     ])
 
     expect(workers).toHaveLength(2)

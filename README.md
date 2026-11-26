@@ -92,6 +92,25 @@ el servidor expuesto a internet. Pruebas: `tests/unit/session-cookie-flags.test.
 
 > **better-sqlite3 y Node 24:** better-sqlite3 es un módulo nativo compilado contra la ABI de la versión de Node con la que se instalaron las dependencias (`NODE_MODULE_VERSION` 115 en Node 22 vs 137 en Node 24). Si corres el proyecto con Node 24 y obtienes el error "was compiled against a different Node.js version", ejecuta `npm rebuild better-sqlite3` (o reinstala dependencias con tu Node activo). Recomendación: mantén Node 22 en desarrollo y producción para no tener que recompilar entre versiones.
 
+## Instalar en Windows (Build Tools de Visual Studio)
+
+`better-sqlite3` intenta primero descargar un **binario precompilado**. Cuando no hay uno para tu combinación exacta de versión de Node y sistema operativo (por ejemplo Node 24 recién salido, o si la descarga falla tras un proxy), npm **compila el módulo nativo** con `node-gyp`, y en Windows eso exige las herramientas de compilación de Visual Studio. Si la instalación falla con errores tipo `gyp ERR! find VS` o `MSBuild` no encontrado:
+
+1. Instala **Visual Studio 2022 Build Tools** (gratuito): [visualstudio.microsoft.com/downloads](https://visualstudio.microsoft.com/downloads/) → sección *Tools for Visual Studio* → *Build Tools for Visual Studio 2022*.
+2. En el instalador, marca el workload **"Desarrollo para escritorio con C++"** (incluye MSVC, Windows SDK y las opciones de CMake que `node-gyp` busca).
+3. Cierra y reabre la terminal (para refrescar el PATH) y reintenta:
+
+```powershell
+npm install
+npm rebuild better-sqlite3   # solo si el árbol ya estaba instalado a medias
+```
+
+También se necesita un **Python 3** en el PATH (node-gyp lo usa; en Windows 10/11: `python --version` o `winget install Python.Python.3.12`).
+
+Con Node 22 (la versión soportada por el repo) lo habitual es que el binario precompilado se descargue solo y **no haga falta compilar nada**; las Build Tools quedan como red de seguridad para rebuilds (`npm rebuild better-sqlite3`) o para versiones de Node sin binario publicado.
+
+**En Linux (y macOS) no se requiere nada de esto:** `better-sqlite3` publica binarios precompilados para las ABI comunes y `npm install` los descarga automáticamente — sin gcc, sin make, sin Build Tools. Solo se compila localmente si usas una arquitectura exótica o una versión de Node sin binario publicado (mismo mecanismo de fallback).
+
 ## E2E de tres servicios (ecosistema completo, autocontenido)
 
 ```bash

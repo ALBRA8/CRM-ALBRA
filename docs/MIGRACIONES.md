@@ -250,3 +250,82 @@ directorio, no en orden de creación. Por eso:
 
 Ejemplo (integración del PR #6): `11_tareas` → `zzzzzz_tareas`, porque la
 última migración previa era `zzzzz_channel_connection_refresh_lease`.
+
+## Adopción de migraciones en una base creada con `db push` (sin `_prisma_migrations`)
+
+Las instalaciones que siempre se gestionaron con `prisma db push` no tienen la
+tabla `_prisma_migrations`, así que `prisma migrate deploy` no sabe por dónde
+empezar (P3005) y `migrate reset` NO es una opción con datos reales. El
+procedimiento correcto es el **baseline**: registrar en `_prisma_migrations`
+las migraciones cuyo efecto ya tiene la base (sin ejecutarlas) y dejar que
+Prisma aplique de verdad solo las que faltan. La migración destructiva
+`zzzzzzzzz_drop_legacy_channel_models` (v3) es tolerante a bases `db push`:
+usa sombras `CREATE TABLE IF NOT EXISTS` para las tablas legacy que pueden no
+existir, `DROP INDEX/DROP TABLE IF EXISTS` y `CREATE INDEX IF NOT EXISTS` para
+los índices que `db push` ya pudo crear (p. ej. `Quote_opportunityId_idx`), y
+no depende de que `Task` exista.
+
+### Regla de oro
+
+1. **NUNCA sobre la base real**: primero haz una **copia** y ensaya todo ahí.
+2. Respaldar SIEMPRE antes (backup físico con `VACUUM INTO`).
+3. Elegir el caso según el estado REAL de la base (punto siguiente).
+
+### ¿Hasta qué migración marco el baseline?
+
+`npx prisma migrate status` tras el primer `resolve` mostrará el estado; para
+decidirlo antes, mira QUÉ tiene tu base:
+
+- **Esquema vigente** (sin tablas `Integration`/`WhatsAppConnection`/
+  `WhatsAppConversation`/`WhatsAppMessage` y con la estructura actual):
+  marca TODAS las migraciones menos la última como aplicadas; el deploy
+  aplicará solo `zzzzzzzzz_drop_legacy_channel_models`, que corre como no-op
+  limpio (ya no hay nada que backfillar ni índices que dupliquen).
+- **Estado intermedio** (todavía tiene tablas legacy, p. ej. se quedó en el
+  esquema anterior a la unificación): marca como aplicadas solo las
+  migraciones ANTERIORES a `zzzzzzzz_canonical_channel_expand` y deja que el
+  deploy aplique `zzzzzzzz_canonical_channel_expand` +
+  `zzzzzzzzz_drop_legacy_channel_models` de verdad (el backfill conserva los
+  datos en las tablas canónicas antes del DROP).
+
+### Pasos exactos (Windows PowerShell, sobre una copia)
+
+```powershell
+# 0) Copia de trabajo + respaldo físico (con la app y el daemon DETENIDOS)
+Copy-Item db\custom.db db\custom.db.ENSAYO.db
+sqlite3 db\custom.db "VACUUM INTO 'backups/crm-pre-baseline.db'"
+sqlite3 backups\crm-pre-baseline.db "PRAGMA integrity_check;"   # debe decir: ok
+
+# 1) Ensayar sobre la COPIA: todas las migraciones menos la última (esquema vigente).
+#    La lista se GENERA del disco: exacta y siempre sincronizada con prisma/migrations.
+$env:DATABASE_URL = "file:{RUTA-ABSOLUTA}\db\custom.db.ENSAYO.db"   # barras invertidas OK
+$mig = Get-ChildItem prisma\migrations -Directory | Sort-Object Name | ForEach-Object { $_.Name }
+$chain = $mig | Select-Object -First ($mig.Count - 1)   # 20 de 21 al 2026-11-26; ajusta si tu base está en un estado intermedio
+foreach ($m in $chain) { npx prisma migrate resolve --applied $m }
+
+# 2) Aplicar la restante y verificar
+npx prisma migrate deploy
+npx prisma migrate status          # sin pendientes ni fallos
+node scripts/verify-unification.mjs
+npm run test:db-push-baseline     # opcional: repite el procedimiento completo en copias efímeras
+
+# 3) Si el ensayo quedó limpio, repetir 1-2 con DATABASE_URL apuntando a la
+#    base real (ya con respaldo hecho). Ante cualquier fallo:
+npx prisma migrate resolve --rolled-back "<nombre-de-la-migracion>"   # y reintenta
+#    o restaura el respaldo (única vía de rollback en SQLite).
+```
+
+En Linux/macOS los pasos son idénticos con `export DATABASE_URL=...`, rutas
+POSIX y `ls prisma/migrations` en lugar de `Get-ChildItem`. La lista del
+baseline se genera del disco, así que siempre coincide con el historial real
+de migraciones (20 entradas antes de la última, al 2026-11-26).
+
+### Prueba automatizada del procedimiento (evidencia real)
+
+`npm run test:db-push-baseline` ejecuta `scripts/verify-db-push-baseline.mjs`
+con el motor REAL de Prisma CLI sobre bases efímeras y verifica 3 escenarios:
+(1) db push al esquema vigente — deploy no-op, filas de `Task` preservadas,
+índices sin duplicar; (2) db push sin la tabla `Task` — la destructiva la
+recrea con la forma vigente; (3) db push con datos legacy en blobs
+`v1:iv:tag:datos` — backfill byte a byte a las tablas canónicas. 20/20
+comprobaciones PASS al 2026-11-26.

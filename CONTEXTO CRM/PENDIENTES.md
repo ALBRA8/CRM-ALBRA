@@ -385,8 +385,8 @@ Correcciones entregadas por el constructor (z.ai) y verificadas por Antigravity 
   - Implementado comando universal `npm run e2e:3` sin dependencias de `/tmp/e2e3.env` ni scripts externos; levanta los 3 servicios con puertos y bases temporales aisladas.
 - [x] **Botón 'Entrar sin registro (demo)' condicionado en UI de ULTRA — RESUELTO (`3aecd54`)**:
   - `renderDashboardLoginHtml(opts.demoEnabled)` renderiza el botón únicamente si el backend concedería la sesión (`DEMO_MODE=true` fuera de producción). Con `DEMO_MODE=false`, el botón no se incluye en el HTML. Suite ULTRA: 284/284 PASS.
-- [ ] **Ajuste de timeout en webhook bridge para E2E en Windows dev**:
-  - En `scripts/e2e-3-servicios.mjs` bajo Windows con Turbopack dev compilando bajo demanda, la llamada de vuelta a CRM en `E5b` puede requerir elevar `INBOUND_TIMEOUT_MS` en `whatspower-bridge.ts` o margen en polling para alcanzar 20/20 PASS. Actualmente 19/20 PASS confirmados.
+- [x] **Ajuste de timeout en webhook bridge para E2E en Windows dev — RESUELTO (A-011, 2026-11-26)**:
+  - La aserción perdida NO era un timeout del bridge: el paso E2 de `scripts/e2e-3-servicios.mjs` no enviaba `whatsappCloudToken`, la conexión quedaba `disconnected` y el webhook (E4a) respondía 401 en cascada. Con el token ficticio añadido (y `CHANNEL_AUTOREPLY_ENABLED=false` explícito en el CRM del E2E) la suite alcanza **20/20 PASS con SENT=0**.
 
 ## Estado Consolidado tras Fusión de la Integración Maestra (2026-11-20)
 

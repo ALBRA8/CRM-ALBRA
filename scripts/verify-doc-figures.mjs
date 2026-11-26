@@ -16,30 +16,40 @@
  *   node scripts/verify-doc-figures.mjs --print    # imprime las cifras reales (para actualizar el bloque)
  *   node scripts/verify-doc-figures.mjs --json     # JSON de las cifras reales
  *
- * Reglas de conteo (deterministas, sin ejecutar la suite):
+ * Reglas de conteo (deterministas, sin ejecutar la suite, 100% Node — sin
+ * find/wc/ls/grep del shell, que en Windows no existen o colisionan con los
+ * executables nativos: hallazgo Antigravity 2026-11-26):
  *   - rutas_api:        archivos route.ts bajo src/app/api
  *   - archivos_prueba:  archivos test.ts bajo tests/ (cualquier profundidad)
  *   - modelos_prisma:   bloques `model X` en prisma/schema.prisma
  *   - migraciones:      directorios en prisma/migrations (sin migration_lock)
  *   - componentes_ui:   archivos .tsx en src/components
  */
-import { execSync } from 'node:child_process'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
 
-function sh(cmd) {
-  return execSync(cmd, { encoding: 'utf8', cwd: ROOT }).trim()
-}
-
-/** Conteo tolerante: en un árbol sin la pieza (p. ej. entorno de prueba), cuenta 0. */
-function shSoft(cmd, fallback = 0) {
+/** Caminante recursivo multiplataforma: devuelve los archivos que cumplen el
+ *  predicado bajo dir (sin depender del shell). En un árbol sin la pieza
+ *  (p. ej. entorno de prueba), devuelve []. */
+function walkFiles(dir, predicate, depth = 0) {
+  if (depth > 32) return [] // cinturón de seguridad ante ciclos de symlink
+  let entries = []
   try {
-    return Number(sh(cmd).split('\n').pop())
+    entries = readdirSync(dir, { withFileTypes: true })
   } catch {
-    return fallback
+    return []
   }
+  const found = []
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      found.push(...walkFiles(join(dir, entry.name), predicate, depth + 1))
+    } else if (entry.isFile() && predicate(entry.name)) {
+      found.push(join(dir, entry.name))
+    }
+  }
+  return found
 }
 
 function readFileSoft(path) {
@@ -51,18 +61,24 @@ function readFileSoft(path) {
 }
 
 export function realFigures() {
-  const rutasApi = shSoft('find src/app/api -name "route.ts" | wc -l')
-  const archivosPrueba = shSoft('find tests -name "*.test.ts" | wc -l')
+  const rutasApi = walkFiles(join(ROOT, 'src/app/api'), (name) => name === 'route.ts')
+  const archivosPrueba = walkFiles(join(ROOT, 'tests'), (name) => name.endsWith('.test.ts'))
   const schema = readFileSoft(join(ROOT, 'prisma/schema.prisma')) ?? ''
   const modelos = (schema.match(/^model\s+\w+/gm) ?? []).length
-  const migraciones = shSoft('ls -1 prisma/migrations | grep -v migration_lock | wc -l')
-  const componentes = shSoft('find src/components -name "*.tsx" | wc -l')
+  const migraciones = (() => {
+    try {
+      return readdirSync(join(ROOT, 'prisma/migrations'), { withFileTypes: true }).filter((e) => e.isDirectory()).length
+    } catch {
+      return 0
+    }
+  })()
+  const componentes = walkFiles(join(ROOT, 'src/components'), (name) => name.endsWith('.tsx'))
   return {
-    rutas_api: Number(rutasApi),
-    archivos_prueba: Number(archivosPrueba),
-    modelos_prisma: Number(modelos),
-    migraciones: Number(migraciones),
-    componentes_ui: Number(componentes),
+    rutas_api: rutasApi.length,
+    archivos_prueba: archivosPrueba.length,
+    modelos_prisma: modelos,
+    migraciones,
+    componentes_ui: componentes.length,
   }
 }
 

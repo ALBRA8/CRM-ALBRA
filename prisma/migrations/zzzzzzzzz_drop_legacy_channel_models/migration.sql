@@ -13,7 +13,63 @@
 --   * Telegram/TikTok: clave estable por organización, blob cifrado copiado tal
 --     cual; botId/openId/displayName los rellena el backfill TS descifrando con
 --     la clave de la app (scripts/backfill-channel-connections.ts), nunca SQL.
+--
+-- v3 (2026-11-26, hallazgo Antigravity en Windows — BD creadas con `db push`):
+--   * Idempotente-frente-a-esquema-vigente: una base creada con `db push`
+--     (sin _prisma_migrations) puede NO tener las tablas legacy (el backfill
+--     no tiene nada que migrar) y SÍ tener índices que esta migración creaba
+--     a ciegas (Quote_opportunityId_idx). Sentencias endurecidas:
+--       - Tablas legacy referenciadas por el backfill → "sombra" con
+--         CREATE TABLE IF NOT EXISTS (vacía en BD db push; en BD de la cadena
+--         ya existe la real y el IF NOT EXISTS es no-op). Se dropean al final.
+--       - DROP INDEX IF EXISTS / DROP TABLE IF EXISTS en todos los drops.
+--       - CREATE INDEX IF NOT EXISTS en los 4 índices (Task x3 + Quote).
+--       - Task: CREATE TABLE IF NOT EXISTS con la forma histórica (zzzzzz_tareas)
+--         antes del redefine → la migración ya NO depende de que Task exista
+--         (una db push anterior a `zzzzzzzz_tareas` no la tiene). Si existe
+--         (cualquier forma histórica), el IF NOT EXISTS es no-op y el redefine
+--         la normaliza a la forma vigente.
+--       - new_Task con IF NOT EXISTS y INSERT OR IGNORE → reintento tras abort
+--         parcial no duplica filas ni truena por la tabla temporal.
 
+
+-- ============================================================
+-- SOMBRAS DE TABLAS LEGACY (solo si NO existen): hacen el backfill
+-- inofensivo en bases `db push` donde las tablas legacy ya no existen
+-- (cero filas → INSERT OR IGNORE sin efecto). En bases de la cadena de
+-- migraciones las tablas reales ya existen y estas sentencias son no-op.
+-- Columnas: EXACTAMENTE las que usan los SELECT del backfill de abajo.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS "Integration" (
+    "organizationId" TEXT, "googleEmail" TEXT, "googleRefreshTokenEnc" TEXT, "googleClientJsonEnc" TEXT,
+    "enableGoogle" BOOLEAN, "agentLeadsSecretEnc" TEXT, "whatsappPhoneId" TEXT, "whatsappCloudTokenEnc" TEXT,
+    "enableWhatsApp" BOOLEAN, "telegramBotTokenEnc" TEXT, "enableTelegram" BOOLEAN, "telegramSecretHash" TEXT,
+    "instagramAccountId" TEXT, "instagramTokenEnc" TEXT, "enableInstagram" BOOLEAN, "facebookPageId" TEXT,
+    "facebookPageName" TEXT, "facebookTokenEnc" TEXT, "facebookUserEmail" TEXT, "enableFacebook" BOOLEAN,
+    "tiktokTokenEnc" TEXT, "enableTikTok" BOOLEAN, "updatedAt" DATETIME
+);
+CREATE TABLE IF NOT EXISTS "WhatsAppConnection" (
+    "id" TEXT, "organizationId" TEXT, "wabaId" TEXT, "phoneNumberId" TEXT, "phoneNumber" TEXT,
+    "displayName" TEXT, "accessTokenEnc" TEXT, "source" TEXT, "statusDetail" TEXT, "status" TEXT,
+    "createdAt" DATETIME, "updatedAt" DATETIME
+);
+CREATE TABLE IF NOT EXISTS "WhatsAppConversation" (
+    "id" TEXT, "organizationId" TEXT, "contactPhone" TEXT, "contactName" TEXT, "lastMessage" TEXT,
+    "lastMessageAt" DATETIME, "unreadCount" INTEGER, "status" TEXT, "clientId" TEXT, "isAutoReply" BOOLEAN,
+    "transferredTo" TEXT, "lastMessageFrom" TEXT, "createdAt" DATETIME, "updatedAt" DATETIME
+);
+CREATE TABLE IF NOT EXISTS "WhatsAppMessage" (
+    "id" TEXT, "conversationId" TEXT, "waMessageId" TEXT, "direction" TEXT, "senderType" TEXT,
+    "text" TEXT, "messageType" TEXT, "fromNumber" TEXT, "toNumber" TEXT, "isRead" BOOLEAN, "createdAt" DATETIME
+);
+-- Task: sombra con la forma histórica de zzzzzzzz_tareas. El redefine de abajo
+-- la lleva a la forma vigente en TODOS los casos; así la migración nunca
+-- depende de que Task exista (bases db push anteriores a `zzzzzzzz_tareas`).
+CREATE TABLE IF NOT EXISTS "Task" (
+    "id" TEXT, "organizationId" TEXT, "title" TEXT, "notes" TEXT, "dueAt" DATETIME,
+    "priority" TEXT DEFAULT 'normal', "status" TEXT DEFAULT 'open', "completedAt" DATETIME,
+    "userId" TEXT, "clientId" TEXT, "createdAt" DATETIME DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME
+);
 
 -- ============================================================
 -- BACKFILL DE DATOS (cero pérdida) — ANTES de los DROP legacy
@@ -143,65 +199,65 @@ JOIN "ChannelConversation" cc ON cc."externalContactKey" = w."contactPhone"
 -- FIN DEL BACKFILL — las tablas legacy se eliminan a continuación
 -- ============================================================
 
--- DropIndex
-DROP INDEX "Integration_telegramSecretHash_key";
+-- DropIndex (IF EXISTS: una base db push puede no tenerlos)
+DROP INDEX IF EXISTS "Integration_telegramSecretHash_key";
 
 -- DropIndex
-DROP INDEX "Integration_organizationId_key";
+DROP INDEX IF EXISTS "Integration_organizationId_key";
 
 -- DropIndex
-DROP INDEX "WhatsAppConnection_organizationId_status_idx";
+DROP INDEX IF EXISTS "WhatsAppConnection_organizationId_status_idx";
 
 -- DropIndex
-DROP INDEX "WhatsAppConnection_phoneNumberId_key";
+DROP INDEX IF EXISTS "WhatsAppConnection_phoneNumberId_key";
 
 -- DropIndex
-DROP INDEX "WhatsAppConnectionEvent_connectionId_createdAt_idx";
+DROP INDEX IF EXISTS "WhatsAppConnectionEvent_connectionId_createdAt_idx";
 
 -- DropIndex
-DROP INDEX "WhatsAppConnectionEvent_organizationId_createdAt_idx";
+DROP INDEX IF EXISTS "WhatsAppConnectionEvent_organizationId_createdAt_idx";
 
 -- DropIndex
-DROP INDEX "WhatsAppConversation_organizationId_contactPhone_key";
+DROP INDEX IF EXISTS "WhatsAppConversation_organizationId_contactPhone_key";
 
 -- DropIndex
-DROP INDEX "WhatsAppConversation_organizationId_lastMessageAt_idx";
+DROP INDEX IF EXISTS "WhatsAppConversation_organizationId_lastMessageAt_idx";
 
 -- DropIndex
-DROP INDEX "WhatsAppMessage_organizationId_createdAt_idx";
+DROP INDEX IF EXISTS "WhatsAppMessage_organizationId_createdAt_idx";
 
 -- DropIndex
-DROP INDEX "WhatsAppMessage_conversationId_createdAt_idx";
+DROP INDEX IF EXISTS "WhatsAppMessage_conversationId_createdAt_idx";
 
--- DropTable
+-- DropTable (IF EXISTS: dropea la tabla real en la cadena, la sombra en db push)
 PRAGMA foreign_keys=off;
-DROP TABLE "Integration";
+DROP TABLE IF EXISTS "Integration";
 PRAGMA foreign_keys=on;
 
 -- DropTable
 PRAGMA foreign_keys=off;
-DROP TABLE "WhatsAppConnection";
+DROP TABLE IF EXISTS "WhatsAppConnection";
 PRAGMA foreign_keys=on;
 
 -- DropTable
 PRAGMA foreign_keys=off;
-DROP TABLE "WhatsAppConnectionEvent";
+DROP TABLE IF EXISTS "WhatsAppConnectionEvent";
 PRAGMA foreign_keys=on;
 
 -- DropTable
 PRAGMA foreign_keys=off;
-DROP TABLE "WhatsAppConversation";
+DROP TABLE IF EXISTS "WhatsAppConversation";
 PRAGMA foreign_keys=on;
 
 -- DropTable
 PRAGMA foreign_keys=off;
-DROP TABLE "WhatsAppMessage";
+DROP TABLE IF EXISTS "WhatsAppMessage";
 PRAGMA foreign_keys=on;
 
--- RedefineTables
+-- RedefineTables (tolerante a reintento: IF NOT EXISTS + INSERT OR IGNORE)
 PRAGMA defer_foreign_keys=ON;
 PRAGMA foreign_keys=OFF;
-CREATE TABLE "new_Task" (
+CREATE TABLE IF NOT EXISTS "new_Task" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "organizationId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -217,14 +273,14 @@ CREATE TABLE "new_Task" (
     CONSTRAINT "Task_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "Task_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
-INSERT INTO "new_Task" ("clientId", "completedAt", "createdAt", "dueAt", "id", "notes", "organizationId", "priority", "status", "title", "updatedAt", "userId") SELECT "clientId", "completedAt", "createdAt", "dueAt", "id", "notes", "organizationId", "priority", "status", "title", "updatedAt", "userId" FROM "Task";
+INSERT OR IGNORE INTO "new_Task" ("clientId", "completedAt", "createdAt", "dueAt", "id", "notes", "organizationId", "priority", "status", "title", "updatedAt", "userId") SELECT "clientId", "completedAt", "createdAt", "dueAt", "id", "notes", "organizationId", "priority", "status", "title", "updatedAt", "userId" FROM "Task";
 DROP TABLE "Task";
 ALTER TABLE "new_Task" RENAME TO "Task";
-CREATE INDEX "Task_organizationId_status_idx" ON "Task"("organizationId", "status");
-CREATE INDEX "Task_organizationId_dueAt_idx" ON "Task"("organizationId", "dueAt");
-CREATE INDEX "Task_clientId_idx" ON "Task"("clientId");
+CREATE INDEX IF NOT EXISTS "Task_organizationId_status_idx" ON "Task"("organizationId", "status");
+CREATE INDEX IF NOT EXISTS "Task_organizationId_dueAt_idx" ON "Task"("organizationId", "dueAt");
+CREATE INDEX IF NOT EXISTS "Task_clientId_idx" ON "Task"("clientId");
 PRAGMA foreign_keys=ON;
 PRAGMA defer_foreign_keys=OFF;
 
--- CreateIndex
-CREATE INDEX "Quote_opportunityId_idx" ON "Quote"("opportunityId");
+-- CreateIndex (IF NOT EXISTS: una base db push ya lo tiene)
+CREATE INDEX IF NOT EXISTS "Quote_opportunityId_idx" ON "Quote"("opportunityId");

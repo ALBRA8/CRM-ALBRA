@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "e2e:3": "node scripts/e2e-3-servicios.mjs",
+    "test:db-push-baseline": "node scripts/verify-db-push-baseline.mjs",
     "db:push": "node scripts/db-guard.mjs push",
     "db:generate": "prisma generate",
     "db:migrate": "node scripts/db-guard.mjs migrate",

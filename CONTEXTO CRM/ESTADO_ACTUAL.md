@@ -325,7 +325,7 @@ Re-emparejamiento con el remoto (PAT nuevo verificado en git y REST), línea bas
   - **Escáner de Secretos (`npm run security:scan`):** 0 secretos detectados (Exit Code 0). Resuelto generando el token de prueba mediante `crypto.randomBytes(24)` en tiempo de ejecución.
   - **Compilación de Producción (`npm run build`):** Exit Code 0. Compilación exitosa de 124 rutas estáticas y dinámicas y copiado a standalone.
   - **Suite WhatsPower-Ultra:** 284/284 pruebas aprobadas (+1 nueva prueba unitaria que verifica que el botón *"🚀 Entrar sin registro (demo)"* se omite del HTML cuando `DEMO_MODE=false`).
-  - **Suite E2E 3 Servicios (`npm run e2e:3`):** Implementado runner dinámico multiplataforma en `scripts/e2e-3-servicios.mjs` que detecta repositorios hermanos, asigna puertos libres efímeros y crea bases de datos SQLite temporales. Ejecución verificada con 19/20 aserciones PASS y estricto `SENT=0` (ningún mensaje despachado).
+  - **Suite E2E 3 Servicios (`npm run e2e:3`):** Implementado runner dinámico multiplataforma en `scripts/e2e-3-servicios.mjs` que detecta repositorios hermanos, asigna puertos libres efímeros y crea bases de datos SQLite temporales. Ejecución verificada con **20/20 aserciones PASS** y estricto `SENT=0` (ningún mensaje despachado). (Actualizado 2026-11-26: la cifra histórica de esa sesión fue 19/20 porque el paso E2 no enviaba `whatsappCloudToken`; con el token ficticio añadido por el hallazgo Antigravity la suite alcanza 20/20 — ver A-011.)
 
 ## Sesión 2026-11-20 — Fusión de la Integración Maestra y Consolidación de 48 Tareas
 
@@ -411,3 +411,12 @@ Re-emparejamiento con el remoto (PAT nuevo verificado en git y REST), línea bas
 - **Runbook de migración/reversión** añadido a `AUDITORIAS.md` (A-010) y **verificado empíricamente con el motor real de Prisma**: deploy completo 21/21; abort reproducido con la migración original (error idéntico); rollback total sin backfill parcial (`Integration` intacta, `ChannelConnection` en 0, registro `finished_at NULL`); `prisma migrate resolve --rolled-back` operativo; redeploy con v2 exitoso sobre la misma BD (TikTok migrado + constancia Facebook + integridad ok).
 - **Puertas de calidad (reales, esta sesión):** `npx tsc --noEmit` 0 errores; suite completa **129/129 archivos, 1117/1117 pruebas** (incluye la nueva de migración); `npm run security:scan` 0 secretos; `npm run check:pii` árbol limpio. Bloque canónico de `PRODUCTION_READINESS.md` actualizado (`archivos_prueba: 129`).
 - Sin cambios en WHATSPOWER ni WHATSPOWER-ULTRA. Sin force push; commit normal sobre `repair/produccion-real`.
+
+## Sesión 2026-11-26 (A-011) — Endurecimiento multiplataforma tras auditoría Windows real
+
+- **Contexto**: Antigravity corrió pruebas en un PC Windows real sobre `ea9881b` y reportó 5 hallazgos (E2E 19/20, `vitest` vía `.bin` no ejecutable, `find`/`wc` POSIX en el verificador de cifras, puertos fijos bajo concurrencia en ULTRA, migración destructiva intolerante a bases `db push`). Correcciones aplicadas y evidencia completa en **A-011** de `AUDITORIAS.md`.
+- **E2E 3 Servicios**: E2 envía token Cloud ficticio (runtime) → conexión `connected`; suite en **20/20 PASS con SENT=0** (antes 19/20 con E4a en 401). Cifra corregida en A-009/ESTADO_ACTUAL/PENDIENTES.
+- **Multiplataforma**: `scheduler-multiprocess.test.ts` usa `process.execPath` + `node_modules/vitest/vitest.mjs`; `verify-doc-figures.mjs` es 100% Node (sin `find`/`wc`/`ls`/`grep`), mismas cifras canónicas. Suite CRM: 129 archivos / 1117 pruebas.
+- **ULTRA**: puertos efímeros en `contracts-integration.test.ts` → suite completa **324/324 en 57 suites** (WHATSPOWER: 358/358).
+- **Migración v3 + baseline db push**: `zzzzzzzzz_drop_legacy_channel_models` con sombras `IF NOT EXISTS`, drops condicionales y `Task` opcional; procedimiento de adopción documentado en `docs/MIGRACIONES.md` y probado con el CLI real por `npm run test:db-push-baseline` (**20/20 comprobaciones**, 3 escenarios).
+- **README**: instalación Windows con Build Tools de Visual Studio (better-sqlite3/node-gyp) y nota de binario precompilado en Linux.

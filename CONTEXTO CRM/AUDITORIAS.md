@@ -177,7 +177,7 @@ Pruebas reportadas: 434/434 con .env de producción simulado, 434/434 sin .env y
 | **CRM-ALBRA** `npx vitest run ecosystem-links` | — | **OK** | **12/12 PASS** (Exit Code 0). |
 | **WHATSPOWER** `npm test` | **OK (324)** | **OK (324)** | **324/324 PASS** en 38 suites (Exit Code 0). |
 | **WHATSPOWER-ULTRA** `npm test` | **OK (283)** | **OK (284)** | **284/284 PASS** en 50 suites (incluye test 1.B.6 de render condicional del botón demo). |
-| **Integración E2E 3 Servicios** (`npm run e2e:3`) | **NO EJECUTADO** | **OK (19/20)** | **19/20 aserciones PASS**, **SENT=0** absoluto, puertos efímeros y aislamiento SQLite. |
+| **Integración E2E 3 Servicios** (`npm run e2e:3`) | **NO EJECUTADO** | **OK (20/20)** | **20/20 aserciones PASS** (2026-11-26: E2 ahora envía `whatsappCloudToken` ficticio → conexión `connected`; antes 19/20 con E4a en 401), **SENT=0** absoluto, puertos efímeros y aislamiento SQLite. |
 
 ## A-009 — Auditoría técnica post-fusión de la integración maestra (2026-11-20)
 
@@ -330,4 +330,39 @@ Gracias a la transacción por migración no queda backfill parcial tras un abort
 
 **Nota de verificación (2026-11-26):** esta corrección se validó en sandbox Linux con Node 24 y `node:sqlite` (SQLite 3.54.1). El fallo `spawn node_modules/.bin/vitest ENOENT` de `scheduler-multiprocess.test.ts` observado en el sandbox es artefacto del entorno (clon con `node_modules` parcial), no del repo: con el binario disponible el test pasa 1/1.
 
+
+
+## A-011 — Auditoría de ejecución en Windows real: 5 hallazgos multiplataforma (2026-11-26)
+
+**Fecha:** 2026-11-26. **Auditor:** Antigravity (PC Windows real). **Constructor:** z.ai.
+**Base auditada:** rama `repair/produccion-real` @ `ea9881b` (CRM), `66f36a3` (WHATSPOWER), `eb5f89f` (WHATSPOWER-ULTRA).
+
+### Hallazgos y correcciones
+
+1. **E2E 3 Servicios: E2 sin `whatsappCloudToken` → conexión `disconnected` → webhook 401.**
+   El PUT `/api/whatsapp/config` solo marca la `ChannelConnection` como `connected` cuando recibe un token Cloud; el paso E2 de `scripts/e2e-3-servicios.mjs` no lo enviaba, así que E4a (webhook Meta firmado) caía en 401 («Firma inválida o destinatario desconocido») y la suite quedaba 19/20. **Corrección:** E2 envía `whatsappCloudToken` FICTICIO (`E2E-FAKE-CLOUD-TOKEN-<hex>`, generado en runtime, jamás contacta a Meta) y el CRM del E2E arranca con `CHANNEL_AUTOREPLY_ENABLED=false` explícito (invariante). Resultado verificado: **20/20 PASS con SENT=0** (sección «Evidencia real»). Cifra `19/20` corregida en esta tabla (A-009/2026-11-18), en `ESTADO_ACTUAL.md` y en `PENDIENTES.md`.
+
+2. **`scheduler-multiprocess.test.ts` no multiplataforma.** Invocaba `node_modules/.bin/vitest` con `execFile`; en Windows ese path es un shell script de bash (el wrapper `.cmd`/`.ps1` no sirve para `execFile`) → `ENOENT`. **Corrección:** se invoca el punto de entrada real del paquete con el MISMO Node del proceso padre: `execFileAsync(process.execPath, [node_modules/vitest/vitest.mjs, ...args])`.
+
+3. **`scripts/verify-doc-figures.mjs` dependía de POSIX (`find`, `wc`, `ls`, `grep`).** En Windows `find`/`sort` colisionan con los ejecutables nativos de MS-DOS y `wc` no existe. **Corrección:** conteo 100% Node (caminante recursivo `fs.readdirSync` con `withFileTypes`), mismas reglas de conteo y cifras idénticas (`rutas_api=128, archivos_prueba=129, modelos_prisma=43, migraciones=21, componentes_ui=106`). La prueba negativa en directorios sin `src/`/`prisma/` sigue devolviendo 0.
+
+4. **ULTRA: `contracts-integration.test.ts` con puertos FIJOS (3991/3992/3995) bajo concurrencia de Windows.** `node --test` ejecuta los archivos en paralelo; en Windows un puerto fijo puede chocar con otro proceso o caer en un rango reservado por Hyper-V (EADDRINUSE/EACCES). **Corrección:** los 3 mock servers escuchan en puerto efímero (`listen(0, '127.0.0.1')` + lectura de `server.address().port`; los checkers 2A ya usaban `timeoutMs: 800` y el dispatcher 5 s de `AbortSignal.timeout`). Suite completa ULTRA @ `eb5f89f`: **324/324 PASS en 57 suites**. `dashboard-parity` ya usaba puerto efímero (DP-19 corregido upstream en `eb5f89f`).
+
+5. **Migración `zzzzzzzzz_drop_legacy_channel_models` no toleraba bases creadas con `db push`.** Una base sin `_prisma_migrations` y con esquema vigente (sin tablas legacy, con `Quote_opportunityId_idx` e índices de `Task` ya creados por `db push`) abortaba: backfill sobre tablas inexistentes y `CREATE INDEX` a ciegas. **Corrección (v3 de la migración):** sombras `CREATE TABLE IF NOT EXISTS` para las 4 tablas legacy que lee el backfill + sombra de `Task` (con la forma histórica de `zzzzzzz_tareas`) antes del redefine → la migración **ya no depende de que `Task` exista**; `DROP INDEX/DROP TABLE IF EXISTS` en los 10 índices y 5 tablas legacy; `CREATE INDEX IF NOT EXISTS` en `Task ×3` y `Quote`; `new_Task` con `IF NOT EXISTS` + `INSERT OR IGNORE` (reintento tras abort parcial sin duplicar filas). La prueba A-010 (13 aserciones) sigue en verde con la v3.
+
+### Documentación y prueba del procedimiento db push → baseline
+
+`docs/MIGRACIONES.md` ahora trae la sección «Adopción de migraciones en una base creada con `db push`»: regla de oro (siempre sobre copia y con respaldo `VACUUM INTO` + `integrity_check`), cómo decidir hasta qué migración se marca el baseline (esquema vigente vs estado intermedio con legacy), pasos exactos en PowerShell para Windows (lista `$chain` de 20 entradas, `prisma migrate resolve --applied` por migración, `prisma migrate deploy`, `migrate status`, verificación) y la vía de reversión (`resolve --rolled-back` o restaurar respaldo). Script de evidencia `scripts/verify-db-push-baseline.mjs` (npm run `test:db-push-baseline`): repite el procedimiento con el motor REAL del CLI de Prisma sobre bases efímeras en 3 escenarios — (1) db push al esquema vigente (deploy no-op, filas de `Task` preservadas, índices sin duplicar), (2) db push sin tabla `Task` (la destructiva la recrea con la forma vigente NOT NULL + CASCADE), (3) db push con datos legacy en blobs `v1:iv:tag:datos` (backfill byte a byte a las tablas canónicas). **Resultado: 20/20 comprobaciones PASS** con `integrity_check=ok` y `foreign_key_check` vacío en los 3 escenarios.
+
+### Documentación de instalación Windows
+
+`README.md` añade «Instalar en Windows (Build Tools de Visual Studio)»: cuándo `better-sqlite3` necesita compilarse (falta de binario precompilado para la ABI, p. ej. Node 24, o descarga fallida), instalación de **Build Tools 2022 con el workload «Desarrollo para escritorio con C++»**, requisito de Python 3 para node-gyp y `npm rebuild better-sqlite3` como reintento; y la nota de que **en Linux/macOS funciona con binario precompilado** (sin gcc/make).
+
+### Evidencia real (sandbox Linux, Node 24.22.3; los fixes son agnósticos de SO)
+
+- `npm run e2e:3` → **20/20 PASS**, `SENT=0` (ver salida completa en la conversación de construcción).
+- `npm test` (CRM) → **129/129 archivos, 1117/1117 pruebas** (mismas cifras canónicas del bloque FIGURAS-CANONICAS).
+- ULTRA `npm test` @ `eb5f89f` → **324/324 en 57 suites**; WHATSPOWER `npm test` @ `66f36a3` → **358/358 en 44 suites**.
+- `npm run test:db-push-baseline` → **20/20 comprobaciones PASS** (3 escenarios, CLI real).
+- `npx tsc --noEmit` 0 errores; `npm run check:pii` árbol limpio; `npm run security:scan` 0 secretos.
 

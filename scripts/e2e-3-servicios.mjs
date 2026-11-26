@@ -208,6 +208,12 @@ async function main() {
   const WHATSPOWER_WEBHOOK_SECRET = hex(24)
   const ORG_SECRET_WP = hex(24)
   const ADMIN_KEY_ULTRA = hex(24)
+  // Token Cloud FICTICIO (nunca contacta a Meta): solo habilita el estado
+  // 'connected' de la ChannelConnection para que el webhook valide la firma.
+  // Con ALLOW_REAL_DISPATCH=false y CHANNEL_AUTOREPLY_ENABLED=false jamás se
+  // usa para envíos reales (hallazgo Antigravity 2026-11-26: sin este token,
+  // la conexión quedaba 'disconnected' y E4a respondía 401).
+  const FAKE_CLOUD_TOKEN = `E2E-FAKE-CLOUD-TOKEN-${hex(16)}`
   // Teléfonos FICTICIOS de prueba (bloque 573000000xxx reservado para E2E)
   const PHONE_LEAD = '573000007301'
   const PHONE_LOCK = '573000007302'
@@ -222,6 +228,8 @@ async function main() {
       APP_SECRET,
       APP_ENCRYPTION_KEY,
       DEMO_MODE: 'true',
+      // Salvaguarda explícita (invariante del repo): cero respuestas IA salientes.
+      CHANNEL_AUTOREPLY_ENABLED: 'false',
       WHATSPOWER_ENABLED: 'true',
       WHATSPOWER_INBOUND_URL: `${WP}/api/inbound`,
       WHATSPOWER_WEBHOOK_SECRET,
@@ -291,12 +299,19 @@ async function main() {
     }
     const authJwt = { Authorization: `Bearer ${JWT}`, 'Content-Type': 'application/json' }
 
-    // E2: configurar WhatsApp de la org en CRM (appSecret de prueba)
+    // E2: configurar WhatsApp de la org en CRM (appSecret de prueba + token
+    // Cloud ficticio: sin token la conexión queda 'disconnected' y el webhook
+    // responde 401 — hallazgo Antigravity 2026-11-26, ahora corregido).
     const cfg = await jfetch(`${CRM}/api/whatsapp/config`, {
       method: 'PUT', headers: authJwt,
-      body: JSON.stringify({ whatsappPhoneId: 'E2E-3S-PHONE-ID', metaAppSecret: META_APP_SECRET, enableWhatsApp: true }),
+      body: JSON.stringify({
+        whatsappPhoneId: 'E2E-3S-PHONE-ID',
+        whatsappCloudToken: FAKE_CLOUD_TOKEN,
+        metaAppSecret: META_APP_SECRET,
+        enableWhatsApp: true,
+      }),
     }, 120000)
-    log('E2', 'config WhatsApp org en CRM (appSecret de prueba)', cfg.status === 200 || cfg.status === 201, `status=${cfg.status}`)
+    log('E2', 'config WhatsApp org en CRM (appSecret + token Cloud ficticio)', cfg.status === 200 || cfg.status === 201, `status=${cfg.status}`)
 
     // E3: flujo en WHATSPOWER con crm_action create_client
     const flow = {
